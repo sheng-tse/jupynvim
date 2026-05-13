@@ -10,10 +10,11 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        version = (builtins.fromTOML (builtins.readFile ./core/Cargo.toml)).package.version;
 
         jupynvim-core = pkgs.rustPlatform.buildRustPackage {
           pname = "jupynvim-core";
-          version = "0.1.0";
+          inherit version;
           src = ./core;
           cargoLock = {
             lockFile = ./core/Cargo.lock;
@@ -31,7 +32,7 @@
         #   <plugin_root>/core/target/release/jupynvim-core
         jupynvim = pkgs.vimUtils.buildVimPlugin {
           pname = "jupynvim";
-          version = "0.1.0";
+          inherit version;
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
             # Only include runtime Lua files; Rust source and CI config are
