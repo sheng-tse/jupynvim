@@ -1661,9 +1661,6 @@ function M.setup(opts)
     end)
   end
 
-  vim.opt.conceallevel = 2
-  vim.opt.concealcursor = "nc"
-
   -- Hijack .ipynb opens
   local group = vim.api.nvim_create_augroup("JupynvimDispatch", { clear = true })
   vim.api.nvim_create_autocmd("BufReadCmd", {
