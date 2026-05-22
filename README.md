@@ -253,6 +253,12 @@ require("jupynvim").setup({
   --                 graphics support.
   image_renderer = "placeholder",
 
+  -- Inline image grid size in terminal cells (rows x cols). Default 32x96
+  -- works for typical matplotlib plots; bump for sharper output on large
+  -- terminals or shrink for compact display.
+  image_rows = 32,
+  image_cols = 96,
+
   -- Override the path to the jupynvim-core binary. Auto-detected from the
   -- plugin directory if unset.
   core_path = nil,

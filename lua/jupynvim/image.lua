@@ -341,7 +341,15 @@ end
 
 -- Image grid size for Unicode-placeholder rendering (rows × cols of terminal cells).
 -- Larger = higher resolution = clearer image; bounded by typical terminal size.
+-- Mutable so init.lua's setup can override from user config without a
+-- circular require. See `require("jupynvim").setup({ image_rows, image_cols })`.
 local PLACEHOLDER_ROWS, PLACEHOLDER_COLS = 32, 96
+
+function M.set_size(opts)
+  opts = opts or {}
+  if type(opts.rows) == "number" and opts.rows > 0 then PLACEHOLDER_ROWS = opts.rows end
+  if type(opts.cols) == "number" and opts.cols > 0 then PLACEHOLDER_COLS = opts.cols end
+end
 
 -- Extract every frame of an animated GIF as PNG along with per-frame delays.
 -- Returns { frames = { b64, b64, ... }, delays = { ms, ms, ... } } or nil.
@@ -681,6 +689,20 @@ function M.clear_all()
     placements[k] = nil
   end
   tty_write("\x1b_Ga=d,d=A,q=2\x1b\\")
+end
+
+-- Backwards-compat alias. init.lua and other call sites use Image.delete_all().
+M.delete_all = M.clear_all
+
+-- Clear all VISIBLE placements but keep image data in kitty's cache. Used on
+-- notebook open to wipe stray direct placements left behind by file
+-- explorers (snacks.image previews .ipynb files; the placement persists
+-- past the explorer closing). Our cells use virtual placements (U=1 +
+-- Unicode placeholder chars in buffer text), so kitty automatically
+-- re-creates them when it next reads the placeholder chars on screen.
+-- Gif animation isn't disturbed because its image bytes survive.
+function M.clear_visible_placements()
+  tty_write("\x1b_Ga=d,d=a,q=2\x1b\\")
 end
 
 function M.supported()

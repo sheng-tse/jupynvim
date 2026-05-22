@@ -24,6 +24,12 @@ M.config = {
   -- "kitty":       real PNG via direct placement (lives at fixed screen coords)
   -- "chafa":       ASCII art fallback for terminals without graphics support
   image_renderer = "placeholder",
+  -- Inline image grid size in terminal cells (rows x cols). Default 32x96
+  -- works for typical matplotlib plots; bump if your terminal is large and
+  -- you want sharper output, or shrink for compact display. Affects the
+  -- Kitty Unicode placeholder rendering. Reported as #7 by medwatt.
+  image_rows = 32,
+  image_cols = 96,
   -- Per-action keymap overrides. Each value is either a string (replace lhs)
   -- or `false` (disable). See lua/jupynvim/keymaps.lua for the full default
   -- list. nil/missing leaves the default in place.
@@ -184,6 +190,13 @@ function M.open(path, opts)
   opts = opts or {}
   ensure_client()
   local abs = vim.fn.fnamemodify(path, ":p")
+  -- Clear stray direct placements left by file explorers (snacks.image
+  -- previews .ipynb files and the placement survives past the explorer
+  -- closing, overlaying our cell renders at the wrong size). We only
+  -- clear visible placements, not image data, so kitty auto-re-creates
+  -- our virtual placements from the buffer's placeholder chars on the
+  -- next redraw and the gif animation isn't disturbed.
+  pcall(function() Image.clear_visible_placements() end)
 
   -- Idempotency #1: if a notebook for this path is already alive AND we're not
   -- being asked to force-reload, just refocus and re-render.
@@ -1640,6 +1653,7 @@ function M.setup(opts)
   Render.setup_highlights()
   require("jupynvim.diag").setup()
   require("jupynvim.lsp").setup()
+  Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols })
 
   -- Inside tmux, image_renderer = "kitty" (direct placement) places at the
   -- TTY's cursor coordinates and is never auto-cleaned, which surfaces as
