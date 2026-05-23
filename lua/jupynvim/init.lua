@@ -195,14 +195,13 @@ function M._parse_remote_spec(s)
   if not prefix or not path then return nil, "expected `alias:path` or `user@host:/path`" end
   local profile = M.config.remote and M.config.remote[prefix]
   if profile then
-    return {
-      host = profile.host or prefix,
-      core_path = profile.core_path,
-      ssh_args = profile.ssh_args,
-      slurm = profile.slurm,
-      path = path,
-      label = prefix,
-    }
+    -- Copy the whole profile so any field (transport_cmd, custom keys) flows
+    -- through to use_remote/build_ssh_cmd unchanged.
+    local spec = vim.tbl_deep_extend("force", {}, profile)
+    spec.host = profile.host or prefix
+    spec.path = path
+    spec.label = prefix
+    return spec
   end
   -- Bare user@host:/path (no configured alias)
   return { host = prefix, path = path, label = prefix }
