@@ -226,6 +226,14 @@ impl Server {
             "kitty_clear_image" => self.kitty_clear_image(p).await,
             "kitty_clear_visible" => self.kitty_clear_visible(p).await,
             "kitty_clear_all" => self.kitty_clear_all(p).await,
+            "fs_list" => self.fs_list(p).await,
+            "fs_stat" => self.fs_stat(p).await,
+            "fs_read" => self.fs_read(p).await,
+            "fs_write" => self.fs_write(p).await,
+            "fs_mkdir" => self.fs_mkdir(p).await,
+            "fs_rm" => self.fs_rm(p).await,
+            "fs_rename" => self.fs_rename(p).await,
+            "fs_realpath" => self.fs_realpath(p).await,
             other => Err(anyhow!("unknown method '{other}'")),
         }
     }
@@ -702,6 +710,140 @@ impl Server {
         self.emit_kitty(bytes, serde_json::Map::new()).await
     }
 
+    // ===========================================================
+    // Filesystem RPCs (Phase 1 of v0.3 remote-workspace effort).
+    //
+    // All paths are absolute on the remote filesystem; the leading `~/` is
+    // expanded to the server-process's $HOME. File contents are base64
+    // (msgpack-safe binary transport — same trick we use for PNGs).
+    // ===========================================================
+
+    async fn fs_list(&self, p: Json) -> Result<Json> {
+        use std::os::unix::fs::MetadataExt;
+        let path = arg_path(&p, "path")?;
+        let mut rd = tokio::fs::read_dir(&path).await
+            .with_context(|| format!("read_dir {}", path.display()))?;
+        let mut entries = Vec::new();
+        while let Some(entry) = rd.next_entry().await? {
+            let meta = match entry.metadata().await {
+                Ok(m) => m,
+                Err(_) => continue,  // permission denied on individual entry; skip
+            };
+            let kind = if meta.is_dir() { "dir" }
+                else if meta.file_type().is_symlink() { "link" }
+                else { "file" };
+            let mtime = meta.modified().ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64).unwrap_or(0);
+            entries.push(json!({
+                "name": entry.file_name().to_string_lossy(),
+                "kind": kind,
+                "size": meta.len(),
+                "mode": meta.mode() & 0o777,
+                "mtime": mtime,
+            }));
+        }
+        // Sort: dirs first, then alphabetical
+        entries.sort_by(|a, b| {
+            let ak = a.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let bk = b.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let an = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let bn = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            match (ak, bk) {
+                ("dir", "dir") | ("file", "file") | ("link", "link") => an.cmp(bn),
+                ("dir", _) => std::cmp::Ordering::Less,
+                (_, "dir") => std::cmp::Ordering::Greater,
+                _ => an.cmp(bn),
+            }
+        });
+        Ok(json!({ "path": path.to_string_lossy(), "entries": entries }))
+    }
+
+    async fn fs_stat(&self, p: Json) -> Result<Json> {
+        use std::os::unix::fs::MetadataExt;
+        let path = arg_path(&p, "path")?;
+        let meta = tokio::fs::symlink_metadata(&path).await
+            .with_context(|| format!("stat {}", path.display()))?;
+        let kind = if meta.is_dir() { "dir" }
+            else if meta.file_type().is_symlink() { "link" }
+            else { "file" };
+        let mtime = meta.modified().ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64).unwrap_or(0);
+        Ok(json!({
+            "kind": kind,
+            "size": meta.len(),
+            "mode": meta.mode() & 0o777,
+            "mtime": mtime,
+        }))
+    }
+
+    async fn fs_read(&self, p: Json) -> Result<Json> {
+        let path = arg_path(&p, "path")?;
+        let bytes = tokio::fs::read(&path).await
+            .with_context(|| format!("read {}", path.display()))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        Ok(json!({ "content_b64": b64, "size": bytes.len() }))
+    }
+
+    async fn fs_write(&self, p: Json) -> Result<Json> {
+        let path = arg_path(&p, "path")?;
+        let b64 = p.get("content_b64").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("content_b64 required"))?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64)
+            .map_err(|e| anyhow!("base64 decode: {e}"))?;
+        if let Some(parent) = path.parent() {
+            // Create parent dir if it doesn't exist (parents=true by default for writes)
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        tokio::fs::write(&path, &bytes).await
+            .with_context(|| format!("write {}", path.display()))?;
+        Ok(json!({ "ok": true, "size": bytes.len() }))
+    }
+
+    async fn fs_mkdir(&self, p: Json) -> Result<Json> {
+        let path = arg_path(&p, "path")?;
+        let parents = p.get("parents").and_then(|v| v.as_bool()).unwrap_or(true);
+        if parents {
+            tokio::fs::create_dir_all(&path).await?;
+        } else {
+            tokio::fs::create_dir(&path).await?;
+        }
+        Ok(json!({ "ok": true }))
+    }
+
+    async fn fs_rm(&self, p: Json) -> Result<Json> {
+        let path = arg_path(&p, "path")?;
+        let recursive = p.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+        let meta = tokio::fs::symlink_metadata(&path).await
+            .with_context(|| format!("stat {}", path.display()))?;
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            if recursive {
+                tokio::fs::remove_dir_all(&path).await?;
+            } else {
+                tokio::fs::remove_dir(&path).await?;
+            }
+        } else {
+            tokio::fs::remove_file(&path).await?;
+        }
+        Ok(json!({ "ok": true }))
+    }
+
+    async fn fs_rename(&self, p: Json) -> Result<Json> {
+        let src = arg_path(&p, "src")?;
+        let dst = arg_path(&p, "dst")?;
+        tokio::fs::rename(&src, &dst).await
+            .with_context(|| format!("rename {} -> {}", src.display(), dst.display()))?;
+        Ok(json!({ "ok": true }))
+    }
+
+    async fn fs_realpath(&self, p: Json) -> Result<Json> {
+        let path = arg_path(&p, "path")?;
+        let canonical = tokio::fs::canonicalize(&path).await
+            .with_context(|| format!("realpath {}", path.display()))?;
+        Ok(json!({ "path": canonical.to_string_lossy() }))
+    }
+
     async fn notify(&self, method: &str, params: Json) {
         let msg = Mp::Array(vec![
             Mp::from(2u32),
@@ -745,6 +887,27 @@ pub fn mp_to_json(v: &Mp) -> Json {
         }
         Mp::Ext(_, _) => Json::Null,
     }
+}
+
+/// Extract a path field from RPC params, expanding `~/` to $HOME on the
+/// server side. Lets clients send `~/foo` without worrying about the home
+/// path of the remote user.
+fn arg_path(p: &Json, key: &str) -> Result<PathBuf> {
+    let s = p.get(key).and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("{key} required"))?;
+    // Accept ~/foo, ~ , /~/foo (the URI parser may leave a leading /). All
+    // resolve to the server-process's home dir.
+    let stripped = s.strip_prefix("/~/").or_else(|| s.strip_prefix("~/"));
+    if let Some(rest) = stripped {
+        if let Some(home) = dirs::home_dir() {
+            return Ok(home.join(rest));
+        }
+    } else if s == "~" || s == "/~" {
+        if let Some(home) = dirs::home_dir() {
+            return Ok(home);
+        }
+    }
+    Ok(PathBuf::from(s))
 }
 
 pub fn json_to_mp(v: &Json) -> Mp {

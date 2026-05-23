@@ -80,19 +80,26 @@ local function locate_core()
   return "jupynvim-core"
 end
 
+-- Multi-client storage. Keyed by alias ("local" for the default local backend,
+-- or any user-defined remote alias from M.config.remote). Lets you have a
+-- local notebook AND multiple remote notebooks open simultaneously, each
+-- routed to the right backend by their buffer's stored alias.
+M.clients = M.clients or {}
+
 -- Internal: spawn a backend process with the given cmd vector and wire it up
--- with TTY attach + event handlers. Used for both local and SSH-remote spawns.
-local function spawn_client(cmd_vec, label)
-  Log.info(string.format("spawning core (%s): %s", label, table.concat(cmd_vec, " ")))
+-- with TTY attach + event handlers. Stores in M.clients[alias] for routing.
+local function spawn_client(cmd_vec, alias)
+  Log.info(string.format("spawning core (%s): %s", alias, table.concat(cmd_vec, " ")))
   local client = RPC.spawn({
     cmd = cmd_vec,
     env = vim.tbl_extend("force", vim.fn.environ(), {
       JUPYNVIM_LOG = M.config.log_level,
     }),
     on_exit = function(code)
-      M.client = nil
+      M.clients[alias] = nil
+      if alias == "local" then M.client = nil end
       vim.schedule(function()
-        vim.notify(string.format("jupynvim-core (%s) exited (code=%s)", label, tostring(code)),
+        vim.notify(string.format("jupynvim-core (%s) exited (code=%s)", alias, tostring(code)),
                    vim.log.levels.WARN)
       end)
     end,
@@ -112,8 +119,12 @@ local function spawn_client(cmd_vec, label)
     local p = args[1] or args
     Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
   end)
+  M.clients[alias] = client
   return client
 end
+
+-- M.client_for is defined below after the SSH helpers are declared (Lua
+-- needs `resolve` and `build_ssh_cmd` to be in scope at definition time).
 
 local function ensure_client()
   if M.client and M.client.job then return M.client end
@@ -181,6 +192,28 @@ local function build_ssh_cmd(spec)
   -- which itself execs the job step.
   table.insert(cmd, "exec " .. remote_cmd)
   return cmd
+end
+
+-- Get or spawn the client for an alias.
+--   nil / "" / "local"  → the default local backend (M.client)
+--   <other>             → looks up M.config.remote[<alias>], spawns via SSH
+--                         (or profile.transport_cmd), caches in M.clients
+-- Multiple remote aliases coexist: each gets its own subprocess + msgpack
+-- session, routed to whichever buffer's `b:jupynvim_alias` matches.
+function M.client_for(alias)
+  if alias == nil or alias == "" or alias == "local" then
+    if M.client and M.client.job then return M.client end
+    M.client = spawn_client({ locate_core() }, "local")
+    return M.client
+  end
+  local existing = M.clients[alias]
+  if existing and existing.job then return existing end
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    error("jupynvim: no remote profile '" .. alias .. "'")
+  end
+  local cmd = resolve(profile.transport_cmd, profile) or build_ssh_cmd(profile)
+  return spawn_client(cmd, alias)
 end
 
 -- Switch the active backend to a remote one spawned over SSH. Tears down
@@ -382,6 +415,15 @@ function M.use_local()
   end
   M._remote_spec = nil
   return ensure_client()
+end
+
+-- Parse a jupynvim:// URI into (alias, path). Returns nil on no match.
+--   jupynvim://psc/jet/home/slin32/foo.py  →  "psc", "/jet/home/slin32/foo.py"
+--   jupynvim://psc/~/foo.py                →  "psc", "/~/foo.py"  (server expands ~)
+function M._parse_uri(uri)
+  local alias, path = uri:match("^jupynvim://([^/]+)(/.*)$")
+  if alias and path then return alias, path end
+  return nil
 end
 
 -- Parse a remote-open spec.
@@ -2030,6 +2072,121 @@ function M.setup(opts)
     callback = function(args)
       -- New file: defer-create with empty notebook
       vim.schedule(function() M.open(args.file) end)
+    end,
+  })
+
+  -- ===========================================================
+  -- Remote URI scheme: jupynvim://<alias>/<path>
+  --
+  -- Any buffer whose name matches this scheme is fetched/saved via the
+  -- alias's backend (M.client_for(alias)) using fs_read/fs_write RPCs.
+  -- Works for any file type. .ipynb gets routed to M.open instead so the
+  -- notebook flow takes over.
+  -- ===========================================================
+  vim.api.nvim_create_autocmd("BufReadCmd", {
+    group = group,
+    pattern = "jupynvim://*",
+    callback = function(args)
+      local alias, path = M._parse_uri(args.file)
+      if not alias then
+        vim.notify("jupynvim: invalid URI " .. args.file, vim.log.levels.ERROR)
+        return
+      end
+      -- Notebook: hand off to the notebook open flow (the URI itself
+      -- becomes the buffer name; M.open recognizes the scheme and routes
+      -- through the right client).
+      if path:sub(-6) == ".ipynb" then
+        vim.schedule(function()
+          local profile = M.config.remote and M.config.remote[alias]
+          if profile then M.use_remote(profile) end
+          M.open(path, { uri = args.file, alias = alias })
+        end)
+        return
+      end
+      -- Regular file: fs_read then populate the buffer.
+      local ok, client = pcall(M.client_for, alias)
+      if not ok then
+        vim.notify("jupynvim: " .. tostring(client), vim.log.levels.ERROR)
+        return
+      end
+      local err, res = client:call_sync("fs_read", { path = path }, 30000)
+      local lines
+      if err then
+        -- "No such file" is expected when editing a new remote file
+        -- (BufReadCmd fires before the user starts typing). Treat as empty
+        -- buffer rather than error so :w later creates the file.
+        if tostring(err):lower():find("no such file") then
+          lines = { "" }
+        else
+          vim.notify("jupynvim: fs_read failed: " .. tostring(err), vim.log.levels.ERROR)
+          return
+        end
+      else
+        local content = vim.base64.decode(res.content_b64)
+        lines = vim.split(content, "\n", { plain = true })
+        -- vim.split with trailing \n produces a phantom empty string; drop
+        -- it so the buffer matches the file exactly.
+        if #lines > 0 and lines[#lines] == "" then
+          table.remove(lines, #lines)
+        end
+      end
+      vim.api.nvim_buf_set_lines(args.buf, 0, -1, false, lines)
+      vim.bo[args.buf].buftype = "acwrite"
+      vim.bo[args.buf].swapfile = false  -- buffer content lives on the remote, no need for local swap
+      vim.bo[args.buf].modified = false
+      vim.b[args.buf].jupynvim_alias = alias
+      vim.b[args.buf].jupynvim_remote_path = path
+      local ft = vim.filetype.match({ filename = path, buf = args.buf })
+      if ft then vim.bo[args.buf].filetype = ft end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    group = group,
+    pattern = "jupynvim://*",
+    callback = function(args)
+      local alias = vim.b[args.buf].jupynvim_alias
+      local path = vim.b[args.buf].jupynvim_remote_path
+      if not alias or not path then
+        vim.notify("jupynvim: buffer missing remote metadata", vim.log.levels.ERROR)
+        return
+      end
+      local client = M.client_for(alias)
+      local lines = vim.api.nvim_buf_get_lines(args.buf, 0, -1, false)
+      local content = table.concat(lines, "\n") .. "\n"
+      local b64 = vim.base64.encode(content)
+      local err, _ = client:call_sync("fs_write",
+        { path = path, content_b64 = b64 }, 30000)
+      if err then
+        vim.notify("jupynvim: fs_write failed: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+      vim.bo[args.buf].modified = false
+      vim.notify(string.format("written %d lines to %s:%s", #lines, alias, path),
+                 vim.log.levels.INFO)
+    end,
+  })
+
+  -- :JupynvimEdit <alias>:<path>  — convenience wrapper for opening a remote
+  -- file. Equivalent to `:e jupynvim://<alias>/<path>` (which also works).
+  vim.api.nvim_create_user_command("JupynvimEdit", function(o)
+    local alias, path = o.args:match("^([^:]+):(.+)$")
+    if not alias or not path then
+      vim.notify("usage: :JupynvimEdit <alias>:<path>", vim.log.levels.WARN)
+      return
+    end
+    if not path:match("^/") then path = "/" .. path end  -- relative → home-relative
+    vim.cmd("edit jupynvim://" .. alias .. path)
+  end, {
+    nargs = 1,
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 and not line:find(":") then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
     end,
   })
 
