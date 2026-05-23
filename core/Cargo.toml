@@ -59,6 +59,11 @@ portable-pty = "0.8"
 ignore = "0.4"
 regex = "1"
 
+# Filesystem watching (Phase 5). Cross-platform: FSEvent on macOS,
+# inotify on Linux, kqueue on BSD. Notifies client via fs_event for
+# auto-refresh in the file browser and external-change detection.
+notify = "6"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -31,6 +31,9 @@ pub struct Server {
     /// Active proc_spawn'd PTY processes, keyed by our virtual pid.
     procs: DashMap<u32, Arc<ProcessEntry>>,
     next_proc_id: std::sync::atomic::AtomicU32,
+    /// Active fs_watch watchers, keyed by virtual watcher_id.
+    watchers: DashMap<u32, notify::RecommendedWatcher>,
+    next_watcher_id: std::sync::atomic::AtomicU32,
 }
 
 /// One PTY-backed remote process. PTY master stays open here; the slave
@@ -51,6 +54,8 @@ impl Server {
             kitty: Mutex::new(None),
             procs: DashMap::new(),
             next_proc_id: std::sync::atomic::AtomicU32::new(1),
+            watchers: DashMap::new(),
+            next_watcher_id: std::sync::atomic::AtomicU32::new(1),
         })
     }
 
@@ -253,6 +258,8 @@ impl Server {
             "proc_resize" => self.proc_resize(p).await,
             "proc_kill" => self.proc_kill(p).await,
             "search" => self.search(p).await,
+            "fs_watch" => self.fs_watch(p).await,
+            "fs_unwatch" => self.fs_unwatch(p).await,
             other => Err(anyhow!("unknown method '{other}'")),
         }
     }
@@ -1073,6 +1080,59 @@ impl Server {
 
         let truncated = matches.len() >= max;
         Ok(json!({ "matches": matches, "truncated": truncated }))
+    }
+
+    // ===========================================================
+    // File watching (Phase 5)
+    //
+    // fs_watch starts an OS-native filesystem watcher (FSEvent on macOS,
+    // inotify on Linux). Change events are pushed as `fs_event` notifications
+    // until the client calls fs_unwatch with the returned watcher_id.
+    // ===========================================================
+    async fn fs_watch(self: Arc<Self>, p: Json) -> Result<Json> {
+        use notify::{Watcher, RecursiveMode};
+        let path = arg_path(&p, "path")?;
+        let recursive = p.get("recursive").and_then(|v| v.as_bool()).unwrap_or(true);
+        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+
+        let watcher_id = self.next_watcher_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let rt_handle = tokio::runtime::Handle::current();
+        let server = self.clone();
+        let mut watcher: notify::RecommendedWatcher = notify::recommended_watcher(
+            move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    // Coarse kind classification — frontends mostly just
+                    // need "something changed, reload" anyway.
+                    let kind = match event.kind {
+                        notify::EventKind::Create(_) => "create",
+                        notify::EventKind::Modify(_) => "modify",
+                        notify::EventKind::Remove(_) => "remove",
+                        _ => "other",
+                    };
+                    let paths: Vec<String> = event.paths.iter()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    let server = server.clone();
+                    rt_handle.spawn(async move {
+                        server.notify("fs_event", json!({
+                            "watcher_id": watcher_id,
+                            "kind": kind,
+                            "paths": paths,
+                        })).await;
+                    });
+                }
+            }
+        ).map_err(|e| anyhow!("watcher init: {e}"))?;
+        watcher.watch(&path, mode).map_err(|e| anyhow!("watch: {e}"))?;
+        self.watchers.insert(watcher_id, watcher);
+        Ok(json!({ "watcher_id": watcher_id, "path": path.to_string_lossy() }))
+    }
+
+    async fn fs_unwatch(&self, p: Json) -> Result<Json> {
+        let id = p.get("watcher_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("watcher_id required"))? as u32;
+        self.watchers.remove(&id);
+        Ok(json!({ "ok": true }))
     }
 
     async fn notify(&self, method: &str, params: Json) {

@@ -105,6 +105,56 @@ function M.populate(buf, alias, dir_path, client)
   end
 
   M._bind_keys(buf)
+  M._setup_watcher(buf, alias, dir_path, client)
+end
+
+-- Per-client (shared across buffers) state: which alias's client has had
+-- the fs_event handler hooked, and the active watcher per browser buffer.
+local watch_state = {}
+
+-- Start an fs_watch on dir_path; debounced refresh on events.
+function M._setup_watcher(buf, alias, dir_path, client)
+  -- Stop any prior watcher for this buffer first
+  local prior = vim.b[buf].jupynvim_watcher_id
+  if prior then
+    pcall(function() client:call("fs_unwatch", { watcher_id = prior }, function() end) end)
+  end
+  -- Start a new one (non-recursive — we only show one dir level)
+  client:call("fs_watch", { path = dir_path, recursive = false }, function(err, res)
+    if err or not res or not res.watcher_id then return end
+    vim.b[buf].jupynvim_watcher_id = res.watcher_id
+    watch_state[res.watcher_id] = { buf = buf, alias = alias, dir_path = dir_path }
+  end)
+  -- Hook the client's fs_event handler once
+  if not client._fs_event_hooked then
+    client._fs_event_hooked = true
+    client:on("fs_event", function(args)
+      local e = args[1] or args
+      local entry = watch_state[e.watcher_id]
+      if not entry then return end
+      -- Debounce: only one reload pending per buffer at a time
+      if entry.pending then return end
+      entry.pending = true
+      vim.defer_fn(function()
+        entry.pending = false
+        if vim.api.nvim_buf_is_valid(entry.buf) then
+          M.populate(entry.buf, entry.alias, entry.dir_path)
+        end
+      end, 150)
+    end)
+  end
+  -- Clean up on buffer wipeout
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      local wid = vim.b[buf].jupynvim_watcher_id
+      if wid then
+        watch_state[wid] = nil
+        pcall(function() client:call("fs_unwatch", { watcher_id = wid }, function() end) end)
+      end
+    end,
+  })
 end
 
 -- Resolve the entry under the cursor. Returns {name, kind, is_parent} or nil.
