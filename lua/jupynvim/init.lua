@@ -2072,6 +2072,12 @@ function M.setup(opts)
     group = group,
     pattern = { "*.ipynb" },
     callback = function(args)
+      -- Skip jupynvim:// URIs — they're handled by our dedicated URI BufReadCmd
+      -- (registered below) which routes through the alias's remote backend
+      -- and passes opts.alias to M.open. This pattern would otherwise call
+      -- M.open with no alias and the local client, trying to run remote
+      -- paths through local fs ops.
+      if args.file:match("^jupynvim://") then return end
       -- BufReadCmd means user wants to read this file. If we already have a
       -- live notebook for it, treat as :e! (force reload from disk).
       local abs = vim.fn.fnamemodify(args.file, ":p")
