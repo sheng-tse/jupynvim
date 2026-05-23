@@ -554,7 +554,14 @@ M._find_local_venv_python = find_local_venv_python
 
 function M.open(path, opts)
   opts = opts or {}
-  ensure_client()
+  -- Route through the right client. opts.alias picks a specific remote
+  -- backend (set by the URI handler / file browser for remote notebooks);
+  -- without it, fall back to the local backend.
+  if opts.alias then
+    M.client = M.client_for(opts.alias)
+  else
+    ensure_client()
+  end
   local abs = vim.fn.fnamemodify(path, ":p")
   -- Clear stray direct placements left by file explorers (snacks.image
   -- previews .ipynb files and the placement survives past the explorer
@@ -739,37 +746,43 @@ function M.open(path, opts)
   -- once to harvest its real site-packages directories.
   local py_path
   local extra_paths = {}
-  -- Auto-detected .venv takes precedence over registered kernelspec, since
-  -- the user effectively asked for project-local environment by putting the
-  -- notebook next to one. Falls through to kernelspec lookup otherwise.
-  if M.config.auto_venv ~= false then
-    local nb_dir = vim.fn.fnamemodify(abs, ":h")
-    py_path = find_local_venv_python(nb_dir)
-  end
-  if not py_path then
-    local kspec_name = (snap.metadata and snap.metadata.kernelspec and snap.metadata.kernelspec.name) or "python3"
-    local kerr, kres = M.client:call_sync("list_kernels", {}, 2000)
-    if not kerr and type(kres) == "table" then
-      for _, k in ipairs(kres) do
-        if k.name == kspec_name and k.argv and k.argv[1] then
-          py_path = k.argv[1]
-          break
+  local is_remote = opts.alias ~= nil
+  -- Local-only: .venv discovery walks the local filesystem and the python
+  -- introspection runs locally. For remote notebooks the kernel lives on the
+  -- remote backend; the LSP work that wants sys.path won't make sense anyway
+  -- until we implement Phase 6 (remote LSP relay). Skip both for now.
+  if not is_remote then
+    if M.config.auto_venv ~= false then
+      local nb_dir = vim.fn.fnamemodify(abs, ":h")
+      py_path = find_local_venv_python(nb_dir)
+    end
+    if not py_path then
+      local kspec_name = (snap.metadata and snap.metadata.kernelspec and snap.metadata.kernelspec.name) or "python3"
+      local kerr, kres = M.client:call_sync("list_kernels", {}, 2000)
+      if not kerr and type(kres) == "table" then
+        for _, k in ipairs(kres) do
+          if k.name == kspec_name and k.argv and k.argv[1] then
+            py_path = k.argv[1]
+            break
+          end
         end
       end
     end
-  end
-  if py_path then
-    local sys_path = vim.fn.system({ py_path, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
-    if vim.v.shell_error == 0 then
-      for line in sys_path:gmatch("[^\r\n]+") do
-        if line:find("site%-packages") or line:find("dist%-packages") then
-          table.insert(extra_paths, line)
+    if py_path then
+      local sys_path = vim.fn.system({ py_path, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
+      if vim.v.shell_error == 0 then
+        for line in sys_path:gmatch("[^\r\n]+") do
+          if line:find("site%-packages") or line:find("dist%-packages") then
+            table.insert(extra_paths, line)
+          end
         end
       end
     end
   end
   nb.kernel_python_path = py_path
   nb.kernel_extra_paths = extra_paths
+  nb.alias = opts.alias
+  vim.b[buf].jupynvim_alias = opts.alias
   M._attach_lsp(buf, ft, py_path, extra_paths)
   -- Kernel-backed completion + hover via virtual LSP. Language-agnostic:
   -- the kernel's complete_request/inspect_request handle the actual work,
