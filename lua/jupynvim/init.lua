@@ -2087,6 +2087,9 @@ function M.setup(opts)
       -- BufReadCmd means user wants to read this file. If we already have a
       -- live notebook for it, treat as :e! (force reload from disk).
       local abs = vim.fn.fnamemodify(args.file, ":p")
+      -- Skip if M.open is mid-flight for this path — it created the buffer
+      -- itself via vim.fn.bufnr(true) and is about to populate it.
+      if M._opening and M._opening[abs] then return end
       local b = vim.fn.bufnr(abs)
       local force = b > 0 and Notebook.get(b) ~= nil
       -- Pre-populate the buffer with the on-disk file's line count of empty
@@ -2114,7 +2117,14 @@ function M.setup(opts)
     group = group,
     pattern = { "*.ipynb" },
     callback = function(args)
-      -- New file: defer-create with empty notebook
+      -- Skip URIs (handled by the dedicated jupynvim:// autocmd).
+      if args.file:match("^jupynvim://") then return end
+      -- Skip if our M.open is mid-flight for this path — it creates the
+      -- buffer via vim.fn.bufnr(abs, true), which triggers BufNewFile.
+      -- Re-entering M.open here would race with the in-progress one,
+      -- wipe its alias tagging, and (worst) drop the remote-backend route.
+      local abs = vim.fn.fnamemodify(args.file, ":p")
+      if M._opening and M._opening[abs] then return end
       vim.schedule(function() M.open(args.file) end)
     end,
   })
