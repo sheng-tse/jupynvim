@@ -63,13 +63,20 @@ function M.populate(buf, alias, dir_path, client)
   vim.b[buf].jupynvim_remote_path = dir_path
   vim.b[buf].jupynvim_browser = true
 
-  local err, res = client:call_sync("fs_list", { path = dir_path }, 30000)
+  -- First call after backend spawn can take 30+s (SSH + srun attach +
+  -- jupynvim-core startup). 60s gives PSC headroom on busy nights.
+  local err, res = client:call_sync("fs_list", { path = dir_path }, 60000)
   if err then
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
       "[" .. alias .. "] " .. dir_path,
       "",
       "Error: " .. tostring(err),
+      "",
+      "Common causes:",
+      "  • backend not yet installed on remote (~/.local/bin/jupynvim-core)",
+      "  • slurm job ID stale; export PSC_JOBID=<new> and retry",
+      "  • SSH ControlMaster dead; :JupynvimDisconnect " .. alias .. " then reconnect",
     })
     vim.bo[buf].modifiable = false
     return

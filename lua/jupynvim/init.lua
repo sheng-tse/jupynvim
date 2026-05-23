@@ -183,7 +183,10 @@ local function build_ssh_cmd(spec)
   for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
   local remote_cmd = spec.core_path or "jupynvim-core"
-  local slurm = resolve(spec.slurm, spec)
+  -- Prefer the connect-time-cached slurm string over re-calling the function
+  -- (which would prompt the user from inside an autocmd, where input is invisible).
+  local slurm = (M._slurm_cache and spec.label and M._slurm_cache[spec.label])
+    or resolve(spec.slurm, spec)
   if slurm and slurm ~= "" then
     remote_cmd = slurm .. " " .. remote_cmd
   end
@@ -212,7 +215,9 @@ function M.client_for(alias)
   if not profile then
     error("jupynvim: no remote profile '" .. alias .. "'")
   end
-  local cmd = resolve(profile.transport_cmd, profile) or build_ssh_cmd(profile)
+  -- Attach alias as `label` so build_ssh_cmd can find the cached slurm string.
+  local spec = vim.tbl_extend("force", {}, profile, { label = alias })
+  local cmd = resolve(spec.transport_cmd, spec) or build_ssh_cmd(spec)
   return spawn_client(cmd, alias)
 end
 
@@ -259,9 +264,19 @@ function M.connect(alias)
     vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
     return
   end
+  -- Eagerly resolve a function-typed `slurm` field NOW (visible prompt at
+  -- connect time) rather than later inside the BufReadCmd handler when the
+  -- UI is busy spawning the backend and the input prompt would be invisible.
+  -- Cached result lives in M._slurm_cache[alias]; build_ssh_cmd uses it
+  -- in preference to re-resolving the function on each spawn.
+  M._slurm_cache = M._slurm_cache or {}
+  if type(profile.slurm) == "function" and not M._slurm_cache[alias] then
+    local ok, val = pcall(profile.slurm, profile)
+    if ok then M._slurm_cache[alias] = val end
+  end
   local cp = control_path(alias)
   if master_alive(alias, profile) then
-    -- Already connected — just open the picker.
+    -- Already connected — just open the browser.
     M.remote_browse(alias)
     return
   end
@@ -285,15 +300,29 @@ function M.connect(alias)
   vim.fn.termopen(args, {
     on_exit = function(_, code)
       vim.schedule(function()
-        if code == 0 and master_alive(alias, profile) then
-          -- Auth succeeded, ssh forked to background. Close the now-useless
-          -- terminal split and open the file picker.
+        -- Always close the auth terminal on clean exit (code 0). With
+        -- ControlPersist, the ssh foreground exits as soon as the master
+        -- forks to background — that's the success signal. If auth
+        -- actually failed, code != 0 and we leave the terminal up.
+        if code == 0 then
           if term_buf and vim.api.nvim_buf_is_valid(term_buf) then
             pcall(vim.api.nvim_buf_delete, term_buf, { force = true })
           end
-          vim.notify("jupynvim: " .. alias .. " connected", vim.log.levels.INFO)
-          M.remote_browse(alias)
-        elseif code ~= 0 then
+          -- Poll briefly for master to appear (FSEvent race after fork).
+          local deadline = vim.loop.hrtime() + 3e9  -- 3 seconds
+          local function check()
+            if master_alive(alias, profile) then
+              vim.notify("jupynvim: " .. alias .. " connected", vim.log.levels.INFO)
+              M.remote_browse(alias)
+            elseif vim.loop.hrtime() < deadline then
+              vim.defer_fn(check, 200)
+            else
+              vim.notify("jupynvim: " .. alias .. " auth exited 0 but master not detected",
+                         vim.log.levels.WARN)
+            end
+          end
+          check()
+        else
           vim.notify("jupynvim: " .. alias .. " connect failed (code=" .. code .. ")",
                      vim.log.levels.WARN)
         end
@@ -345,10 +374,24 @@ function M.remote_browse(alias, subpath)
   end
   -- Default to user's home on the remote (server expands ~ → $HOME).
   local path = (subpath ~= nil and subpath ~= "") and subpath or "~"
-  -- BufReadCmd routes URIs ending in / to the browser module.
   if path:sub(-1) ~= "/" then path = path .. "/" end
   if path:sub(1, 1) ~= "/" then path = "/" .. path end
-  vim.cmd("edit jupynvim://" .. alias .. path)
+  local uri = "jupynvim://" .. alias .. path
+  -- Open the browser in its own tab so we don't fight snacks dashboard or
+  -- whatever buffer happens to be current. Reuse an existing tab if one is
+  -- already showing this alias (avoids tab pile-up on repeat connects).
+  for i = 1, vim.fn.tabpagenr("$") do
+    local wins = vim.fn.tabpagebuflist(i)
+    for _, b in ipairs(wins) do
+      local name = vim.api.nvim_buf_get_name(b)
+      if name:match("^jupynvim://" .. vim.pesc(alias) .. "/") then
+        vim.cmd("tabnext " .. i)
+        vim.cmd("edit " .. uri)
+        return
+      end
+    end
+  end
+  vim.cmd("tabnew " .. uri)
 end
 
 -- Switch back to a local backend.
