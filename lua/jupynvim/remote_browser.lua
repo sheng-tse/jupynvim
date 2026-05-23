@@ -197,6 +197,13 @@ local function open_at_cursor(buf)
   local target = join_path(cur, e.name)
   if e.kind == "dir" then
     vim.cmd("edit " .. uri_for(alias, target, true))
+  elseif e.name:sub(-6) == ".ipynb" then
+    -- Notebook: route through jupynvim's notebook flow directly. Skips
+    -- the URI scheme so we don't end up with an orphan URI buffer
+    -- alongside the real notebook buffer.
+    local J = require("jupynvim")
+    J.use_remote(alias)
+    J.open(target, { alias = alias })
   else
     vim.cmd("edit " .. uri_for(alias, target, false))
   end

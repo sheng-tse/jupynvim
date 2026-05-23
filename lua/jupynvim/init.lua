@@ -228,25 +228,22 @@ function M.client_for(alias)
   return spawn_client(cmd, alias)
 end
 
--- Switch the active backend to a remote one spawned over SSH. Tears down
--- any existing client and any open notebook sessions (they belonged to the
--- previous backend). Idempotent: calling with the same host is a no-op.
-function M.use_remote(spec)
-  assert(type(spec) == "table" and spec.host, "use_remote: spec.host required")
-  if M._remote_spec and M._remote_spec.host == spec.host and M.client and M.client.job then
-    Log.info("jupynvim: already connected to " .. spec.host)
-    return M.client
+-- Point the "active" client at a remote alias's backend. Reuses the
+-- existing M.clients[alias] connection (spawned at :JupynvimConnect time)
+-- instead of tearing down and respawning. Accepts either an alias string
+-- or a spec table (the latter must include `label` or `host` for lookup).
+function M.use_remote(alias_or_spec)
+  local alias, spec
+  if type(alias_or_spec) == "string" then
+    alias = alias_or_spec
+    spec = M.config.remote and M.config.remote[alias]
+  else
+    spec = alias_or_spec
+    alias = spec.label or spec.host
   end
-  if M.client then
-    pcall(function() M.client:stop() end)
-    M.client = nil
-  end
+  assert(spec and spec.host, "use_remote: profile not found or missing host")
   M._remote_spec = spec
-  -- spec.transport_cmd lets users override the default SSH-based spawn for
-  -- non-SSH transports (gcloud compute ssh, aws ssm start-session, docker
-  -- exec, etc). Can be a function returning the array for dynamic args.
-  local cmd = resolve(spec.transport_cmd, spec) or build_ssh_cmd(spec)
-  M.client = spawn_client(cmd, "remote:" .. spec.host)
+  M.client = M.client_for(alias)  -- reuse existing alive client
   return M.client
 end
 
@@ -411,11 +408,18 @@ function M.remote_browse(alias, subpath)
     end
   end
 
-  -- Try to close any pre-existing left-side explorer (snacks/neo-tree/etc)
-  -- so our browser takes the same slot rather than appearing alongside.
-  pcall(function() if Snacks and Snacks.explorer then Snacks.explorer.close() end end)
-  pcall(function() vim.cmd("NeoTreeClose") end)
-  pcall(function() vim.cmd("NvimTreeClose") end)
+  -- Close any pre-existing file-explorer sidebar so our browser takes the
+  -- same screen real estate rather than appearing alongside. We can't always
+  -- reliably call the plugin's official close API (it changes), so we just
+  -- walk all windows and close any whose buffer looks like an explorer.
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(win)
+    local ft = vim.bo[b].filetype or ""
+    if ft:lower():find("snacks") or ft == "neo-tree" or ft == "NvimTree"
+       or ft == "oil" or ft == "explorer" or ft == "minifiles" then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
 
   -- Open as a left sidebar vsplit (~32 cols, similar to snacks-explorer).
   vim.cmd("topleft 32vsplit " .. uri)
@@ -2117,12 +2121,18 @@ function M.setup(opts)
         require("jupynvim.remote_browser").populate(args.buf, alias, path:gsub("/+$", ""):gsub("^$", "/"), client)
         return
       end
-      -- Notebook: hand off to the notebook open flow.
+      -- Notebook: hand off to the notebook open flow. The notebook flow
+      -- creates its own buffer (named with the remote path), so wipe the
+      -- empty URI buffer we just created — otherwise we get an orphan
+      -- "jupynvim://..." buffer alongside the real notebook buffer.
       if path:sub(-6) == ".ipynb" then
+        local uri_buf = args.buf
         vim.schedule(function()
-          local profile = M.config.remote and M.config.remote[alias]
-          if profile then M.use_remote(profile) end
-          M.open(path, { uri = args.file, alias = alias })
+          if vim.api.nvim_buf_is_valid(uri_buf) then
+            pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
+          end
+          M.use_remote(alias)
+          M.open(path, { alias = alias })
         end)
         return
       end
