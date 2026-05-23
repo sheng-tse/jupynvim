@@ -2115,6 +2115,59 @@ function M.setup(opts)
     end,
   })
 
+  -- :JupynvimGrep <alias> <pattern>  — ripgrep-equivalent on remote.
+  -- Populates the quickfix list with matches. Uses the search RPC (ignore +
+  -- regex on the backend — no remote ripgrep binary required). Search root
+  -- defaults to the remote home; pass `:JupynvimGrep alias pattern path` to
+  -- scope it.
+  vim.api.nvim_create_user_command("JupynvimGrep", function(o)
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    if #parts < 2 then
+      vim.notify("usage: :JupynvimGrep <alias> <pattern> [<path>]", vim.log.levels.WARN)
+      return
+    end
+    local alias = parts[1]
+    local pattern = parts[2]
+    local path = parts[3] or "~"
+    local client = M.client_for(alias)
+    vim.notify("jupynvim: searching " .. alias .. ":" .. path .. " for " .. pattern)
+    client:call("search", { path = path, pattern = pattern }, function(err, res)
+      if err then
+        vim.notify("jupynvim: search failed: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+      vim.schedule(function()
+        local qf = {}
+        for _, m in ipairs(res.matches or {}) do
+          table.insert(qf, {
+            filename = "jupynvim://" .. alias .. m.path,
+            lnum = m.line,
+            col = m.col,
+            text = m.text,
+          })
+        end
+        vim.fn.setqflist({}, "r", {
+          title = string.format("jupynvim %s:%s `%s`", alias, path, pattern),
+          items = qf,
+        })
+        local msg = string.format("found %d matches%s", #qf, res.truncated and " (truncated)" or "")
+        vim.notify(msg, vim.log.levels.INFO)
+        if #qf > 0 then vim.cmd("copen") end
+      end)
+    end)
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
+    end,
+  })
+
   -- :JupynvimTerm <alias>  — open a PTY-backed remote shell in a split.
   vim.api.nvim_create_user_command("JupynvimTerm", function(o)
     local alias = o.args:match("^%s*(%S+)%s*$")

@@ -54,6 +54,11 @@ base64 = "0.22"
 # rather than line-buffered piped stdio.
 portable-pty = "0.8"
 
+# Search (Phase 4). Same crates that power ripgrep: `ignore` for the
+# .gitignore-aware directory walker, `regex` for the matching engine.
+ignore = "0.4"
+regex = "1"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

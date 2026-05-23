@@ -252,6 +252,7 @@ impl Server {
             "proc_stdin" => self.proc_stdin(p).await,
             "proc_resize" => self.proc_resize(p).await,
             "proc_kill" => self.proc_kill(p).await,
+            "search" => self.search(p).await,
             other => Err(anyhow!("unknown method '{other}'")),
         }
     }
@@ -1011,6 +1012,67 @@ impl Server {
             let _ = child.kill();
         }
         Ok(json!({ "ok": true }))
+    }
+
+    // ===========================================================
+    // Search (Phase 4: ripgrep-equivalent over remote files)
+    //
+    // Walks the directory tree (gitignore-aware via the `ignore` crate)
+    // and matches each line against a regex. Returns matches as quickfix-
+    // friendly { path, line, col, text } objects. Single-shot for now;
+    // streaming variant can land later if large searches become a problem.
+    // ===========================================================
+    async fn search(&self, p: Json) -> Result<Json> {
+        let root = arg_path(&p, "path")?;
+        let pattern = p.get("pattern").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("pattern required"))?
+            .to_string();
+        let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
+        let case_sensitive = p.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
+        let fixed_string = p.get("fixed_string").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        // Build regex (escape if fixed_string mode)
+        let raw = if fixed_string { regex::escape(&pattern) } else { pattern.clone() };
+        let regex = regex::RegexBuilder::new(&raw)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| anyhow!("bad regex: {e}"))?;
+
+        // Walk + match in a blocking task (filesystem I/O + CPU bound).
+        let matches = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            let walker = ignore::WalkBuilder::new(&root)
+                .hidden(false)       // include dotfiles (match common ripgrep -uu)
+                .ignore(true)        // respect .ignore
+                .git_ignore(true)    // respect .gitignore
+                .git_global(false)
+                .git_exclude(true)
+                .build();
+            for entry_result in walker {
+                if out.len() >= max { break; }
+                let entry = match entry_result { Ok(e) => e, Err(_) => continue };
+                if !entry.file_type().map_or(false, |t| t.is_file()) { continue; }
+                let path = entry.path().to_path_buf();
+                let content = match std::fs::read_to_string(&path) {
+                    Ok(c) => c, Err(_) => continue,
+                };
+                for (idx, line) in content.lines().enumerate() {
+                    if let Some(m) = regex.find(line) {
+                        out.push(json!({
+                            "path": path.to_string_lossy(),
+                            "line": idx + 1,
+                            "col": m.start() + 1,
+                            "text": line,
+                        }));
+                        if out.len() >= max { break; }
+                    }
+                }
+            }
+            out
+        }).await.map_err(|e| anyhow!("search task: {e}"))?;
+
+        let truncated = matches.len() >= max;
+        Ok(json!({ "matches": matches, "truncated": truncated }))
     }
 
     async fn notify(&self, method: &str, params: Json) {
