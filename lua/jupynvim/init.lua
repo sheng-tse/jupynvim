@@ -278,12 +278,18 @@ function M.disconnect(alias)
   vim.notify("jupynvim: " .. alias .. " control socket closed")
 end
 
--- Browse .ipynb files on a remote alias and open the selected one.
+-- Browse files on a remote alias and open the selected one.
+--   .ipynb        → opened as a notebook through jupynvim
+--   other files   → fetched via `ssh cat` into a read-only scratch buffer
+--   directories   → recurse: re-invokes remote_browse on the picked dir
 -- subpath defaults to "." (relative to your remote home).
+--
+-- For a real remote workspace (editable files, search, grep, write-back),
+-- install distant.nvim alongside jupynvim. jupynvim's scope is notebooks.
 function M.remote_browse(alias, subpath)
   local profile = M.config.remote and M.config.remote[alias]
   if not profile then
-    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias or "?") .. "'", vim.log.levels.ERROR)
     return
   end
   if not master_alive(alias, profile) then
@@ -291,27 +297,71 @@ function M.remote_browse(alias, subpath)
                vim.log.levels.WARN)
     return
   end
-  subpath = (subpath ~= "" and subpath) or "."
+  subpath = (subpath ~= nil and subpath ~= "") and subpath or "."
   local cp = control_path(alias)
-  local find_cmd = "find " .. vim.fn.shellescape(subpath) ..
-                   " -name '*.ipynb' -not -path '*/\\.*' 2>/dev/null | head -500"
+  -- One level deep listing (entries with trailing / for dirs). Recurse via
+  -- subsequent calls. Skips dotfiles. -L follows symlinks (so /jet/home links
+  -- through to the actual storage).
+  local list_cmd = string.format(
+    "cd %s && ls -Ap | head -500",
+    vim.fn.shellescape(subpath)
+  )
   local cmd = { "ssh", "-T", "-o", "BatchMode=yes",
-                "-o", "ControlPath=" .. cp, profile.host, find_cmd }
+                "-o", "ControlPath=" .. cp, profile.host, list_cmd }
   local result = vim.fn.system(cmd)
   if vim.v.shell_error ~= 0 then
-    vim.notify("jupynvim: remote find failed: " .. result, vim.log.levels.ERROR)
+    vim.notify("jupynvim: remote ls failed: " .. result, vim.log.levels.ERROR)
     return
   end
-  local files = {}
-  for line in result:gmatch("[^\n]+") do table.insert(files, line) end
-  if #files == 0 then
-    vim.notify("jupynvim: no .ipynb under " .. alias .. ":" .. subpath)
+  local entries = { ".." }  -- parent always available
+  for line in result:gmatch("[^\n]+") do table.insert(entries, line) end
+  if #entries == 1 then
+    vim.notify("jupynvim: empty directory on " .. alias .. ":" .. subpath)
     return
   end
-  vim.ui.select(files, { prompt = "Open notebook on " .. alias .. ":" }, function(choice)
+  vim.ui.select(entries, {
+    prompt = string.format("[%s] %s:", alias, subpath),
+    format_item = function(e) return e end,
+  }, function(choice)
     if not choice then return end
-    M.use_remote(profile)
-    M.open(choice, { remote_label = alias })
+    local resolved
+    if choice == ".." then
+      -- naive parent: strip last component
+      resolved = subpath:match("^(.+)/[^/]+/?$") or "."
+    else
+      resolved = (subpath == "." and choice or (subpath .. "/" .. choice))
+      resolved = resolved:gsub("/+", "/"):gsub("/$", "")
+    end
+    if choice:sub(-1) == "/" or choice == ".." then
+      -- directory: recurse
+      vim.schedule(function() M.remote_browse(alias, resolved) end)
+    elseif choice:sub(-6) == ".ipynb" then
+      -- notebook: open via jupynvim
+      M.use_remote(profile)
+      M.open(resolved, { remote_label = alias })
+    else
+      -- other file: fetch read-only into a scratch buffer
+      local cat_cmd = { "ssh", "-T", "-o", "BatchMode=yes",
+                        "-o", "ControlPath=" .. cp, profile.host,
+                        "cat " .. vim.fn.shellescape(resolved) }
+      local body = vim.fn.system(cat_cmd)
+      if vim.v.shell_error ~= 0 then
+        vim.notify("jupynvim: cat failed: " .. body, vim.log.levels.ERROR)
+        return
+      end
+      vim.cmd("enew")
+      local buf = vim.api.nvim_get_current_buf()
+      vim.api.nvim_buf_set_name(buf, string.format("[%s]:%s", alias, resolved))
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(body, "\n", { plain = true }))
+      vim.bo[buf].buftype = "nofile"
+      vim.bo[buf].modifiable = false
+      vim.bo[buf].readonly = true
+      vim.bo[buf].swapfile = false
+      -- Guess filetype from extension
+      local ft = vim.filetype.match({ filename = resolved })
+      if ft then vim.bo[buf].filetype = ft end
+      vim.notify("[remote read-only] install distant.nvim for editing", vim.log.levels.INFO)
+    end
   end)
 end
 
@@ -2039,16 +2089,20 @@ function M.setup(opts)
     end,
   })
 
-  -- :JupynvimRemoteFiles <alias> [<subpath>]  — list notebooks on a remote
-  -- via SSH+find, open the picked one. Requires :JupynvimConnect first.
+  -- :JupynvimRemoteFiles <alias> [<subpath>]  — browse files on a remote,
+  -- open notebooks via jupynvim and other files as read-only scratch. Requires
+  -- :JupynvimConnect <alias> first.
   vim.api.nvim_create_user_command("JupynvimRemoteFiles", function(o)
-    local parts = vim.split(o.args, "%s+", { trimempty = true })
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    if #parts == 0 then
+      vim.notify("usage: :JupynvimRemoteFiles <alias> [<subpath>]", vim.log.levels.WARN)
+      return
+    end
     M.remote_browse(parts[1], parts[2])
   end, {
-    nargs = "+",
+    nargs = "*",
     complete = function(_, line)
-      -- Complete first arg with remote profile names
-      local words = vim.split(line, "%s+", { trimempty = true })
+      local words = vim.split(line, " ", { trimempty = true })
       if #words <= 2 then
         local names = {}
         for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
