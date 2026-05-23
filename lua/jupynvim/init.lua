@@ -768,7 +768,10 @@ function M.open(path, opts)
         end
       end
     end
-    if py_path then
+    -- Belt-and-braces: even when is_remote is false, refuse to spawn a
+    -- python that isn't executable here. A stale local kernelspec pointing
+    -- at a remote-only path (PSC anaconda etc) was producing E475.
+    if py_path and vim.fn.executable(py_path) == 1 then
       local sys_path = vim.fn.system({ py_path, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
       if vim.v.shell_error == 0 then
         for line in sys_path:gmatch("[^\r\n]+") do
@@ -777,6 +780,9 @@ function M.open(path, opts)
           end
         end
       end
+    elseif py_path then
+      Log.warn("kernel python path '" .. py_path .. "' is not executable locally; skipping sys.path probe")
+      py_path = nil
     end
   end
   nb.kernel_python_path = py_path
