@@ -53,6 +53,18 @@ M.config = {
   -- jupynvim implementing the LSP notebook protocol so ty (and future
   -- notebook-aware LSPs) can do per-cell analysis. Tracked for v0.3.
   lsp_blocklist = {},
+  -- Named remote profiles for :JupynvimOpenRemote. Each entry maps an alias
+  -- (used as `alias:relative/path` in the command) to a connection spec.
+  -- Example:
+  --   remote = {
+  --     psc_bridges2 = {
+  --       host = "user@bridges2.psc.edu",
+  --       core_path = "~/.local/bin/jupynvim-core",
+  --       -- ssh_args = { "-J", "jumpbox" },  -- optional ProxyJump etc
+  --       -- slurm = "interact -p GPU-shared --gpus 1 -t 02:00:00", -- v0.3.x
+  --     },
+  --   }
+  remote = {},
 }
 
 -- ---------- backend helpers ----------
@@ -68,37 +80,120 @@ local function locate_core()
   return "jupynvim-core"
 end
 
-local function ensure_client()
-  if M.client and M.client.job then return M.client end
-  local path = locate_core()
-  Log.info("spawning core: " .. path)
-  M.client = RPC.spawn({
-    cmd = { path },
+-- Internal: spawn a backend process with the given cmd vector and wire it up
+-- with TTY attach + event handlers. Used for both local and SSH-remote spawns.
+local function spawn_client(cmd_vec, label)
+  Log.info(string.format("spawning core (%s): %s", label, table.concat(cmd_vec, " ")))
+  local client = RPC.spawn({
+    cmd = cmd_vec,
     env = vim.tbl_extend("force", vim.fn.environ(), {
       JUPYNVIM_LOG = M.config.log_level,
     }),
     on_exit = function(code)
       M.client = nil
       vim.schedule(function()
-        vim.notify("jupynvim-core exited (code=" .. code .. ")", vim.log.levels.WARN)
+        vim.notify(string.format("jupynvim-core (%s) exited (code=%s)", label, tostring(code)),
+                   vim.log.levels.WARN)
       end)
     end,
   })
-  -- Attach the controlling TTY for native Kitty graphics
+  -- Attach the controlling TTY for native Kitty graphics. Local mode is
+  -- attempted first; for SSH-remote backends the local-mode attempt fails
+  -- (backend is on a different host) and Image.attach auto-falls-back to
+  -- remote mode (escape_b64 round-trip).
   local tty_path = vim.env.JUPYNVIM_TTY or "/dev/tty"
-  Image.attach(M.client, tty_path)
+  Image.attach(client, tty_path)
 
-  -- Set up notification handlers
-  M.client:on("cell_event", function(args)
-    -- args is the params array: [{session_id, cell_id, event}]
+  client:on("cell_event", function(args)
     local p = args[1] or args
     M._handle_cell_event(p)
   end)
-  M.client:on("kernel_event", function(args)
+  client:on("kernel_event", function(args)
     local p = args[1] or args
     Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
   end)
+  return client
+end
+
+local function ensure_client()
+  if M.client and M.client.job then return M.client end
+  M.client = spawn_client({ locate_core() }, "local")
   return M.client
+end
+
+-- Build an SSH command vector that spawns jupynvim-core on a remote host.
+-- spec.host: "user@host" passed to ssh.
+-- spec.core_path: remote path to jupynvim-core (default "jupynvim-core" on $PATH).
+-- spec.ssh_args: extra args appended after `ssh` (e.g. ProxyJump). Optional.
+local function build_ssh_cmd(spec)
+  local cmd = { "ssh" }
+  -- Force pseudo-tty off — we want raw stdio for msgpack, not a TTY-mangled stream.
+  -- BatchMode prevents interactive password prompts (rely on ssh-agent / keys).
+  table.insert(cmd, "-T")
+  table.insert(cmd, "-o")
+  table.insert(cmd, "BatchMode=yes")
+  for _, a in ipairs(spec.ssh_args or {}) do table.insert(cmd, a) end
+  table.insert(cmd, spec.host)
+  -- The remote command. Keep it simple: just exec the binary so its stdio
+  -- becomes ssh's stdio (no intermediate shell can buffer).
+  table.insert(cmd, "exec " .. (spec.core_path or "jupynvim-core"))
+  return cmd
+end
+
+-- Switch the active backend to a remote one spawned over SSH. Tears down
+-- any existing client and any open notebook sessions (they belonged to the
+-- previous backend). Idempotent: calling with the same host is a no-op.
+function M.use_remote(spec)
+  assert(type(spec) == "table" and spec.host, "use_remote: spec.host required")
+  if M._remote_spec and M._remote_spec.host == spec.host and M.client and M.client.job then
+    Log.info("jupynvim: already connected to " .. spec.host)
+    return M.client
+  end
+  if M.client then
+    pcall(function() M.client:stop() end)
+    M.client = nil
+  end
+  M._remote_spec = spec
+  -- spec.transport_cmd lets users override the default SSH-based spawn. Useful
+  -- for testing (bypass SSH and run a local binary directly) and for
+  -- alternative transports (kubectl exec, docker exec, etc).
+  local cmd = spec.transport_cmd or build_ssh_cmd(spec)
+  M.client = spawn_client(cmd, "remote:" .. spec.host)
+  return M.client
+end
+
+-- Switch back to a local backend.
+function M.use_local()
+  if M.client and not M._remote_spec then return M.client end
+  if M.client then
+    pcall(function() M.client:stop() end)
+    M.client = nil
+  end
+  M._remote_spec = nil
+  return ensure_client()
+end
+
+-- Parse a remote-open spec.
+--   "alias:relative/or/abs/path"   uses M.config.remote[alias]
+--   "user@host:/abs/path"          one-off; alias name defaults to user@host
+-- Returns { host, core_path, path, ssh_args, slurm } or nil + err.
+function M._parse_remote_spec(s)
+  if type(s) ~= "string" or s == "" then return nil, "empty spec" end
+  local prefix, path = s:match("^([^:]+):(.+)$")
+  if not prefix or not path then return nil, "expected `alias:path` or `user@host:/path`" end
+  local profile = M.config.remote and M.config.remote[prefix]
+  if profile then
+    return {
+      host = profile.host or prefix,
+      core_path = profile.core_path,
+      ssh_args = profile.ssh_args,
+      slurm = profile.slurm,
+      path = path,
+      label = prefix,
+    }
+  end
+  -- Bare user@host:/path (no configured alias)
+  return { host = prefix, path = path, label = prefix }
 end
 
 function M._handle_cell_event(p)
@@ -208,7 +303,22 @@ function M.open(path, opts)
       Render.refresh(existing_nb, vim.api.nvim_get_current_win())
       return existing_buf
     end
-    -- :e! / force reload: tear down old session before creating new one
+  end
+
+  -- Idempotency #2: re-entrancy guard. The first M.open is mid-flight
+  -- (likely blocked in call_sync's vim.wait). A second BufReadCmd that fires
+  -- during the wait must NOT touch the notebook the first call is building
+  -- (including the force-tear-down path below — that would wipe the new nb
+  -- before the outer call finishes).
+  if M._opening[abs] then
+    return existing_buf > 0 and existing_buf or nil
+  end
+  M._opening[abs] = true
+
+  -- Force reload: tear down old session BEFORE creating new one. Safe to do
+  -- now that the re-entrancy guard is set.
+  if existing_buf > 0 then
+    local existing_nb = Notebook.get(existing_buf)
     if existing_nb and opts.force then
       pcall(function()
         ensure_client():call("close", { session_id = existing_nb.session_id }, function() end)
@@ -217,13 +327,6 @@ function M.open(path, opts)
       pcall(function() require("jupynvim.image").clear_all() end)
     end
   end
-
-  -- Idempotency #2: re-entrancy guard. Two BufReadCmds for the same path race
-  -- on `call_sync`; only the first should proceed.
-  if M._opening[abs] then
-    return existing_buf > 0 and existing_buf or nil
-  end
-  M._opening[abs] = true
 
   local err, result = M.client:call_sync("open", { path = abs }, 5000)
   if err then
@@ -1738,6 +1841,25 @@ function M.setup(opts)
     M.delete_image(vim.api.nvim_get_current_buf())
   end, {})
   vim.api.nvim_create_user_command("JupynvimOpen", function(o) M.open(o.args) end, { nargs = 1, complete = "file" })
+
+  -- :JupynvimOpenRemote alias:path  (alias from config.remote)
+  -- :JupynvimOpenRemote user@host:/abs/path  (one-off)
+  -- Switches the active backend to an SSH-spawned one on the named host,
+  -- then opens the notebook at the given remote path.
+  vim.api.nvim_create_user_command("JupynvimOpenRemote", function(o)
+    local spec, perr = M._parse_remote_spec(o.args)
+    if not spec then
+      vim.notify("jupynvim: " .. tostring(perr), vim.log.levels.ERROR)
+      return
+    end
+    M.use_remote(spec)
+    -- For remote opens, the path is whatever the user wrote (we don't expand
+    -- ~ or resolve relative against the local CWD). Backend opens it on the
+    -- remote filesystem.
+    M.open(spec.path, { remote_label = spec.label })
+  end, { nargs = 1 })
+
+  vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
   vim.api.nvim_create_user_command("JupynvimRunCell", function() M.run_cell(0, { advance = false }) end, {})
   vim.api.nvim_create_user_command("JupynvimRunAll", function() M.run_all(0) end, {})
   vim.api.nvim_create_user_command("JupynvimKernel", function() M.kernel_picker(0) end, {})
