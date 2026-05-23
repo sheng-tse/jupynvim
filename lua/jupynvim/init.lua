@@ -205,10 +205,21 @@ function M.use_remote(spec)
   return M.client
 end
 
+-- Is the ControlMaster for this alias alive?
+local function master_alive(alias, profile)
+  local cp = control_path(alias)
+  if not cp then return false end
+  vim.fn.system({ "ssh", "-O", "check", "-o", "ControlPath=" .. cp, profile.host })
+  return vim.v.shell_error == 0
+end
+
 -- Open an interactive SSH ControlMaster session in a terminal split. After
 -- you authenticate (password, 2FA, key passphrase), the connection persists
 -- as a multiplexed socket. Subsequent :JupynvimOpenRemote calls reuse it
 -- without prompting. Similar to VSCode's "Connect to Host" flow.
+--
+-- Idempotent: if master is already alive, returns early. If a stale socket
+-- file exists (master died but file remained), cleans up before reconnecting.
 function M.connect(alias)
   local profile = M.config.remote and M.config.remote[alias]
   if not profile then
@@ -216,9 +227,16 @@ function M.connect(alias)
     return
   end
   local cp = control_path(alias)
+  if master_alive(alias, profile) then
+    vim.notify("jupynvim: " .. alias .. " already connected (control master alive)")
+    return
+  end
+  -- Clean up stale socket file if any (master died without cleanup)
+  vim.fn.system({ "rm", "-f", cp })
+
   -- -N: no remote command, just hold the connection open for multiplexing.
   -- ControlMaster=yes: create the socket. ControlPersist=4h: keep it for 4
-  -- hours after this process exits (so closing the terminal doesn't drop it).
+  -- hours after the foreground exits (ssh detaches to background after auth).
   local args = { "ssh", "-N",
                  "-o", "ControlMaster=yes",
                  "-o", "ControlPath=" .. cp,
@@ -228,20 +246,21 @@ function M.connect(alias)
   table.insert(args, profile.host)
   vim.cmd("botright 15split")
   vim.cmd("enew")
-  local job = vim.fn.termopen(args, {
+  vim.fn.termopen(args, {
     on_exit = function(_, code)
-      if code == 0 then
-        vim.schedule(function()
-          vim.notify("jupynvim: " .. alias .. " disconnected", vim.log.levels.INFO)
-        end)
-      end
+      vim.schedule(function()
+        if code == 0 and master_alive(alias, profile) then
+          vim.notify("jupynvim: " .. alias .. " connected (master persists 4h)",
+                     vim.log.levels.INFO)
+        elseif code ~= 0 then
+          vim.notify("jupynvim: " .. alias .. " connect failed (code=" .. code .. ")",
+                     vim.log.levels.WARN)
+        end
+      end)
     end,
   })
-  if job > 0 then
-    vim.notify("jupynvim: authenticating " .. alias ..
-               " (terminal split below; will persist 4h after auth)",
-               vim.log.levels.INFO)
-  end
+  vim.notify("jupynvim: authenticate " .. alias .. " in the terminal split below",
+             vim.log.levels.INFO)
 end
 
 -- Tear down the ControlMaster socket for an alias, forcing the next
@@ -254,9 +273,46 @@ function M.disconnect(alias)
   end
   local cp = control_path(alias)
   if not cp then return end
-  -- -O exit asks the master to gracefully shut down
   vim.fn.system({ "ssh", "-O", "exit", "-o", "ControlPath=" .. cp, profile.host })
+  vim.fn.system({ "rm", "-f", cp })  -- always clean up file even if -O exit failed
   vim.notify("jupynvim: " .. alias .. " control socket closed")
+end
+
+-- Browse .ipynb files on a remote alias and open the selected one.
+-- subpath defaults to "." (relative to your remote home).
+function M.remote_browse(alias, subpath)
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
+    return
+  end
+  if not master_alive(alias, profile) then
+    vim.notify("jupynvim: " .. alias .. " not connected; run :JupynvimConnect " .. alias .. " first",
+               vim.log.levels.WARN)
+    return
+  end
+  subpath = (subpath ~= "" and subpath) or "."
+  local cp = control_path(alias)
+  local find_cmd = "find " .. vim.fn.shellescape(subpath) ..
+                   " -name '*.ipynb' -not -path '*/\\.*' 2>/dev/null | head -500"
+  local cmd = { "ssh", "-T", "-o", "BatchMode=yes",
+                "-o", "ControlPath=" .. cp, profile.host, find_cmd }
+  local result = vim.fn.system(cmd)
+  if vim.v.shell_error ~= 0 then
+    vim.notify("jupynvim: remote find failed: " .. result, vim.log.levels.ERROR)
+    return
+  end
+  local files = {}
+  for line in result:gmatch("[^\n]+") do table.insert(files, line) end
+  if #files == 0 then
+    vim.notify("jupynvim: no .ipynb under " .. alias .. ":" .. subpath)
+    return
+  end
+  vim.ui.select(files, { prompt = "Open notebook on " .. alias .. ":" }, function(choice)
+    if not choice then return end
+    M.use_remote(profile)
+    M.open(choice, { remote_label = alias })
+  end)
 end
 
 -- Switch back to a local backend.
@@ -424,7 +480,11 @@ function M.open(path, opts)
     end
   end
 
-  local err, result = M.client:call_sync("open", { path = abs }, 5000)
+  -- Remote backends (SSH-spawned) take longer to first-respond because of
+  -- ssh connect + scheduler attach (srun, etc) + binary startup. Bump to 30s
+  -- so a slow PSC node doesn't time out before jupynvim-core is ready.
+  local open_timeout = M._remote_spec and 30000 or 5000
+  local err, result = M.client:call_sync("open", { path = abs }, open_timeout)
   if err then
     M._opening[abs] = nil
     vim.notify("jupynvim open failed: " .. tostring(err), vim.log.levels.ERROR)
@@ -1976,6 +2036,25 @@ function M.setup(opts)
       local names = {}
       for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
       return names
+    end,
+  })
+
+  -- :JupynvimRemoteFiles <alias> [<subpath>]  — list notebooks on a remote
+  -- via SSH+find, open the picked one. Requires :JupynvimConnect first.
+  vim.api.nvim_create_user_command("JupynvimRemoteFiles", function(o)
+    local parts = vim.split(o.args, "%s+", { trimempty = true })
+    M.remote_browse(parts[1], parts[2])
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      -- Complete first arg with remote profile names
+      local words = vim.split(line, "%s+", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
     end,
   })
   vim.api.nvim_create_user_command("JupynvimRunCell", function() M.run_cell(0, { advance = false }) end, {})
