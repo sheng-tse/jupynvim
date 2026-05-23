@@ -1528,13 +1528,13 @@ function M.start_kernel(buf, kernel_name)
   -- The auto-start in M.open could otherwise run multiple times (e.g.
   -- BufReadCmd re-firing) and orphan ipykernel processes.
   if nb.kernel_started and not kernel_name then return end
-  local cl = ensure_client()
-  -- Auto-detect a local .venv near the notebook and use its python directly,
-  -- bypassing the global kernelspec registry. Only on auto-start (no
-  -- explicit kernel_name) so users picking via `<leader>nK` aren't
-  -- overridden. Disable with `auto_venv = false` in setup.
+  -- Route to the alias's backend if this is a remote notebook. Without
+  -- this, ensure_client() would return whatever M.client happens to point
+  -- at, which can race if multiple notebooks across aliases are open.
+  local cl = nb.alias and M.client_for(nb.alias) or ensure_client()
+  -- Auto-venv probes the LOCAL filesystem; meaningless for remote notebooks.
   local python_path = nil
-  if not kernel_name and M.config.auto_venv ~= false then
+  if not kernel_name and M.config.auto_venv ~= false and not nb.alias then
     local nb_dir = nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
     if nb_dir then
       python_path = find_local_venv_python(nb_dir)
