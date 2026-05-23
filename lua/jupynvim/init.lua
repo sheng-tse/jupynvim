@@ -125,6 +125,13 @@ end
 -- spec.host: "user@host" passed to ssh.
 -- spec.core_path: remote path to jupynvim-core (default "jupynvim-core" on $PATH).
 -- spec.ssh_args: extra args appended after `ssh` (e.g. ProxyJump). Optional.
+-- spec.slurm: if set, prepend this to the remote command. Typical use:
+--   slurm = "srun -p GPU-shared --gpus 1 -t 02:00:00"
+-- Slurm allocates a compute node and runs jupynvim-core on it; the job's
+-- stdio is plumbed back through srun → sshd → ssh → us. No PTY (default for
+-- srun job steps) means msgpack passes through cleanly. The wrapper command
+-- is whatever Slurm or scheduler you use ("srun", "qsub -I -X", custom helper)
+-- as long as it forwards stdio.
 local function build_ssh_cmd(spec)
   local cmd = { "ssh" }
   -- Force pseudo-tty off — we want raw stdio for msgpack, not a TTY-mangled stream.
@@ -134,9 +141,14 @@ local function build_ssh_cmd(spec)
   table.insert(cmd, "BatchMode=yes")
   for _, a in ipairs(spec.ssh_args or {}) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
-  -- The remote command. Keep it simple: just exec the binary so its stdio
-  -- becomes ssh's stdio (no intermediate shell can buffer).
-  table.insert(cmd, "exec " .. (spec.core_path or "jupynvim-core"))
+  local remote_cmd = spec.core_path or "jupynvim-core"
+  if spec.slurm and spec.slurm ~= "" then
+    remote_cmd = spec.slurm .. " " .. remote_cmd
+  end
+  -- `exec` keeps backend's stdio identical to ssh's stdio (no shell wrapper
+  -- buffering in between). When slurm is involved the exec applies to srun
+  -- which itself execs the job step.
+  table.insert(cmd, "exec " .. remote_cmd)
   return cmd
 end
 
