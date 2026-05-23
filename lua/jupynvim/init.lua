@@ -183,11 +183,18 @@ local function build_ssh_cmd(spec)
   for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
   local remote_cmd = spec.core_path or "jupynvim-core"
-  -- Prefer the connect-time-cached slurm string over re-calling the function
-  -- (which would prompt the user from inside an autocmd, where input is invisible).
-  local slurm = (M._slurm_cache and spec.label and M._slurm_cache[spec.label])
-    or resolve(spec.slurm, spec)
-  if slurm and slurm ~= "" then
+  -- Slurm wrapping: only honor (a) the :JupynvimUseJob cache or (b) a
+  -- static `slurm = "..."` string in the profile. Function-valued slurm
+  -- fields are intentionally IGNORED here — calling them from inside the
+  -- BufReadCmd that triggered the spawn would block on vim.fn.input with
+  -- no visible prompt. For dynamic per-spawn slurm, use :JupynvimUseJob.
+  local slurm
+  if M._slurm_cache and spec.label and M._slurm_cache[spec.label] then
+    slurm = M._slurm_cache[spec.label]
+  elseif type(spec.slurm) == "string" and spec.slurm ~= "" then
+    slurm = spec.slurm
+  end
+  if slurm then
     remote_cmd = slurm .. " " .. remote_cmd
   end
   -- `exec` keeps backend's stdio identical to ssh's stdio (no shell wrapper
