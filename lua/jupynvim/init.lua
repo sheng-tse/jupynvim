@@ -264,16 +264,11 @@ function M.connect(alias)
     vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
     return
   end
-  -- Eagerly resolve a function-typed `slurm` field NOW (visible prompt at
-  -- connect time) rather than later inside the BufReadCmd handler when the
-  -- UI is busy spawning the backend and the input prompt would be invisible.
-  -- Cached result lives in M._slurm_cache[alias]; build_ssh_cmd uses it
-  -- in preference to re-resolving the function on each spawn.
-  M._slurm_cache = M._slurm_cache or {}
-  if type(profile.slurm) == "function" and not M._slurm_cache[alias] then
-    local ok, val = pcall(profile.slurm, profile)
-    if ok then M._slurm_cache[alias] = val end
-  end
+  -- Connect always spawns the backend on the login node (no slurm wrap).
+  -- File ops, browsing, editing, search, terminal all happen on cheap CPU
+  -- resources and don't need a compute allocation. Use :JupynvimUseJob
+  -- separately when you want subsequent backend spawns to attach to a
+  -- specific slurm job (for kernel execution on GPU/compute nodes).
   local cp = control_path(alias)
   if master_alive(alias, profile) then
     -- Already connected — just open the browser.
@@ -331,6 +326,26 @@ function M.connect(alias)
   })
   vim.notify("jupynvim: authenticate " .. alias .. " in the terminal split below",
              vim.log.levels.INFO)
+end
+
+-- Explicitly route future backend spawns for an alias through an existing
+-- slurm job (so kernels land on the compute node you've already allocated).
+-- Without this, backends spawn on the login node.
+--
+--   :JupynvimUseJob psc 40962291  -- attach to running job
+--   :JupynvimUseJob psc           -- clear; back to login node
+--
+-- Takes effect on the NEXT backend spawn for that alias. If a backend is
+-- already running, run :JupynvimReconnect <alias> (TODO) or restart nvim.
+function M.use_job(alias, jobid)
+  M._slurm_cache = M._slurm_cache or {}
+  if not jobid or jobid == "" then
+    M._slurm_cache[alias] = nil
+    vim.notify("jupynvim: " .. alias .. " kernel routing cleared (uses login node)")
+  else
+    M._slurm_cache[alias] = string.format("srun --jobid=%s --overlap", jobid)
+    vim.notify("jupynvim: " .. alias .. " next spawn will attach to job " .. jobid)
+  end
 end
 
 -- Tear down the ControlMaster socket for an alias, forcing the next
@@ -2292,6 +2307,28 @@ function M.setup(opts)
   end, { nargs = 1 })
 
   vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
+
+  -- :JupynvimUseJob <alias> [<jobid>]  — route next backend spawn through
+  -- srun --jobid=N --overlap. Omit jobid to clear (back to login node).
+  vim.api.nvim_create_user_command("JupynvimUseJob", function(o)
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    if #parts == 0 then
+      vim.notify("usage: :JupynvimUseJob <alias> [<jobid>]", vim.log.levels.WARN)
+      return
+    end
+    M.use_job(parts[1], parts[2] or "")
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
+    end,
+  })
 
   -- :JupynvimConnect <alias>  — open a terminal split for interactive SSH
   -- auth (password / 2FA). Sets up a ControlMaster socket; future
