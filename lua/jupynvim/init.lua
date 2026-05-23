@@ -121,29 +121,60 @@ local function ensure_client()
   return M.client
 end
 
+-- ControlMaster socket path for an alias. Multiplexed SSH: run
+-- `:JupynvimConnect <alias>` once to authenticate interactively (password,
+-- 2FA, etc); subsequent ssh commands reuse the socket and skip auth.
+local function control_path(alias)
+  if not alias or alias == "" then return nil end
+  local dir = vim.fn.stdpath("cache") .. "/jupynvim"
+  vim.fn.mkdir(dir, "p")
+  return dir .. "/cm-" .. alias
+end
+
+-- Resolve a possibly-function spec field. Functions can read env, prompt
+-- the user, etc. at spawn time — useful for dynamic slurm jobids, cloud
+-- tokens, anything that varies between calls.
+local function resolve(field, spec)
+  if type(field) == "function" then return field(spec) end
+  return field
+end
+
 -- Build an SSH command vector that spawns jupynvim-core on a remote host.
--- spec.host: "user@host" passed to ssh.
--- spec.core_path: remote path to jupynvim-core (default "jupynvim-core" on $PATH).
+-- spec.host: "user@host" passed to ssh (or an alias from ~/.ssh/config).
+-- spec.core_path: remote path to jupynvim-core (default "jupynvim-core").
 -- spec.ssh_args: extra args appended after `ssh` (e.g. ProxyJump). Optional.
--- spec.slurm: if set, prepend this to the remote command. Typical use:
+--   Can be a function returning the array.
+-- spec.slurm: if set, prepended to the remote command. Typical:
 --   slurm = "srun -p GPU-shared --gpus 1 -t 02:00:00"
--- Slurm allocates a compute node and runs jupynvim-core on it; the job's
--- stdio is plumbed back through srun → sshd → ssh → us. No PTY (default for
--- srun job steps) means msgpack passes through cleanly. The wrapper command
--- is whatever Slurm or scheduler you use ("srun", "qsub -I -X", custom helper)
--- as long as it forwards stdio.
+-- Can be a function returning the string — useful for attaching to an
+-- existing job whose ID isn't known until call time:
+--   slurm = function()
+--     local jid = vim.env.PSC_JOBID or vim.fn.input("Job ID: ")
+--     return ("srun --jobid=%s --overlap"):format(jid)
+--   end
 local function build_ssh_cmd(spec)
   local cmd = { "ssh" }
-  -- Force pseudo-tty off — we want raw stdio for msgpack, not a TTY-mangled stream.
-  -- BatchMode prevents interactive password prompts (rely on ssh-agent / keys).
+  -- -T disables remote PTY (we want raw stdio for msgpack).
+  -- BatchMode=yes blocks interactive prompts (no password hangs). Use
+  -- :JupynvimConnect <alias> first for hosts that need interactive auth.
   table.insert(cmd, "-T")
   table.insert(cmd, "-o")
   table.insert(cmd, "BatchMode=yes")
-  for _, a in ipairs(spec.ssh_args or {}) do table.insert(cmd, a) end
+  -- Always pass ControlPath: if a ControlMaster socket exists (from a prior
+  -- :JupynvimConnect), this reuses it (no auth). If not, ssh just makes a
+  -- fresh connection. Either way, no extra wiring needed by the user.
+  local cp = control_path(spec.label or spec.host)
+  if cp then
+    table.insert(cmd, "-o")
+    table.insert(cmd, "ControlPath=" .. cp)
+  end
+  local ssh_args = resolve(spec.ssh_args, spec) or {}
+  for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
   local remote_cmd = spec.core_path or "jupynvim-core"
-  if spec.slurm and spec.slurm ~= "" then
-    remote_cmd = spec.slurm .. " " .. remote_cmd
+  local slurm = resolve(spec.slurm, spec)
+  if slurm and slurm ~= "" then
+    remote_cmd = slurm .. " " .. remote_cmd
   end
   -- `exec` keeps backend's stdio identical to ssh's stdio (no shell wrapper
   -- buffering in between). When slurm is involved the exec applies to srun
@@ -166,12 +197,66 @@ function M.use_remote(spec)
     M.client = nil
   end
   M._remote_spec = spec
-  -- spec.transport_cmd lets users override the default SSH-based spawn. Useful
-  -- for testing (bypass SSH and run a local binary directly) and for
-  -- alternative transports (kubectl exec, docker exec, etc).
-  local cmd = spec.transport_cmd or build_ssh_cmd(spec)
+  -- spec.transport_cmd lets users override the default SSH-based spawn for
+  -- non-SSH transports (gcloud compute ssh, aws ssm start-session, docker
+  -- exec, etc). Can be a function returning the array for dynamic args.
+  local cmd = resolve(spec.transport_cmd, spec) or build_ssh_cmd(spec)
   M.client = spawn_client(cmd, "remote:" .. spec.host)
   return M.client
+end
+
+-- Open an interactive SSH ControlMaster session in a terminal split. After
+-- you authenticate (password, 2FA, key passphrase), the connection persists
+-- as a multiplexed socket. Subsequent :JupynvimOpenRemote calls reuse it
+-- without prompting. Similar to VSCode's "Connect to Host" flow.
+function M.connect(alias)
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
+    return
+  end
+  local cp = control_path(alias)
+  -- -N: no remote command, just hold the connection open for multiplexing.
+  -- ControlMaster=yes: create the socket. ControlPersist=4h: keep it for 4
+  -- hours after this process exits (so closing the terminal doesn't drop it).
+  local args = { "ssh", "-N",
+                 "-o", "ControlMaster=yes",
+                 "-o", "ControlPath=" .. cp,
+                 "-o", "ControlPersist=4h" }
+  local ssh_args = resolve(profile.ssh_args, profile) or {}
+  for _, a in ipairs(ssh_args) do table.insert(args, a) end
+  table.insert(args, profile.host)
+  vim.cmd("botright 15split")
+  vim.cmd("enew")
+  local job = vim.fn.termopen(args, {
+    on_exit = function(_, code)
+      if code == 0 then
+        vim.schedule(function()
+          vim.notify("jupynvim: " .. alias .. " disconnected", vim.log.levels.INFO)
+        end)
+      end
+    end,
+  })
+  if job > 0 then
+    vim.notify("jupynvim: authenticating " .. alias ..
+               " (terminal split below; will persist 4h after auth)",
+               vim.log.levels.INFO)
+  end
+end
+
+-- Tear down the ControlMaster socket for an alias, forcing the next
+-- :JupynvimOpenRemote to re-authenticate.
+function M.disconnect(alias)
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
+    return
+  end
+  local cp = control_path(alias)
+  if not cp then return end
+  -- -O exit asks the master to gracefully shut down
+  vim.fn.system({ "ssh", "-O", "exit", "-o", "ControlPath=" .. cp, profile.host })
+  vim.notify("jupynvim: " .. alias .. " control socket closed")
 end
 
 -- Switch back to a local backend.
@@ -1871,6 +1956,28 @@ function M.setup(opts)
   end, { nargs = 1 })
 
   vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
+
+  -- :JupynvimConnect <alias>  — open a terminal split for interactive SSH
+  -- auth (password / 2FA). Sets up a ControlMaster socket; future
+  -- :JupynvimOpenRemote calls for this alias reuse it without prompting.
+  vim.api.nvim_create_user_command("JupynvimConnect", function(o) M.connect(o.args) end, {
+    nargs = 1,
+    complete = function()
+      local names = {}
+      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      return names
+    end,
+  })
+
+  -- :JupynvimDisconnect <alias>  — close the ControlMaster socket.
+  vim.api.nvim_create_user_command("JupynvimDisconnect", function(o) M.disconnect(o.args) end, {
+    nargs = 1,
+    complete = function()
+      local names = {}
+      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      return names
+    end,
+  })
   vim.api.nvim_create_user_command("JupynvimRunCell", function() M.run_cell(0, { advance = false }) end, {})
   vim.api.nvim_create_user_command("JupynvimRunAll", function() M.run_all(0) end, {})
   vim.api.nvim_create_user_command("JupynvimKernel", function() M.kernel_picker(0) end, {})
