@@ -2115,6 +2115,23 @@ function M.setup(opts)
     end,
   })
 
+  -- :JupynvimTerm <alias>  — open a PTY-backed remote shell in a split.
+  vim.api.nvim_create_user_command("JupynvimTerm", function(o)
+    local alias = o.args:match("^%s*(%S+)%s*$")
+    if not alias or alias == "" then
+      vim.notify("usage: :JupynvimTerm <alias>", vim.log.levels.WARN)
+      return
+    end
+    require("jupynvim.remote_term").open(alias)
+  end, {
+    nargs = 1,
+    complete = function()
+      local names = {}
+      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      return names
+    end,
+  })
+
   -- :JupynvimEdit <alias>:<path>  — convenience wrapper for opening a remote
   -- file. Equivalent to `:e jupynvim://<alias>/<path>` (which also works).
   vim.api.nvim_create_user_command("JupynvimEdit", function(o)
