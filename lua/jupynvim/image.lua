@@ -234,70 +234,34 @@ local function tty_write(s)
   return false
 end
 
--- Build escape that ONLY transmits (no placement) — for direct-placement renderer.
-local function build_transmit_only(image_id, b64)
-  local CHUNK = 4096
-  local total = #b64
-  local pos = 1
-  local out = {}
-  local first = true
-  while pos <= total do
-    local stop = math.min(pos + CHUNK - 1, total)
-    local chunk = b64:sub(pos, stop)
-    local more = (stop < total) and 1 or 0
-    if first then
-      table.insert(out, string.format(
-        "\x1b_Ga=t,f=100,i=%d,q=2,m=%d;%s\x1b\\",
-        image_id, more, chunk))
-      first = false
-    else
-      table.insert(out, string.format("\x1b_Gm=%d,q=2;%s\x1b\\", more, chunk))
-    end
-    pos = stop + 1
+-- RPC dispatch to backend's kitty handlers. In local mode the backend writes
+-- to /dev/tty and returns; in remote mode the response carries `escape_b64`
+-- which we decode and write locally via tty_write. Synchronous (blocks until
+-- the backend acks the write) for transmit/place paths that need to know if
+-- the write succeeded. Returns res or nil + err.
+local function kitty_call_sync(method, args, timeout)
+  if not rpc_client or not rpc_client.job then return nil, "no rpc client" end
+  local err, res = rpc_client:call_sync(method, args or {}, timeout or 5000)
+  if err then return nil, err end
+  if res and res.escape_b64 then
+    local ok, decoded = pcall(vim.base64.decode, res.escape_b64)
+    if ok and decoded then tty_write(decoded) end
   end
-  return table.concat(out)
+  return res
 end
 
--- Build escape for VIRTUAL PLACEMENT (a=T + U=1) — image is transmitted and
--- registered for placeholder rendering. Cols/rows specify the cell grid the
--- placeholders will form.
-local function build_transmit_virtual(image_id, b64, cols, rows)
-  local CHUNK = 4096
-  local total = #b64
-  local pos = 1
-  local out = {}
-  local first = true
-  while pos <= total do
-    local stop = math.min(pos + CHUNK - 1, total)
-    local chunk = b64:sub(pos, stop)
-    local more = (stop < total) and 1 or 0
-    if first then
-      table.insert(out, string.format(
-        "\x1b_Ga=T,U=1,f=100,i=%d,c=%d,r=%d,q=2,m=%d;%s\x1b\\",
-        image_id, cols, rows, more, chunk))
-      first = false
-    else
-      table.insert(out, string.format("\x1b_Gm=%d,q=2;%s\x1b\\", more, chunk))
+-- Fire-and-forget variant for deletes (no need to block).
+local function kitty_call_async(method, args)
+  if not rpc_client or not rpc_client.job then return end
+  rpc_client:call(method, args or {}, function(err, res)
+    if err then log.warn(method .. " error: " .. tostring(err)); return end
+    if res and res.escape_b64 then
+      local ok, decoded = pcall(vim.base64.decode, res.escape_b64)
+      if ok and decoded then
+        vim.schedule(function() tty_write(decoded) end)
+      end
     end
-    pos = stop + 1
-  end
-  return table.concat(out)
-end
-
--- Place an already-transmitted image at the cursor's current position.
--- Uses placement_id `p` so subsequent calls REPLACE (no stacking).
-local function build_place(image_id, placement_id, rows, cols)
-  return string.format(
-    "\x1b_Ga=p,i=%d,p=%d,c=%d,r=%d,q=2\x1b\\",
-    image_id, placement_id, cols, rows)
-end
-
--- Delete a specific placement (image stays in terminal memory; just removes
--- the visual placement).
-local function build_delete_placement(image_id, placement_id)
-  return string.format(
-    "\x1b_Ga=d,d=I,i=%d,p=%d,q=2\x1b\\",
-    image_id, placement_id)
+  end)
 end
 
 local NEXT_ID = 1000
@@ -491,8 +455,10 @@ local function start_animation(p, cell_id)
       return
     end
     p.frame_idx = (p.frame_idx % #p.frames) + 1
-    local seq = build_transmit_only(p.image_id, p.frames[p.frame_idx])
-    tty_write(seq)
+    kitty_call_async("kitty_transmit_only", {
+      image_id = p.image_id,
+      png_b64 = p.frames[p.frame_idx],
+    })
     if p.timer then
       local d = p.delays[p.frame_idx] or 100
       pcall(p.timer.start, p.timer, d, 0, vim.schedule_wrap(tick))
@@ -540,9 +506,12 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     -- anchored to buffer text because placeholders ARE text.
     log.info(string.format("placeholder: cell=%s id=%d transmitting %d b64 chars (%dx%d cells)",
       cell_id, id, #b64, PLACEHOLDER_COLS, PLACEHOLDER_ROWS))
-    local transmit_seq = build_transmit_virtual(id, b64, PLACEHOLDER_COLS, PLACEHOLDER_ROWS)
-    if not tty_write(transmit_seq) then
-      log.warn(string.format("placeholder: cell=%s id=%d transmit FAILED", cell_id, id))
+    local _, terr = kitty_call_sync("kitty_transmit_virtual", {
+      image_id = id, png_b64 = b64,
+      cols = PLACEHOLDER_COLS, rows = PLACEHOLDER_ROWS,
+    })
+    if terr then
+      log.warn(string.format("placeholder: cell=%s id=%d transmit FAILED: %s", cell_id, id, tostring(terr)))
       callback(nil)
       return
     end
@@ -589,8 +558,8 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     return
   end
 
-  local transmit_seq = build_transmit_only(id, b64)
-  if not tty_write(transmit_seq) then
+  local _, terr = kitty_call_sync("kitty_transmit_only", { image_id = id, png_b64 = b64 })
+  if terr then
     callback(nil)
     return
   end
@@ -650,10 +619,12 @@ function M.place_at_screen_row(cell_id, screen_row, screen_col, rows, cols)
   local p = placements[cell_id]
   if not p then return end
   if p.placed_row then return end  -- already placed; don't move
-  local move = string.format("\x1b[s\x1b[%d;%dH", screen_row, screen_col)
-  local place = build_place(p.image_id, p.placement_id, rows, cols)
-  local restore = "\x1b[u"
-  if not tty_write(move .. place .. restore) then return end
+  local _, perr = kitty_call_sync("kitty_place", {
+    image_id = p.image_id, placement_id = p.placement_id,
+    cols = cols, rows = rows,
+    screen_row = screen_row, screen_col = screen_col,
+  })
+  if perr then return end
   p.placed_row = screen_row
   p.placed_col = screen_col
   log.info(string.format("place: cell=%s id=%d row=%d col=%d (locked)", cell_id, p.image_id, screen_row, screen_col))
@@ -676,19 +647,16 @@ function M.clear_for_cell(cell_id)
   local p = placements[cell_id]
   if not p then return end
   stop_timer(p)
-  tty_write(string.format("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", p.image_id))
+  kitty_call_async("kitty_clear_image", { image_id = p.image_id })
   placements[cell_id] = nil
 end
 
 function M.clear_all()
   for k, p in pairs(placements) do
     stop_timer(p)
-    if p.image_id then
-      tty_write(string.format("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", p.image_id))
-    end
     placements[k] = nil
   end
-  tty_write("\x1b_Ga=d,d=A,q=2\x1b\\")
+  kitty_call_async("kitty_clear_all", {})
 end
 
 -- Backwards-compat alias. init.lua and other call sites use Image.delete_all().
@@ -702,7 +670,7 @@ M.delete_all = M.clear_all
 -- re-creates them when it next reads the placeholder chars on screen.
 -- Gif animation isn't disturbed because its image bytes survive.
 function M.clear_visible_placements()
-  tty_write("\x1b_Ga=d,d=a,q=2\x1b\\")
+  kitty_call_async("kitty_clear_visible", {})
 end
 
 function M.supported()
@@ -714,8 +682,26 @@ function M.supported()
   return false
 end
 
-function M.attach(client, _tty_path)
-  rpc_client = client  -- kept for compat; we no longer use the RPC for Kitty writes
+function M.attach(client, tty_path)
+  rpc_client = client
+  -- Try local mode first: backend writes kitty escapes to its own /dev/tty
+  -- directly. Works when nvim is interactive in a real terminal and the
+  -- backend (its child) shares the controlling tty.
+  local err = client:call_sync("kitty_attach", { tty = tty_path or "/dev/tty" }, 2000)
+  if not err then
+    log.info("kitty_attach: local mode (backend owns " .. (tty_path or "/dev/tty") .. ")")
+    return
+  end
+  -- Local failed (headless nvim, SSH-spawn backend on remote host, /dev/tty
+  -- inaccessible, etc). Fall back to remote mode: backend encodes escapes
+  -- and returns them as `escape_b64` in each kitty_* response; we decode
+  -- and write locally through tty_write.
+  log.info("kitty_attach: local mode unavailable (" .. tostring(err) .. "), using remote mode")
+  local err2 = client:call_sync("kitty_attach", { remote = true }, 2000)
+  if err2 then
+    log.error("kitty_attach: remote mode also failed: " .. tostring(err2))
+    rpc_client = nil
+  end
 end
 
 return M

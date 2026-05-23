@@ -5,6 +5,7 @@
 //   Notification: [2, method, params]
 
 use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
 use dashmap::DashMap;
 use rmpv::Value as Mp;
 use serde_json::{json, Value as Json};
@@ -16,7 +17,7 @@ use uuid::Uuid;
 
 use crate::kernel::Kernel;
 use crate::kernelspec;
-use crate::kitty::KittyTty;
+use crate::kitty::{self, KittyMode, LocalTty};
 use crate::notebook::CellType;
 use crate::session::Session;
 
@@ -24,8 +25,9 @@ pub struct Server {
     sessions: DashMap<String, Arc<Session>>,
     out_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<Mp>>>,
     shutdown: Arc<Notify>,
-    /// Lazy-init Kitty TTY writer (None if no TTY attached or attach_tty hasn't been called)
-    kitty: Mutex<Option<KittyTty>>,
+    /// How kitty escape bytes reach the user's terminal. None until the
+    /// frontend has called kitty_attach (local TTY or remote-bytes-via-RPC).
+    kitty: Mutex<Option<KittyMode>>,
 }
 
 impl Server {
@@ -218,8 +220,12 @@ impl Server {
             "save_as" => self.save_as(p).await,
             "replace_cells" => self.replace_cells(p).await,
             "kitty_attach" => self.kitty_attach(p).await,
-            "kitty_transmit" => self.kitty_transmit(p).await,
-            "kitty_clear" => self.kitty_clear(p).await,
+            "kitty_transmit_only" => self.kitty_transmit_only(p).await,
+            "kitty_transmit_virtual" => self.kitty_transmit_virtual(p).await,
+            "kitty_place" => self.kitty_place(p).await,
+            "kitty_clear_image" => self.kitty_clear_image(p).await,
+            "kitty_clear_visible" => self.kitty_clear_visible(p).await,
+            "kitty_clear_all" => self.kitty_clear_all(p).await,
             other => Err(anyhow!("unknown method '{other}'")),
         }
     }
@@ -582,41 +588,118 @@ impl Server {
         Ok(json!({ "ok": true }))
     }
 
-    /// Tell the backend which TTY to write Kitty graphics to. Frontend should
-    /// call this once at startup (resolved from /dev/tty or $JUPYNVIM_TTY).
+    /// Tell the backend how kitty escapes should reach the user's terminal.
+    /// `{ tty: "/dev/tty" }` (or no params) = local mode: backend writes
+    /// directly to that TTY. `{ remote: true }` = remote mode: backend
+    /// encodes escapes but returns them via RPC for the frontend to write
+    /// to its own local /dev/tty. Frontend calls this once at startup.
     async fn kitty_attach(&self, p: Json) -> Result<Json> {
-        let path = p.get("tty").and_then(|v| v.as_str()).map(PathBuf::from);
-        let kitty = KittyTty::open(path)?;
-        *self.kitty.lock().await = Some(kitty);
-        Ok(json!({ "ok": true }))
+        let remote = p.get("remote").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mode = if remote {
+            KittyMode::Remote
+        } else {
+            let path = p.get("tty").and_then(|v| v.as_str()).map(PathBuf::from);
+            KittyMode::Local(LocalTty::open(path)?)
+        };
+        *self.kitty.lock().await = Some(mode);
+        Ok(json!({ "ok": true, "remote": remote }))
     }
 
-    /// Transmit a base64 PNG to the terminal in virtual-placement mode.
-    /// Returns the assigned image_id; frontend uses it for the placeholder color.
-    async fn kitty_transmit(&self, p: Json) -> Result<Json> {
+    /// Emit encoded kitty bytes: write to TTY in local mode, or return as
+    /// `escape_b64` in remote mode. `base_response` is merged with the result.
+    async fn emit_kitty(&self, bytes: Vec<u8>, mut base_response: serde_json::Map<String, Json>) -> Result<Json> {
+        let kitty_lock = self.kitty.lock().await;
+        match kitty_lock.as_ref() {
+            None => Err(anyhow!("kitty_attach not called")),
+            Some(KittyMode::Local(t)) => {
+                t.write(&bytes)?;
+                Ok(Json::Object(base_response))
+            }
+            Some(KittyMode::Remote) => {
+                let escape_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                base_response.insert("escape_b64".into(), Json::String(escape_b64));
+                Ok(Json::Object(base_response))
+            }
+        }
+    }
+
+    /// `a=t`: transmit only, no placement. Used for direct-placement
+    /// renderer + GIF frame retransmits. Requires `image_id` (frontend-owned).
+    async fn kitty_transmit_only(&self, p: Json) -> Result<Json> {
         let b64 = p.get("png_b64").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("png_b64 required"))?;
-        let id_hint = p.get("image_id").and_then(|v| v.as_u64()).map(|n| n as u32);
-        let kitty_lock = self.kitty.lock().await;
-        let kitty = kitty_lock.as_ref().ok_or_else(|| anyhow!("kitty_attach not called"))?;
-        let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+        let id = p.get("image_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("image_id required"))? as u32;
+        let png = base64::engine::general_purpose::STANDARD.decode(b64)
             .map_err(|e| anyhow!("base64 decode: {e}"))?;
-        let id = match id_hint {
-            Some(i) => { kitty.transmit_png_with_id(i, &png)?; i }
-            None => kitty.transmit_png(&png)?,
-        };
-        Ok(json!({ "image_id": id }))
+        let bytes = kitty::encode_transmit_only(id, &png);
+        let mut base = serde_json::Map::new();
+        base.insert("image_id".into(), json!(id));
+        self.emit_kitty(bytes, base).await
     }
 
-    async fn kitty_clear(&self, p: Json) -> Result<Json> {
-        let kitty_lock = self.kitty.lock().await;
-        let kitty = kitty_lock.as_ref().ok_or_else(|| anyhow!("kitty not attached"))?;
-        if let Some(id) = p.get("image_id").and_then(|v| v.as_u64()) {
-            kitty.delete_image(id as u32)?;
-        } else {
-            kitty.delete_all()?;
-        }
-        Ok(json!({ "ok": true }))
+    /// `a=T, U=1`: transmit + register for Unicode-placeholder placement.
+    /// Requires `image_id`, `cols`, `rows`.
+    async fn kitty_transmit_virtual(&self, p: Json) -> Result<Json> {
+        let b64 = p.get("png_b64").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("png_b64 required"))?;
+        let id = p.get("image_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("image_id required"))? as u32;
+        let cols = p.get("cols").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("cols required"))? as u32;
+        let rows = p.get("rows").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("rows required"))? as u32;
+        let png = base64::engine::general_purpose::STANDARD.decode(b64)
+            .map_err(|e| anyhow!("base64 decode: {e}"))?;
+        let bytes = kitty::encode_transmit_virtual(id, &png, cols, rows);
+        let mut base = serde_json::Map::new();
+        base.insert("image_id".into(), json!(id));
+        self.emit_kitty(bytes, base).await
+    }
+
+    /// `a=p`: place an already-transmitted image. If `screen_row` and
+    /// `screen_col` are provided, wraps with cursor save/move/restore so the
+    /// place is atomic (no interleave with other terminal output).
+    async fn kitty_place(&self, p: Json) -> Result<Json> {
+        let image_id = p.get("image_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("image_id required"))? as u32;
+        let placement_id = p.get("placement_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("placement_id required"))? as u32;
+        let cols = p.get("cols").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("cols required"))? as u32;
+        let rows = p.get("rows").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("rows required"))? as u32;
+        let screen_row = p.get("screen_row").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let screen_col = p.get("screen_col").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let bytes = match (screen_row, screen_col) {
+            (Some(r), Some(c)) => kitty::encode_place_at_screen(image_id, placement_id, cols, rows, r, c),
+            _ => kitty::encode_place(image_id, placement_id, cols, rows),
+        };
+        self.emit_kitty(bytes, serde_json::Map::new()).await
+    }
+
+    /// `a=d, d=I`: delete image (and its placements). If `placement_id` is
+    /// also given, delete only that placement (image data stays).
+    async fn kitty_clear_image(&self, p: Json) -> Result<Json> {
+        let image_id = p.get("image_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("image_id required"))? as u32;
+        let bytes = match p.get("placement_id").and_then(|v| v.as_u64()) {
+            Some(pid) => kitty::encode_delete_image_placement(image_id, pid as u32),
+            None => kitty::encode_delete_image(image_id),
+        };
+        self.emit_kitty(bytes, serde_json::Map::new()).await
+    }
+
+    /// `a=d, d=a` (lowercase): clear visible placements only; image data stays.
+    async fn kitty_clear_visible(&self, _p: Json) -> Result<Json> {
+        let bytes = kitty::encode_delete_visible();
+        self.emit_kitty(bytes, serde_json::Map::new()).await
+    }
+
+    /// `a=d, d=A` (uppercase): nuke all images and placements.
+    async fn kitty_clear_all(&self, _p: Json) -> Result<Json> {
+        let bytes = kitty::encode_delete_all();
+        self.emit_kitty(bytes, serde_json::Map::new()).await
     }
 
     async fn notify(&self, method: &str, params: Json) {
