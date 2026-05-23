@@ -228,7 +228,8 @@ function M.connect(alias)
   end
   local cp = control_path(alias)
   if master_alive(alias, profile) then
-    vim.notify("jupynvim: " .. alias .. " already connected (control master alive)")
+    -- Already connected — just open the picker.
+    M.remote_browse(alias)
     return
   end
   -- Clean up stale socket file if any (master died without cleanup)
@@ -244,14 +245,21 @@ function M.connect(alias)
   local ssh_args = resolve(profile.ssh_args, profile) or {}
   for _, a in ipairs(ssh_args) do table.insert(args, a) end
   table.insert(args, profile.host)
+  local term_buf
   vim.cmd("botright 15split")
   vim.cmd("enew")
+  term_buf = vim.api.nvim_get_current_buf()
   vim.fn.termopen(args, {
     on_exit = function(_, code)
       vim.schedule(function()
         if code == 0 and master_alive(alias, profile) then
-          vim.notify("jupynvim: " .. alias .. " connected (master persists 4h)",
-                     vim.log.levels.INFO)
+          -- Auth succeeded, ssh forked to background. Close the now-useless
+          -- terminal split and open the file picker.
+          if term_buf and vim.api.nvim_buf_is_valid(term_buf) then
+            pcall(vim.api.nvim_buf_delete, term_buf, { force = true })
+          end
+          vim.notify("jupynvim: " .. alias .. " connected", vim.log.levels.INFO)
+          M.remote_browse(alias)
         elseif code ~= 0 then
           vim.notify("jupynvim: " .. alias .. " connect failed (code=" .. code .. ")",
                      vim.log.levels.WARN)
@@ -2089,26 +2097,21 @@ function M.setup(opts)
     end,
   })
 
-  -- :JupynvimRemoteFiles <alias> [<subpath>]  — browse files on a remote,
-  -- open notebooks via jupynvim and other files as read-only scratch. Requires
-  -- :JupynvimConnect <alias> first.
-  vim.api.nvim_create_user_command("JupynvimRemoteFiles", function(o)
-    local parts = vim.split(o.args, " ", { trimempty = true })
-    if #parts == 0 then
-      vim.notify("usage: :JupynvimRemoteFiles <alias> [<subpath>]", vim.log.levels.WARN)
-      return
-    end
-    M.remote_browse(parts[1], parts[2])
-  end, {
-    nargs = "*",
-    complete = function(_, line)
-      local words = vim.split(line, " ", { trimempty = true })
-      if #words <= 2 then
-        local names = {}
-        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
-        return names
+  -- Auto-disconnect all remote ControlMasters on nvim exit. The 4h-persist
+  -- semantics were getting in the way: :wqa felt like it left orphan
+  -- sessions, and reopening nvim got a stale-looking state. Tear them down
+  -- on quit. If users want long-lived multiplexed sessions, they can opt
+  -- back in by removing this autocmd from their setup() wrapper.
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = group,
+    callback = function()
+      for alias, profile in pairs(M.config.remote or {}) do
+        local cp = control_path(alias)
+        if cp and vim.fn.filereadable(cp) == 1 then
+          vim.fn.system({ "ssh", "-O", "exit", "-o", "ControlPath=" .. cp, profile.host })
+          vim.fn.system({ "rm", "-f", cp })
+        end
       end
-      return {}
     end,
   })
   vim.api.nvim_create_user_command("JupynvimRunCell", function() M.run_cell(0, { advance = false }) end, {})
