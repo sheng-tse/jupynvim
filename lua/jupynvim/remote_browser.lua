@@ -59,6 +59,11 @@ function M.populate(buf, alias, dir_path, client)
   vim.bo[buf].swapfile = false
   vim.bo[buf].modifiable = false
   vim.bo[buf].filetype = "jupynvim-browser"
+  -- Auto-wipe browser buffers when hidden so navigating into a new dir
+  -- doesn't pile up :ls entries / bufferline tabs for every directory.
+  vim.bo[buf].bufhidden = "wipe"
+  -- Hide from bufferline plugins (lualine, bufferline.nvim) that check buflisted
+  vim.bo[buf].buflisted = false
   vim.b[buf].jupynvim_alias = alias
   vim.b[buf].jupynvim_remote_path = dir_path
   vim.b[buf].jupynvim_browser = true

@@ -751,12 +751,21 @@ impl Server {
             .with_context(|| format!("read_dir {}", path.display()))?;
         let mut entries = Vec::new();
         while let Some(entry) = rd.next_entry().await? {
-            let meta = match entry.metadata().await {
-                Ok(m) => m,
-                Err(_) => continue,  // permission denied on individual entry; skip
+            // Follow symlinks to determine "real" kind. A symlink to a dir
+            // should browse like a dir; a symlink to a file should read like
+            // a file. Fall back to symlink_metadata for broken symlinks so
+            // they still show up (marked "link" so frontend can warn).
+            let entry_path = entry.path();
+            let target_meta = tokio::fs::metadata(&entry_path).await;
+            let lnk_meta = tokio::fs::symlink_metadata(&entry_path).await;
+            let (meta, is_link) = match (target_meta, lnk_meta) {
+                (Ok(m), Ok(lm)) => (m, lm.file_type().is_symlink()),
+                (Err(_), Ok(lm)) => (lm.clone(), lm.file_type().is_symlink()), // broken link
+                (Ok(m), Err(_)) => (m, false),
+                (Err(_), Err(_)) => continue,
             };
             let kind = if meta.is_dir() { "dir" }
-                else if meta.file_type().is_symlink() { "link" }
+                else if is_link { "link" }  // symlink whose target isn't a dir
                 else { "file" };
             let mtime = meta.modified().ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())

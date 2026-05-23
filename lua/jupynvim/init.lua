@@ -399,21 +399,26 @@ function M.remote_browse(alias, subpath)
   if path:sub(-1) ~= "/" then path = path .. "/" end
   if path:sub(1, 1) ~= "/" then path = "/" .. path end
   local uri = "jupynvim://" .. alias .. path
-  -- Open the browser in its own tab so we don't fight snacks dashboard or
-  -- whatever buffer happens to be current. Reuse an existing tab if one is
-  -- already showing this alias (avoids tab pile-up on repeat connects).
-  for i = 1, vim.fn.tabpagenr("$") do
-    local wins = vim.fn.tabpagebuflist(i)
-    for _, b in ipairs(wins) do
-      local name = vim.api.nvim_buf_get_name(b)
-      if name:match("^jupynvim://" .. vim.pesc(alias) .. "/") then
-        vim.cmd("tabnext " .. i)
-        vim.cmd("edit " .. uri)
-        return
-      end
+
+  -- If a window is already showing this alias's browser, focus that and reload.
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(win)
+    local name = vim.api.nvim_buf_get_name(b)
+    if name:match("^jupynvim://" .. vim.pesc(alias) .. "/") then
+      vim.api.nvim_set_current_win(win)
+      vim.cmd("edit " .. uri)
+      return
     end
   end
-  vim.cmd("tabnew " .. uri)
+
+  -- Try to close any pre-existing left-side explorer (snacks/neo-tree/etc)
+  -- so our browser takes the same slot rather than appearing alongside.
+  pcall(function() if Snacks and Snacks.explorer then Snacks.explorer.close() end end)
+  pcall(function() vim.cmd("NeoTreeClose") end)
+  pcall(function() vim.cmd("NvimTreeClose") end)
+
+  -- Open as a left sidebar vsplit (~32 cols, similar to snacks-explorer).
+  vim.cmd("topleft 32vsplit " .. uri)
 end
 
 -- Switch back to a local backend.
