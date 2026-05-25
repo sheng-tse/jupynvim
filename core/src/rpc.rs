@@ -272,12 +272,11 @@ impl Server {
     }
 
     async fn open(&self, p: Json) -> Result<Json> {
-        let path = p
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("path required"))?;
+        // arg_path expands `~/`, `~`, `/~/...` to the server-process's $HOME
+        // so frontends can send tilde-prefixed paths without local expansion.
+        let path = arg_path(&p, "path")?;
         let id = Uuid::new_v4().to_string();
-        let session = Session::open(id.clone(), PathBuf::from(path))?;
+        let session = Session::open(id.clone(), path)?;
         self.sessions.insert(id.clone(), session.clone());
         let snap = session.snapshot();
         Ok(json!({ "session_id": id, "snapshot": snap }))
@@ -616,9 +615,9 @@ impl Server {
 
     async fn save_as(&self, p: Json) -> Result<Json> {
         let sid = p.get("session_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("session_id"))?;
-        let path = p.get("path").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("path"))?;
+        let path = arg_path(&p, "path")?;
         let s = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?;
-        s.save_to(&PathBuf::from(path))?;
+        s.save_to(&path)?;
         Ok(json!({ "ok": true }))
     }
 
