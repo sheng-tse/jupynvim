@@ -175,7 +175,20 @@ impl Kernel {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
-        if let Some(d) = cwd {
+        // Validate cwd before passing — chdir() failing inside spawn returns
+        // the same ENOENT as a missing argv[0], which is hard to distinguish.
+        // Fall back to the backend's own cwd if the requested one doesn't
+        // exist (e.g., notebook path that exists in our fs view but the
+        // kernel process can't reach for some reason).
+        let resolved_cwd = match cwd {
+            Some(d) if d.exists() => Some(d),
+            Some(d) => {
+                tracing::warn!("kernel cwd {} does not exist; spawning without chdir", d.display());
+                None
+            }
+            None => None,
+        };
+        if let Some(d) = &resolved_cwd {
             cmd.current_dir(d);
         }
         cmd.stdin(std::process::Stdio::null())
@@ -183,7 +196,16 @@ impl Kernel {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
 
-        let child = cmd.spawn().with_context(|| format!("spawning {:?}", argv))?;
+        let argv0_exists = std::path::Path::new(&argv[0]).exists();
+        let child = cmd.spawn().with_context(|| {
+            format!(
+                "spawning {:?} (cwd={:?}, argv0_exists={}, env_keys={:?})",
+                argv,
+                resolved_cwd,
+                argv0_exists,
+                spec.env.keys().collect::<Vec<_>>()
+            )
+        })?;
         let session = Uuid::new_v4().to_string();
 
         // Connect sockets — wait briefly for kernel to bind
