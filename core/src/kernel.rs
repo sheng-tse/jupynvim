@@ -144,6 +144,11 @@ pub struct Kernel {
     iopub_handle: tokio::task::JoinHandle<()>,
     /// Take this once with `take_events()` and drive it from a single consumer task.
     events: Mutex<Option<mpsc::UnboundedReceiver<KernelEvent>>>,
+    /// The most recent execute_request msg_id. Used to attribute raw stdout/
+    /// stderr from the kernel process (e.g., IPython `!cmd` shell output that
+    /// IPython didn't capture via sys.stdout) to a cell. Updated on every
+    /// execute_request send.
+    active_msg_id: Arc<parking_lot::Mutex<Option<String>>>,
     /// Outstanding shell requests awaiting their reply, keyed by msg_id.
     /// `complete` and `inspect` register a oneshot here BEFORE sending so the
     /// socket owner can deliver the matching reply directly. execute_request
@@ -214,6 +219,7 @@ impl Kernel {
         let (tx, rx) = mpsc::unbounded_channel::<KernelEvent>();
         let tx_iopub = tx.clone();
         let tx_shell = tx.clone();
+        let tx_pipes = tx.clone();
         let key = conn.key.as_bytes().to_vec();
         let iopub_handle = tokio::spawn(iopub_loop(iopub, key.clone(), tx_iopub));
 
@@ -231,6 +237,26 @@ impl Kernel {
         ));
         let _ = tokio::spawn(socket_owner(control, control_rx, key, tx, "control", None));
 
+        let active_msg_id: Arc<parking_lot::Mutex<Option<String>>> =
+            Arc::new(parking_lot::Mutex::new(None));
+
+        // Drain kernel's stdout/stderr pipes and forward as Stream events.
+        // IPython's `!cmd` shell magic writes to fd 1 directly (via subprocess
+        // inheriting the kernel's stdout) — bypassing sys.stdout's iopub
+        // redirection. Without this drain the output is lost AND the pipe
+        // can fill and block the kernel subprocess.
+        let mut child = child;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        if let Some(s) = stdout {
+            tokio::spawn(drain_pipe(s, "stdout".to_string(),
+                active_msg_id.clone(), tx_pipes.clone()));
+        }
+        if let Some(s) = stderr {
+            tokio::spawn(drain_pipe(s, "stderr".to_string(),
+                active_msg_id.clone(), tx_pipes));
+        }
+
         Ok(Self {
             spec,
             conn,
@@ -241,6 +267,7 @@ impl Kernel {
             iopub_handle,
             events: Mutex::new(Some(rx)),
             pending,
+            active_msg_id,
         })
     }
 
@@ -283,6 +310,11 @@ impl Kernel {
             protocol::execute_request(code, silent, store_history),
         );
         msg.header.msg_id = msg_id.clone();
+        // Mark this as the active execute so drain_pipe can attribute raw
+        // stdout/stderr lines (from !cmd) to the right cell.
+        if !silent {
+            *self.active_msg_id.lock() = Some(msg_id.clone());
+        }
         let key = self.conn.key.as_bytes();
         let frames = msg.to_frames(key)?;
         let zmsg = frames_to_zmq(frames);
@@ -517,6 +549,44 @@ async fn socket_owner(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Read lines from a kernel-process pipe (stdout or stderr) and emit each as
+/// a synthetic Stream event attributed to the most recent execute_request.
+/// Necessary because IPython's `!cmd` shell magic writes to the kernel's
+/// real fd 1 (via subprocess inherit), not through sys.stdout's iopub
+/// redirection — so this output never reaches the iopub_loop.
+async fn drain_pipe<R>(
+    pipe: R,
+    stream_name: String,
+    active: Arc<parking_lot::Mutex<Option<String>>>,
+    tx: mpsc::UnboundedSender<KernelEvent>,
+)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let mut reader = BufReader::new(pipe);
+    let mut buf = Vec::with_capacity(1024);
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) => break,  // EOF
+            Ok(_) => {
+                let text = String::from_utf8_lossy(&buf).to_string();
+                let parent = active.lock().clone();
+                if tx.send(KernelEvent::Stream {
+                    msg_id: Uuid::new_v4().to_string(),
+                    parent_msg_id: parent,
+                    name: stream_name.clone(),
+                    text,
+                }).is_err() {
+                    return;  // channel closed
+                }
+            }
+            Err(_) => return,
         }
     }
 }
