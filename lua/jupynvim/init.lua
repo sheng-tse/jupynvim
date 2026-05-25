@@ -1563,7 +1563,10 @@ function M.start_kernel(buf, kernel_name)
       }, function() end)
     end
     -- Tell the LSP about the kernel's interpreter so import resolution
-    -- matches what `pip list` in that env reports.
+    -- matches what `pip list` in that env reports. Local-only — the LSP
+    -- runs on the user's machine and can't introspect a remote python.
+    -- Phase 6 (remote LSP relay) will be the right path for remote.
+    if nb.alias then return end
     cl:call("list_kernels", {}, function(_, kernels)
       if not kernels then return end
       local active = res.kernel_name
@@ -1573,6 +1576,8 @@ function M.start_kernel(buf, kernel_name)
         if k.name == active and k.argv and k.argv[1] then
           local py = k.argv[1]
           nb.kernel_python_path = py
+          -- Defensive: don't try to run a python path that isn't here
+          if vim.fn.executable(py) ~= 1 then return end
           local sp = vim.fn.system({ py, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
           local extra = {}
           if vim.v.shell_error == 0 then
