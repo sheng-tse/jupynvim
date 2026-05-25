@@ -345,10 +345,41 @@ function M.use_job(alias, jobid)
   M._slurm_cache = M._slurm_cache or {}
   if not jobid or jobid == "" then
     M._slurm_cache[alias] = nil
-    vim.notify("jupynvim: " .. alias .. " kernel routing cleared (uses login node)")
   else
     M._slurm_cache[alias] = string.format("srun --jobid=%s --overlap", jobid)
-    vim.notify("jupynvim: " .. alias .. " next spawn will attach to job " .. jobid)
+  end
+  -- If a backend for this alias is currently running, restart it so the new
+  -- wrapper takes effect immediately. Otherwise next :JupynvimConnect picks
+  -- up the cached value.
+  local existing = M.clients[alias]
+  if existing and existing.job then
+    pcall(function() existing:stop() end)
+    M.clients[alias] = nil
+    if M.client == existing then M.client = nil end
+    -- Eagerly respawn so the browser refresh below has a working client.
+    -- M.client_for goes through build_ssh_cmd which reads the new cache.
+    local ok = pcall(function() M.client_for(alias) end)
+    if not ok then
+      vim.notify("jupynvim: " .. alias .. " respawn failed; try :JupynvimConnect " .. alias,
+                 vim.log.levels.WARN)
+      return
+    end
+    -- Refresh any open browser for this alias
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local b = vim.api.nvim_win_get_buf(win)
+      if vim.b[b].jupynvim_alias == alias and vim.b[b].jupynvim_browser then
+        local path = vim.b[b].jupynvim_remote_path
+        vim.api.nvim_set_current_win(win)
+        vim.cmd("edit jupynvim://" .. alias .. path .. "/")
+      end
+    end
+    vim.notify(string.format("jupynvim: %s respawned with %s", alias,
+               jobid and ("job " .. jobid) or "login node (no slurm)"),
+               vim.log.levels.INFO)
+  else
+    vim.notify(string.format("jupynvim: %s will use %s on next :JupynvimConnect",
+               alias, jobid and ("job " .. jobid) or "login node (no slurm)"),
+               vim.log.levels.INFO)
   end
 end
 
