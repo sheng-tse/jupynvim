@@ -53,7 +53,10 @@ end
 -- (Re)populate `buf` with a fresh listing of `dir_path` on `alias`'s backend.
 function M.populate(buf, alias, dir_path, client)
   client = client or require("jupynvim").client_for(alias)
-  -- Show a spinner-ish placeholder while the RPC runs
+  -- Force modifiable in case this buffer was populated before (where we
+  -- set it to false at the end). Re-entry on :edit / :JupynvimUseJob
+  -- refresh would otherwise fail with "Buffer is not 'modifiable'".
+  vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "loading " .. dir_path .. "..." })
   vim.bo[buf].buftype = "acwrite"
   vim.bo[buf].swapfile = false
