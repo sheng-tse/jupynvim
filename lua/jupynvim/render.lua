@@ -163,7 +163,13 @@ end
 -- Apply tqdm/progress-bar carriage-return semantics: \r OVERWRITES the
 -- current line. Each \r-terminated chunk is replaced; only the LAST chunk
 -- per logical line is kept. Then split by real newlines.
+--
+-- Normalize CRLF → LF first: shell output (e.g. IPython's `!cmd`) sends
+-- `\r\n` as a regular line ending. Without the normalize the bare-\r path
+-- below treats the \r as a tqdm overwrite, takes the empty segment after
+-- it, and the entire output renders as blank.
 local function process_cr(s)
+  s = s:gsub("\r\n", "\n")
   local out = {}
   for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
     local segments = {}

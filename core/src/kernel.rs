@@ -570,23 +570,31 @@ where
     use tokio::io::{AsyncBufReadExt, BufReader};
     let mut reader = BufReader::new(pipe);
     let mut buf = Vec::with_capacity(1024);
+    tracing::info!("drain_pipe({}) started", stream_name);
     loop {
         buf.clear();
         match reader.read_until(b'\n', &mut buf).await {
-            Ok(0) => break,  // EOF
+            Ok(0) => {
+                tracing::info!("drain_pipe({}) EOF", stream_name);
+                break;
+            }
             Ok(_) => {
                 let text = String::from_utf8_lossy(&buf).to_string();
                 let parent = active.lock().clone();
+                tracing::info!("drain_pipe({}) got {} bytes, parent={:?}", stream_name, buf.len(), parent);
                 if tx.send(KernelEvent::Stream {
                     msg_id: Uuid::new_v4().to_string(),
                     parent_msg_id: parent,
                     name: stream_name.clone(),
                     text,
                 }).is_err() {
-                    return;  // channel closed
+                    return;
                 }
             }
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!("drain_pipe({}) read error: {e}", stream_name);
+                return;
+            }
         }
     }
 }
