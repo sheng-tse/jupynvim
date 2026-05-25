@@ -409,13 +409,14 @@ function M.remote_browse(alias, subpath)
   end
 
   -- Close any pre-existing file-explorer sidebar so our browser takes the
-  -- same screen real estate rather than appearing alongside. We can't always
-  -- reliably call the plugin's official close API (it changes), so we just
-  -- walk all windows and close any whose buffer looks like an explorer.
+  -- same slot rather than appearing alongside. Narrow filetype matching:
+  -- we want explorers only, NOT dashboards/welcome screens (which often
+  -- share a prefix like "snacks_dashboard" vs "snacks_picker_list").
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local b = vim.api.nvim_win_get_buf(win)
     local ft = vim.bo[b].filetype or ""
-    if ft:lower():find("snacks") or ft == "neo-tree" or ft == "NvimTree"
+    if ft:match("^snacks_picker") or ft == "snacks_explorer"
+       or ft == "neo-tree" or ft == "NvimTree"
        or ft == "oil" or ft == "explorer" or ft == "minifiles" then
       pcall(vim.api.nvim_win_close, win, true)
     end
@@ -423,6 +424,20 @@ function M.remote_browse(alias, subpath)
 
   -- Open as a left sidebar vsplit (~32 cols, similar to snacks-explorer).
   vim.cmd("topleft 32vsplit " .. uri)
+
+  -- Clean up: if a sibling [No Name] empty window is hanging around, close
+  -- it. This is the buffer left behind when we closed the snacks dashboard
+  -- — Vim replaces the closed window's content with [No Name] rather than
+  -- disposing the window entirely.
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(win)
+    if vim.api.nvim_buf_get_name(b) == ""
+       and #vim.api.nvim_buf_get_lines(b, 0, -1, false) <= 1
+       and (vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] or "") == ""
+       and not vim.b[b].jupynvim_browser then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
 end
 
 -- Switch back to a local backend.

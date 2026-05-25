@@ -185,19 +185,50 @@ local function entry_under_cursor(buf)
   return { name = name, kind = kind }
 end
 
+-- Find a window we can use as the "main editor" pane for opening files. Any
+-- non-browser, non-floating window. Returns the win id or nil if none found.
+local function main_editor_win()
+  local cur = vim.api.nvim_get_current_win()
+  -- Prefer a sibling window that's NOT a browser and NOT floating
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if win ~= cur then
+      local cfg = vim.api.nvim_win_get_config(win)
+      if cfg.relative == "" then
+        local b = vim.api.nvim_win_get_buf(win)
+        if not vim.b[b].jupynvim_browser then
+          return win
+        end
+      end
+    end
+  end
+  return nil
+end
+
 local function open_at_cursor(buf)
   local e = entry_under_cursor(buf)
   if not e then return end
   local alias = vim.b[buf].jupynvim_alias
   local cur = vim.b[buf].jupynvim_remote_path
   if e.is_parent then
+    -- Navigate inside the browser pane itself
     vim.cmd("edit " .. uri_for(alias, parent_path(cur), true))
     return
   end
   local target = join_path(cur, e.name)
   if e.kind == "dir" then
+    -- Descend in the same browser pane
     vim.cmd("edit " .. uri_for(alias, target, true))
-  elseif e.name:sub(-6) == ".ipynb" then
+    return
+  end
+  -- For files: open in the main editor pane (not the browser).
+  -- Create a sibling pane on first use if none exists.
+  local target_win = main_editor_win()
+  if not target_win then
+    vim.cmd("rightbelow vsplit")
+    target_win = vim.api.nvim_get_current_win()
+  end
+  vim.api.nvim_set_current_win(target_win)
+  if e.name:sub(-6) == ".ipynb" then
     -- Notebook: route through jupynvim's notebook flow directly. Skips
     -- the URI scheme so we don't end up with an orphan URI buffer
     -- alongside the real notebook buffer.
