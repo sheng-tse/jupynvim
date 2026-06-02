@@ -234,12 +234,71 @@ local function tty_write(s)
   return false
 end
 
--- RPC dispatch to backend's kitty handlers. In local mode the backend writes
--- to /dev/tty and returns; in remote mode the response carries `escape_b64`
--- which we decode and write locally via tty_write. Synchronous (blocks until
--- the backend acks the write) for transmit/place paths that need to know if
--- the write succeeded. Returns res or nil + err.
+-- ── Local kitty escape encoding (remote-mode fast path) ──
+--
+-- In REMOTE mode the PNG already lives here (it arrived in the cell-output
+-- notification). Sending it BACK to the backend just to get the kitty escape
+-- means the bytes cross the slow SSH/srun link three times. Instead we encode
+-- the escape in Lua and write straight to the local /dev/tty — zero backend
+-- round-trips. These encoders mirror core/src/kitty.rs byte-for-byte.
+-- In LOCAL mode we keep using the backend (fast IPC + it owns tmux wrapping).
+M._remote_mode = false
+
+local KITTY_CHUNK = 4096
+
+local function enc_transmit(first_header, b64)
+  local out, pos, total, first = {}, 1, #b64, true
+  while pos <= total do
+    local stop = math.min(pos + KITTY_CHUNK - 1, total)
+    local chunk = b64:sub(pos, stop)
+    local more = (stop < total) and 1 or 0
+    if first then
+      table.insert(out, string.format(first_header, more, chunk))
+      first = false
+    else
+      table.insert(out, string.format("\x1b_Gm=%d,q=2;%s\x1b\\", more, chunk))
+    end
+    pos = stop + 1
+  end
+  return table.concat(out)
+end
+
+-- Build the local kitty escape for a method+args (matches backend semantics).
+local function encode_local(method, a)
+  if method == "kitty_transmit_only" then
+    return enc_transmit("\x1b_Ga=t,f=100,i=" .. a.image_id .. ",q=2,m=%d;%s\x1b\\", a.png_b64)
+  elseif method == "kitty_transmit_virtual" then
+    return enc_transmit(
+      "\x1b_Ga=T,U=1,f=100,i=" .. a.image_id .. ",c=" .. a.cols .. ",r=" .. a.rows .. ",q=2,m=%d;%s\x1b\\",
+      a.png_b64)
+  elseif method == "kitty_place" then
+    if a.screen_row and a.screen_col then
+      return string.format("\x1b[s\x1b[%d;%dH\x1b_Ga=p,i=%d,p=%d,c=%d,r=%d,q=2\x1b\\\x1b[u",
+        a.screen_row, a.screen_col, a.image_id, a.placement_id, a.cols, a.rows)
+    end
+    return string.format("\x1b_Ga=p,i=%d,p=%d,c=%d,r=%d,q=2\x1b\\",
+      a.image_id, a.placement_id, a.cols, a.rows)
+  elseif method == "kitty_clear_image" then
+    if a.placement_id then
+      return string.format("\x1b_Ga=d,d=I,i=%d,p=%d,q=2\x1b\\", a.image_id, a.placement_id)
+    end
+    return string.format("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", a.image_id)
+  elseif method == "kitty_clear_visible" then
+    return "\x1b_Ga=d,d=a,q=2\x1b\\"
+  elseif method == "kitty_clear_all" then
+    return "\x1b_Ga=d,d=A,q=2\x1b\\"
+  end
+  return nil
+end
+
+-- RPC dispatch to backend's kitty handlers (LOCAL mode), or local encode +
+-- direct tty write (REMOTE mode). Synchronous shape — returns res or nil+err.
 local function kitty_call_sync(method, args, timeout)
+  if M._remote_mode then
+    local esc = encode_local(method, args or {})
+    if esc then tty_write(esc) end
+    return { image_id = args and args.image_id }  -- mimic backend response shape
+  end
   if not rpc_client or not rpc_client.job then return nil, "no rpc client" end
   local err, res = rpc_client:call_sync(method, args or {}, timeout or 5000)
   if err then return nil, err end
@@ -250,8 +309,13 @@ local function kitty_call_sync(method, args, timeout)
   return res
 end
 
--- Fire-and-forget variant for deletes (no need to block).
+-- Fire-and-forget variant for deletes / gif frames (no need to block).
 local function kitty_call_async(method, args)
+  if M._remote_mode then
+    local esc = encode_local(method, args or {})
+    if esc then tty_write(esc) end
+    return
+  end
   if not rpc_client or not rpc_client.job then return end
   rpc_client:call(method, args or {}, function(err, res)
     if err then log.warn(method .. " error: " .. tostring(err)); return end
@@ -689,19 +753,19 @@ function M.attach(client, tty_path)
   -- backend (its child) shares the controlling tty.
   local err = client:call_sync("kitty_attach", { tty = tty_path or "/dev/tty" }, 2000)
   if not err then
+    M._remote_mode = false
     log.info("kitty_attach: local mode (backend owns " .. (tty_path or "/dev/tty") .. ")")
     return
   end
-  -- Local failed (headless nvim, SSH-spawn backend on remote host, /dev/tty
-  -- inaccessible, etc). Fall back to remote mode: backend encodes escapes
-  -- and returns them as `escape_b64` in each kitty_* response; we decode
-  -- and write locally through tty_write.
-  log.info("kitty_attach: local mode unavailable (" .. tostring(err) .. "), using remote mode")
-  local err2 = client:call_sync("kitty_attach", { remote = true }, 2000)
-  if err2 then
-    log.error("kitty_attach: remote mode also failed: " .. tostring(err2))
-    rpc_client = nil
-  end
+  -- Local failed (headless nvim, SSH-spawn backend on a remote host, /dev/tty
+  -- inaccessible, etc). Use remote mode: we encode kitty escapes in Lua (the
+  -- PNG is already here from the cell-output notification) and write to the
+  -- LOCAL /dev/tty directly — no backend round-trips, so plots aren't dragged
+  -- back and forth across the slow SSH/srun link. We still tell the backend
+  -- to enter remote mode for any code path that does go through it.
+  M._remote_mode = true
+  log.info("kitty_attach: remote mode — Lua-side encoding to local tty")
+  client:call_sync("kitty_attach", { remote = true }, 2000)  -- best-effort; we don't depend on it
 end
 
 return M
