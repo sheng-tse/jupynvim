@@ -2477,20 +2477,17 @@ function M.setup(opts)
     end,
   })
 
-  -- Auto-disconnect all remote ControlMasters on nvim exit. The 4h-persist
-  -- semantics were getting in the way: :wqa felt like it left orphan
-  -- sessions, and reopening nvim got a stale-looking state. Tear them down
-  -- on quit. If users want long-lived multiplexed sessions, they can opt
-  -- back in by removing this autocmd from their setup() wrapper.
+  -- On nvim exit we only stop the backend SUBPROCESSES (clean shutdown of
+  -- jupynvim-core over each transport), but DELIBERATELY LEAVE the SSH
+  -- ControlMaster sockets alive. ControlPersist keeps them for their TTL
+  -- (4h), so the next nvim session reuses them WITHOUT re-auth — critical
+  -- with password+2FA logins where re-auth every restart is painful.
+  -- Use :JupynvimDisconnect <alias> for explicit teardown.
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,
     callback = function()
-      for alias, profile in pairs(M.config.remote or {}) do
-        local cp = control_path(alias)
-        if cp and vim.fn.filereadable(cp) == 1 then
-          vim.fn.system({ "ssh", "-O", "exit", "-o", "ControlPath=" .. cp, profile.host })
-          vim.fn.system({ "rm", "-f", cp })
-        end
+      for _, client in pairs(M.clients or {}) do
+        pcall(function() client:stop() end)
       end
     end,
   })
