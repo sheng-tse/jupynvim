@@ -1843,6 +1843,10 @@ local function _open_output_split(buf, cell, origin_line)
   -- progress-bar tick as its own line (the inline view already applies
   -- this in render.lua's process_cr).
   local function process_cr(s)
+    -- Normalize CRLF → LF first. Shell output (IPython `!cmd`) ends lines
+    -- with \r\n; without this the bare-\r overwrite path below eats the
+    -- whole line and the scratch split shows "no text content".
+    s = s:gsub("\r\n", "\n")
     local out = {}
     for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
       local segments = {}
