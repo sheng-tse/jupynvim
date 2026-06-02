@@ -161,7 +161,7 @@ end
 -- existing job whose ID isn't known until call time:
 --   slurm = function()
 --     local jid = vim.env.PSC_JOBID or vim.fn.input("Job ID: ")
---     return ("srun --jobid=%s --overlap"):format(jid)
+--     return ("srun --jobid=%s --overlap --unbuffered"):format(jid)
 --   end
 local function build_ssh_cmd(spec)
   local cmd = { "ssh" }
@@ -351,7 +351,12 @@ function M.use_job(alias, jobid)
   if not jobid or jobid == "" then
     M._slurm_cache[alias] = nil
   else
-    M._slurm_cache[alias] = string.format("srun --jobid=%s --overlap", jobid)
+    -- --unbuffered is critical: without it srun block-buffers the task's
+    -- stdout when it's a pipe (our case — no TTY), so the backend's
+    -- length-prefixed msgpack response frames sit in srun's buffer and
+    -- never reach the frontend → every RPC times out. --unbuffered
+    -- forwards task output immediately.
+    M._slurm_cache[alias] = string.format("srun --jobid=%s --overlap --unbuffered", jobid)
   end
   local desc = jobid and ("job " .. jobid) or "login node (no slurm)"
 
