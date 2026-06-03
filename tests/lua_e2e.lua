@@ -41,6 +41,29 @@ local function fresh_nb(path)
   local f = io.open(path, "w"); f:write(content); f:close()
 end
 
+local function dependency_nb(path)
+  local content = [[
+{
+  "cells": [
+    {"cell_type": "code", "id": "c1", "metadata": {}, "source": "x = 1", "execution_count": null, "outputs": []},
+    {"cell_type": "code", "id": "c2", "metadata": {}, "source": "x += 1", "execution_count": null, "outputs": []},
+    {"cell_type": "code", "id": "c3", "metadata": {}, "source": "print(x)", "execution_count": null, "outputs": []}
+  ],
+  "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+  "nbformat": 4, "nbformat_minor": 5
+}
+]]
+  local f = io.open(path, "w"); f:write(content); f:close()
+end
+
+local function cell_stream_text(cell)
+  local parts = {}
+  for _, o in ipairs(cell.outputs or {}) do
+    if o.output_type == "stream" and o.text then table.insert(parts, o.text) end
+  end
+  return table.concat(parts, "")
+end
+
 local function wait_until(pred, timeout_ms)
   local ok = vim.wait(timeout_ms or 5000, pred, 50)
   return ok
@@ -154,6 +177,54 @@ test_pcall("save+reopen preserves outputs", function()
   local ok = c1 and #c1.outputs > 0 and c2 and #c2.outputs > 0
   report("save+reopen preserves outputs", ok,
     string.format("c1 outs=%d, c2 outs=%d", c1 and #c1.outputs or -1, c2 and #c2.outputs or -1))
+  os.remove(p)
+end)
+
+test_pcall("run_below executes current and below in order", function()
+  local p = vim.fn.tempname() .. ".ipynb"
+  dependency_nb(p)
+  local buf = J.open(p)
+  vim.wait(4000)
+  vim.api.nvim_set_current_buf(buf)
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  J.run_below(buf)
+  local ok = wait_until(function()
+    local nb = NB.get(buf)
+    if not nb then return false end
+    local c3 = nb:get_cell("c3")
+    return c3 and cell_stream_text(c3):match("2") ~= nil
+  end, 8000)
+  local nb = NB.get(buf)
+  local c3 = nb and nb:get_cell("c3")
+  report("run_below executes current and below in order", ok,
+         "c3 output=" .. vim.inspect(c3 and c3.outputs or {}))
+  os.remove(p)
+end)
+
+test_pcall("run_above executes above cells in order", function()
+  local p = vim.fn.tempname() .. ".ipynb"
+  dependency_nb(p)
+  local buf = J.open(p)
+  vim.wait(4000)
+  vim.api.nvim_set_current_buf(buf)
+  vim.api.nvim_win_set_cursor(0, { 5, 0 })
+  J.run_above(buf)
+  local above_done = wait_until(function()
+    local nb = NB.get(buf)
+    return nb and nb.cell_state and nb.cell_state.c2 and nb.cell_state.c2.exec_state == "idle"
+  end, 8000)
+  vim.api.nvim_win_set_cursor(0, { 5, 0 })
+  J.run_cell(buf, { advance = false })
+  local ok = wait_until(function()
+    local nb = NB.get(buf)
+    if not nb then return false end
+    local c3 = nb:get_cell("c3")
+    return c3 and cell_stream_text(c3):match("2") ~= nil
+  end, 8000)
+  local nb = NB.get(buf)
+  local c3 = nb and nb:get_cell("c3")
+  report("run_above executes above cells in order", above_done and ok,
+         "above_done=" .. tostring(above_done) .. " c3 output=" .. vim.inspect(c3 and c3.outputs or {}))
   os.remove(p)
 end)
 

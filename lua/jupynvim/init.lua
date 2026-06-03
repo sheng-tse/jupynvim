@@ -15,6 +15,7 @@ local Image    = require("jupynvim.image")
 local Log      = require("jupynvim.log")
 
 M.client = nil    -- single backend process shared by all notebooks
+M._execute_done_waiters = {}
 M.config = {
   core_path = nil,
   python = nil,
@@ -54,6 +55,15 @@ M.config = {
   -- notebook-aware LSPs) can do per-cell analysis. Tracked for v0.3.
   lsp_blocklist = {},
 }
+
+local function clear_execute_waiters(session_id)
+  local prefix = tostring(session_id) .. ":"
+  for key in pairs(M._execute_done_waiters) do
+    if key:sub(1, #prefix) == prefix then
+      M._execute_done_waiters[key] = nil
+    end
+  end
+end
 
 -- ---------- backend helpers ----------
 
@@ -110,6 +120,13 @@ function M._handle_cell_event(p)
   for buf, nb in pairs(Notebook.all()) do
     if nb.session_id == p.session_id then
       nb:apply_cell_event(p.cell_id, p.event or {})
+      if p.event and (p.event.kind == "execute_reply" or (p.event.kind == "status" and p.event.state == "idle")) then
+        local key = tostring(p.session_id) .. ":" .. tostring(p.cell_id)
+        local waiter = M._execute_done_waiters[key]
+        if waiter then
+          waiter(p.event)
+        end
+      end
       -- Output events change cell.outputs but not buffer TEXT, so vim's
       -- "modified" flag stays false. That's why :wqa was a no-op after
       -- running a cell - vim skipped :w because the buffer looked
@@ -213,6 +230,7 @@ function M.open(path, opts)
       pcall(function()
         ensure_client():call("close", { session_id = existing_nb.session_id }, function() end)
       end)
+      clear_execute_waiters(existing_nb.session_id)
       Notebook.remove(existing_buf)
       pcall(function() require("jupynvim.image").clear_all() end)
     end
@@ -807,6 +825,7 @@ function M._attach_autocmds(buf)
       local nb = Notebook.get(buf)
       if nb and nb.session_id then
         ensure_client():call("close", { session_id = nb.session_id }, function() end)
+        clear_execute_waiters(nb.session_id)
       end
       pcall(function() require("jupynvim.notebook_lsp").on_close(buf) end)
       Notebook.remove(buf)
@@ -890,6 +909,66 @@ end
 
 -- ---------- public API (called by keymaps) ----------
 
+local function run_cells_in_order(nb, cells)
+  if #cells == 0 then return end
+  local cl = ensure_client()
+  local i = 1
+  local function step()
+    if i > #cells then return end
+    local c = cells[i]
+    i = i + 1
+    cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function(err)
+      if err then
+        vim.notify("update_cell_source: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+      local waiter_key = tostring(nb.session_id) .. ":" .. tostring(c.id)
+      local got_reply = false
+      local got_idle = false
+      local waiter
+      local timeout
+      waiter = function(ev)
+        if ev.kind == "execute_reply" then got_reply = true end
+        if ev.kind == "status" and ev.state == "idle" then got_idle = true end
+        if got_reply and got_idle and M._execute_done_waiters[waiter_key] == waiter then
+          M._execute_done_waiters[waiter_key] = nil
+          if timeout and not timeout:is_closing() then
+            timeout:stop()
+            timeout:close()
+          end
+          step()
+        end
+      end
+      M._execute_done_waiters[waiter_key] = waiter
+      timeout = vim.loop.new_timer()
+      timeout:start(120000, 0, function()
+        timeout:stop()
+        timeout:close()
+        vim.schedule(function()
+          if M._execute_done_waiters[waiter_key] == waiter then
+            M._execute_done_waiters[waiter_key] = nil
+            vim.notify("execute timed out waiting for completion: " .. tostring(c.id), vim.log.levels.ERROR)
+          end
+        end)
+      end)
+      if timeout.unref then timeout:unref() end
+      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function(err2)
+        if err2 then
+          if M._execute_done_waiters[waiter_key] == waiter then
+            M._execute_done_waiters[waiter_key] = nil
+          end
+          if timeout and not timeout:is_closing() then
+            timeout:stop()
+            timeout:close()
+          end
+          vim.notify("execute: " .. tostring(err2), vim.log.levels.ERROR)
+        end
+      end)
+    end)
+  end
+  step()
+end
+
 function M.run_cell(buf, opts)
   opts = opts or {}
   local nb = Notebook.get(buf)
@@ -927,23 +1006,11 @@ function M.run_all(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
-  -- Sequence cells: each one's execute fires only after the previous update + execute have completed
-  local cl = ensure_client()
   local code_cells = {}
   for _, c in ipairs(nb.cells) do
     if c.cell_type == "code" then table.insert(code_cells, c) end
   end
-  local i = 1
-  local function step()
-    if i > #code_cells then return end
-    local c = code_cells[i]; i = i + 1
-    cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
-        step()
-      end)
-    end)
-  end
-  step()
+  run_cells_in_order(nb, code_cells)
 end
 
 function M.run_above(buf)
@@ -952,14 +1019,14 @@ function M.run_above(buf)
   nb:sync_from_buffer()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
+  local code_cells = {}
   for _, c in ipairs(nb.cells) do
     if c.id == cur_id then break end
     if c.cell_type == "code" then
-      local cl = ensure_client()
-      cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function() end)
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function() end)
+      table.insert(code_cells, c)
     end
   end
+  run_cells_in_order(nb, code_cells)
 end
 
 function M.run_below(buf)
@@ -969,14 +1036,14 @@ function M.run_below(buf)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local seen = false
+  local code_cells = {}
   for _, c in ipairs(nb.cells) do
     if c.id == cur_id then seen = true end
     if seen and c.cell_type == "code" then
-      local cl = ensure_client()
-      cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function() end)
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function() end)
+      table.insert(code_cells, c)
     end
   end
+  run_cells_in_order(nb, code_cells)
 end
 
 function M.add_cell(buf, where)
@@ -1750,6 +1817,7 @@ function M.setup(opts)
     for buf, nb in pairs(Notebook.all()) do
       if nb.session_id and M.client then
         M.client:call("close", { session_id = nb.session_id }, function() end)
+        clear_execute_waiters(nb.session_id)
       end
       Notebook.remove(buf)
       pcall(Image.clear_all)
