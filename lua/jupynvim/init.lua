@@ -952,14 +952,22 @@ function M.run_above(buf)
   nb:sync_from_buffer()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
-  for _, c in ipairs(nb.cells) do
-    if c.id == cur_id then break end
-    if c.cell_type == "code" then
-      local cl = ensure_client()
-      cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function() end)
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function() end)
+  local co
+  co = coroutine.wrap(function()
+    for _, c in ipairs(nb.cells) do
+      if c.id == cur_id then break end
+      if c.cell_type == "code" then
+        local cl = ensure_client()
+        cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
+          cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
+            co()
+          end)
+        end)
+        coroutine.yield()
+      end
     end
-  end
+  end)
+  co()
 end
 
 function M.run_below(buf)
@@ -969,14 +977,22 @@ function M.run_below(buf)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local seen = false
-  for _, c in ipairs(nb.cells) do
-    if c.id == cur_id then seen = true end
-    if seen and c.cell_type == "code" then
-      local cl = ensure_client()
-      cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function() end)
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function() end)
+  local co
+  co = coroutine.wrap(function()
+    for _, c in ipairs(nb.cells) do
+      if c.id == cur_id then seen = true end
+      if seen and c.cell_type == "code" then
+        local cl = ensure_client()
+        cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
+          cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
+            co()
+          end)
+        end)
+        coroutine.yield()
+      end
     end
-  end
+  end)
+  co()
 end
 
 function M.add_cell(buf, where)
