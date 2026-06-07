@@ -65,6 +65,11 @@ M.config = {
   --     },
   --   }
   remote = {},
+  -- When an SSH session is active, these keys open the REMOTE tree explorer
+  -- instead of the local one; with no active session they fall through to the
+  -- local explorer (snacks). Set to {} to disable the hijack and bind
+  -- M.explorer / :JupynvimExplorer yourself.
+  explorer_keys = { "<leader>e", "<leader>E" },
 }
 
 -- ---------- backend helpers ----------
@@ -253,6 +258,9 @@ function M.use_remote(alias_or_spec)
   end
   assert(spec and spec.host, "use_remote: profile not found or missing host")
   M._remote_spec = spec
+  -- Only treat named-profile aliases as the "active" explorer target
+  -- (one-off user@host specs aren't in M.config.remote).
+  if M.config.remote and M.config.remote[alias] then M._active_alias = alias end
   M.client = M.client_for(alias)  -- reuse existing alive client
   return M.client
 end
@@ -394,24 +402,10 @@ function M.use_job(alias, jobid)
                vim.log.levels.WARN)
     return
   end
-  -- Refresh any open browser windows for this alias
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(win)
-    if vim.b[b].jupynvim_alias == alias and vim.b[b].jupynvim_browser then
-      local path = vim.b[b].jupynvim_remote_path
-      vim.api.nvim_set_current_win(win)
-      vim.cmd("edit jupynvim://" .. alias .. path .. "/")
-    end
-  end
-  -- If no browser open at all, open one — the user clearly wants to be browsing.
-  local has_browser = false
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(win)
-    if vim.b[b].jupynvim_alias == alias and vim.b[b].jupynvim_browser then
-      has_browser = true; break
-    end
-  end
-  if not has_browser then M.remote_browse(alias) end
+  -- New backend → the cached tree is stale; drop it and (re)open the explorer.
+  require("jupynvim.remote_explorer").reset(alias)
+  M._active_alias = alias
+  M.remote_browse(alias)
   vim.notify(string.format("jupynvim: %s -> %s", alias, desc), vim.log.levels.INFO)
 end
 
@@ -427,22 +421,19 @@ function M.disconnect(alias)
   if not cp then return end
   vim.fn.system({ "ssh", "-O", "exit", "-o", "ControlPath=" .. cp, profile.host })
   vim.fn.system({ "rm", "-f", cp })  -- always clean up file even if -O exit failed
+  -- Drop the backend client + cached explorer tree; revert explorer to local.
+  local cl = M.clients[alias]
+  if cl then pcall(function() cl:stop() end); M.clients[alias] = nil end
+  pcall(function() require("jupynvim.remote_explorer").reset(alias) end)
+  if M._active_alias == alias then M._active_alias = nil end
   vim.notify("jupynvim: " .. alias .. " control socket closed")
 end
 
--- Browse files on a remote alias and open the selected one.
---   .ipynb        → opened as a notebook through jupynvim
---   other files   → fetched via `ssh cat` into a read-only scratch buffer
---   directories   → recurse: re-invokes remote_browse on the picked dir
--- subpath defaults to "." (relative to your remote home).
---
--- For a real remote workspace (editable files, search, grep, write-back),
--- install distant.nvim alongside jupynvim. jupynvim's scope is notebooks.
--- Browse files on a remote alias via the jupynvim:// URI scheme. Opens a
--- proper buffer-based browser (see lua/jupynvim/remote_browser.lua) — files
--- and dirs navigable with <CR>, parent with `-`, D/r/c for delete/rename/
--- create. Notebooks open through the existing M.open path; other files are
--- editable via fs_read/fs_write (the URI handler covers both).
+-- Open the tree-style remote file explorer (lua/jupynvim/remote_explorer.lua)
+-- for `alias`, rooted at `subpath` (default remote $HOME). snacks/LazyVim-style
+-- sidebar: icons + indented tree, <CR>/l expand-or-open, h collapse, a/d/r
+-- create/delete/rename, R refresh, q close. Notebooks open via the notebook
+-- flow; other files via the jupynvim:// URI scheme.
 function M.remote_browse(alias, subpath)
   local profile = M.config.remote and M.config.remote[alias]
   if not profile then
@@ -454,57 +445,28 @@ function M.remote_browse(alias, subpath)
                vim.log.levels.WARN)
     return
   end
-  -- Default to user's home on the remote (server expands ~ → $HOME).
-  local path = (subpath ~= nil and subpath ~= "") and subpath or "~"
-  if path:sub(-1) ~= "/" then path = path .. "/" end
-  if path:sub(1, 1) ~= "/" then path = "/" .. path end
-  local uri = "jupynvim://" .. alias .. path
-
-  -- If a window is already showing this alias's browser, focus that and reload.
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(win)
-    local name = vim.api.nvim_buf_get_name(b)
-    if name:match("^jupynvim://" .. vim.pesc(alias) .. "/") then
-      vim.api.nvim_set_current_win(win)
-      vim.cmd("edit " .. uri)
-      return
-    end
-  end
-
-  -- Close any pre-existing file-explorer sidebar so our browser takes the
-  -- same slot rather than appearing alongside. Narrow filetype matching:
-  -- we want explorers only, NOT dashboards/welcome screens (which often
-  -- share a prefix like "snacks_dashboard" vs "snacks_picker_list").
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(win)
-    local ft = vim.bo[b].filetype or ""
-    if ft:match("^snacks_picker") or ft == "snacks_explorer"
-       or ft == "neo-tree" or ft == "NvimTree"
-       or ft == "oil" or ft == "explorer" or ft == "minifiles" then
-      pcall(vim.api.nvim_win_close, win, true)
-    end
-  end
-
-  -- Open as a left sidebar vsplit (~32 cols, similar to snacks-explorer).
-  vim.cmd("topleft 32vsplit " .. uri)
-
-  -- Clean up: if a sibling [No Name] empty window is hanging around, close
-  -- it. This is the buffer left behind when we closed the snacks dashboard
-  -- — Vim replaces the closed window's content with [No Name] rather than
-  -- disposing the window entirely.
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(win)
-    if vim.api.nvim_buf_get_name(b) == ""
-       and #vim.api.nvim_buf_get_lines(b, 0, -1, false) <= 1
-       and (vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] or "") == ""
-       and not vim.b[b].jupynvim_browser then
-      pcall(vim.api.nvim_win_close, win, true)
-    end
-  end
+  M._active_alias = alias
+  require("jupynvim.remote_explorer").open(alias, (subpath ~= nil and subpath ~= "") and subpath or "~")
 end
 
--- Switch back to a local backend.
+-- <leader>e dispatcher. When an SSH session is active, open the REMOTE tree
+-- explorer (PSC files); otherwise fall through to the local explorer
+-- (snacks). Bound to the user's explorer keys in M.setup (see explorer_keys).
+function M.explorer()
+  local alias = M._active_alias
+  if alias and M.clients[alias] and M.clients[alias].job then
+    M.remote_browse(alias)
+    return
+  end
+  -- Local fallback: snacks explorer, else netrw.
+  local ok = pcall(function() require("snacks").explorer() end)
+  if not ok then pcall(vim.cmd, "Lexplore") end
+end
+
+-- Switch back to a local backend. Clears the active-remote alias so
+-- <leader>e goes back to the local (snacks) explorer.
 function M.use_local()
+  M._active_alias = nil
   if M.client and not M._remote_spec then return M.client end
   if M.client then
     pcall(function() M.client:stop() end)
@@ -2175,6 +2137,26 @@ function M.setup(opts)
     end)
   end
 
+  -- Bind explorer_keys to the M.explorer dispatcher (remote tree when an SSH
+  -- session is active, local snacks otherwise). Done on User VeryLazy so it
+  -- lands AFTER LazyVim sets its own <leader>e — otherwise LazyVim would
+  -- overwrite ours. Falls back to immediate set if VeryLazy already fired.
+  local function bind_explorer_keys()
+    for _, lhs in ipairs(M.config.explorer_keys or {}) do
+      pcall(vim.keymap.set, "n", lhs, function() M.explorer() end,
+        { desc = "jupynvim: explorer (remote when SSH-connected)" })
+    end
+  end
+  if M.config.explorer_keys and #M.config.explorer_keys > 0 then
+    vim.api.nvim_create_autocmd("User", {
+      pattern = "VeryLazy",
+      once = true,
+      callback = function() vim.schedule(bind_explorer_keys) end,
+    })
+    -- If VeryLazy already fired (jupynvim loaded late), bind now too.
+    vim.schedule(bind_explorer_keys)
+  end
+
   -- Hijack .ipynb opens
   local group = vim.api.nvim_create_augroup("JupynvimDispatch", { clear = true })
   vim.api.nvim_create_autocmd("BufReadCmd", {
@@ -2254,9 +2236,18 @@ function M.setup(opts)
         vim.notify("jupynvim: " .. tostring(client), vim.log.levels.ERROR)
         return
       end
-      -- Directory (URI ends in /): open the file browser.
+      -- Directory (URI ends in /): open the tree explorer rooted there.
+      -- Wipe the throwaway URI buffer first; the explorer makes its own.
       if path:sub(-1) == "/" then
-        require("jupynvim.remote_browser").populate(args.buf, alias, path:gsub("/+$", ""):gsub("^$", "/"), client)
+        local dir = path:gsub("/+$", "")
+        if dir == "" then dir = "/" end
+        local uri_buf = args.buf
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(uri_buf) then
+            pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
+          end
+          M.remote_browse(alias, dir)
+        end)
         return
       end
       -- Notebook: hand off to the notebook open flow. The notebook flow
@@ -2467,6 +2458,10 @@ function M.setup(opts)
   end, { nargs = 1 })
 
   vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
+
+  -- :JupynvimExplorer — open the explorer dispatcher (remote tree if an SSH
+  -- session is active, else local). Same as the explorer_keys binding.
+  vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
 
   -- :JupynvimUseJob <alias> [<jobid>]  — route next backend spawn through
   -- srun --jobid=N --overlap. Omit jobid to clear (back to login node).
