@@ -132,6 +132,16 @@ local function ensure_client()
   return M.client
 end
 
+-- Resolve the RPC client a notebook's operations should route to. Remote
+-- notebooks (nb.alias set) go to their own backend; local ones to the
+-- shared local backend. Always use this in execute/kernel paths rather than
+-- the global M.client — otherwise, with a local AND a remote notebook open,
+-- run-cell on one routes to whichever backend was touched last.
+local function nb_client(nb)
+  if nb and nb.alias then return M.client_for(nb.alias) end
+  return ensure_client()
+end
+
 -- ControlMaster socket path for an alias. Multiplexed SSH: run
 -- `:JupynvimConnect <alias>` once to authenticate interactively (password,
 -- 2FA, etc); subsequent ssh commands reuse the socket and skip auth.
@@ -1365,7 +1375,7 @@ function M.run_cell(buf, opts)
   if not cell_id then return end
   local cell = nb:get_cell(cell_id)
   -- Push current source to backend, then execute
-  local cl = ensure_client()
+  local cl = nb_client(nb)
   cl:call("update_cell_source", { session_id = nb.session_id, cell_id = cell.id, source = cell.source }, function(err)
     if err then
       vim.notify("update_cell_source: " .. tostring(err), vim.log.levels.ERROR)
@@ -1393,7 +1403,7 @@ function M.run_all(buf)
   if not nb then return end
   nb:sync_from_buffer()
   -- Sequence cells: each one's execute fires only after the previous update + execute have completed
-  local cl = ensure_client()
+  local cl = nb_client(nb)
   local code_cells = {}
   for _, c in ipairs(nb.cells) do
     if c.cell_type == "code" then table.insert(code_cells, c) end
@@ -1417,12 +1427,12 @@ function M.run_above(buf)
   nb:sync_from_buffer()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
+  local cl = nb_client(nb)
   local co
   co = coroutine.wrap(function()
     for _, c in ipairs(nb.cells) do
       if c.id == cur_id then break end
       if c.cell_type == "code" then
-        local cl = ensure_client()
         cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
           cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
             co()
@@ -1442,12 +1452,12 @@ function M.run_below(buf)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local seen = false
+  local cl = nb_client(nb)
   local co
   co = coroutine.wrap(function()
     for _, c in ipairs(nb.cells) do
       if c.id == cur_id then seen = true end
       if seen and c.cell_type == "code" then
-        local cl = ensure_client()
         cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
           cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
             co()
