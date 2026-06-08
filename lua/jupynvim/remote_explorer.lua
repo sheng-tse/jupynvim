@@ -70,7 +70,8 @@ local function items_from_entries(dir, entries)
   return items
 end
 
-local render  -- fwd decl
+local render     -- fwd decl
+local load_root  -- fwd decl
 
 local function load_dir(state, dir, cb)
   client(state.alias):call("fs_list", { path = dir }, function(err, res)
@@ -347,6 +348,17 @@ local function bind_keys(state)
   map("H", function() state.show_hidden = not state.show_hidden; render(state) end)
   map("I", function() state.show_ignored = not state.show_ignored; render(state) end)
   map("R", function() M.refresh(state.alias) end)
+  -- Re-root: `-` go up one level (reach /ocean/... from home), `.` jump to a
+  -- path. Lets you browse anywhere on the remote, not just $HOME.
+  map("-", function()
+    local up = parent_of(state.root)
+    if up then load_root(state, up) end
+  end)
+  map(".", function()
+    vim.ui.input({ prompt = "Set explorer root: ", default = state.root .. "/" }, function(p)
+      if p and p ~= "" then load_root(state, (p:gsub("/+$", ""):gsub("^$", "/"))) end
+    end)
+  end)
   map("a", function() act_create(state) end)
   map("d", function() act_delete(state) end)
   map("r", function() act_rename(state) end)
@@ -464,18 +476,27 @@ function M.open(alias, root_path)
   make_sidebar_for(state)
   bind_keys(state)
 
+  load_root(state, root_path or "~")
+  return buf, state.win
+end
+
+-- (Re)list `root_path` as the explorer's new root: clears the tree, fs_lists,
+-- renders, starts a watch. Used on open and on re-rooting (-, ., :JupynvimRemoteCd).
+load_root = function(state, root_path)
+  local buf = state.buf
+  state.kids = {}
+  state.expanded = {}
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "  loading " .. (root_path or "~") .. " ..." })
   vim.bo[buf].modifiable = false
-
-  client(alias):call("fs_list", { path = root_path or "~" }, function(err, res)
+  client(state.alias):call("fs_list", { path = root_path or "~" }, function(err, res)
     if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
     if err or not res then
       vim.bo[buf].modifiable = true
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-        "  [" .. alias .. "] error", "", "  " .. tostring(err),
+        "  [" .. state.alias .. "] error", "", "  " .. tostring(err),
         "", "  • backend installed at remote core_path?",
-        "  • :JupynvimUseJob " .. alias .. " <jobid> stale?",
+        "  • :JupynvimUseJob " .. state.alias .. " <jobid> stale?",
       })
       vim.bo[buf].modifiable = false
       return
@@ -484,10 +505,19 @@ function M.open(alias, root_path)
     state.kids[state.root] = { loaded = true, items = items_from_entries(state.root, res.entries) }
     render(state)
     start_watch(state, state.root)
-    place_dashboard(state)  -- refresh dashboard's connection line with resolved root
+    place_dashboard(state)
   end)
+end
 
-  return buf, state.win
+-- Change the explorer root for an alias (used by re-root keys + :JupynvimRemoteCd).
+function M.set_root(alias, path)
+  local state = states[alias]
+  if not state then return M.open(alias, path) end
+  if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return M.open(alias, path) end
+  -- Focus the explorer window if it isn't current.
+  local win = M.visible_win(alias)
+  if win then vim.api.nvim_set_current_win(win) end
+  load_root(state, path)
 end
 
 -- Drop cached state for an alias (called on disconnect / job-switch so a

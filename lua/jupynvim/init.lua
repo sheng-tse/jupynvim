@@ -2550,6 +2550,34 @@ function M.setup(opts)
   -- session is active, else local). Same as the explorer_keys binding.
   vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
 
+  -- :JupynvimRemoteCd <alias> <path> — re-root the remote explorer at <path>
+  -- (absolute remote path, e.g. /ocean/projects/cis260125p/shared). Lets you
+  -- browse/edit anywhere on the remote, not just $HOME. In the tree, `-` roots
+  -- up one level and `.` prompts for a path.
+  vim.api.nvim_create_user_command("JupynvimRemoteCd", function(o)
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    local alias = parts[1] or M._active_alias
+    local path = parts[2] or parts[1]
+    if not alias or not path or (#parts < 2 and not M._active_alias) then
+      vim.notify("usage: :JupynvimRemoteCd <alias> <path>", vim.log.levels.WARN)
+      return
+    end
+    if #parts == 1 and M._active_alias then alias = M._active_alias; path = parts[1] end
+    M._active_alias = alias
+    require("jupynvim.remote_explorer").set_root(alias, path)
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
+    end,
+  })
+
   -- :JupynvimCrossBuild — cross-compile the linux backend binary locally
   -- (static musl, runs on PSC's old glibc). Output is auto-uploaded to remotes
   -- on the next connect. One-time setup: brew install zig; cargo install
