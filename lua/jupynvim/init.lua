@@ -2465,6 +2465,29 @@ function M.setup(opts)
     end,
   })
 
+  -- Remote FILE buffers (not the explorer tree / dashboard) should look like
+  -- normal editable files: restore the window's display options every time the
+  -- buffer is shown. BufWinEnter is the reliable place (the BufReadCmd reset
+  -- can run before the window actually displays the buffer, and the file often
+  -- lands in a window the dashboard/explorer left with number/signcolumn off).
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = group,
+    pattern = "jupynvim://*",
+    callback = function(args)
+      if vim.b[args.buf].jupynvim_browser or vim.b[args.buf].jupynvim_dashboard then return end
+      local w = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(w) ~= args.buf then return end
+      vim.wo[w].number = vim.go.number
+      vim.wo[w].relativenumber = vim.go.relativenumber
+      vim.wo[w].signcolumn = "yes"
+      vim.wo[w].cursorline = vim.go.cursorline
+      vim.wo[w].foldcolumn = vim.go.foldcolumn
+      vim.wo[w].winfixwidth = false
+      vim.wo[w].wrap = vim.go.wrap
+      vim.wo[w].list = vim.go.list
+    end,
+  })
+
   -- :JupynvimGrep <alias> <pattern>  — ripgrep-equivalent on remote.
   -- Populates the quickfix list with matches. Uses the search RPC (ignore +
   -- regex on the backend — no remote ripgrep binary required). Search root
