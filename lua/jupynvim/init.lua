@@ -70,6 +70,10 @@ M.config = {
   -- local explorer (snacks). Set to {} to disable the hijack and bind
   -- M.explorer / :JupynvimExplorer yourself.
   explorer_keys = { "<leader>e", "<leader>E" },
+  -- Toggle a remote PTY terminal for the active SSH session (or the local
+  -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
+  -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
+  terminal_keys = { "<c-/>", "<c-_>" },
 }
 
 -- ---------- backend helpers ----------
@@ -555,6 +559,19 @@ function M.explorer()
   -- Local fallback: snacks explorer, else netrw.
   local ok = pcall(function() require("snacks").explorer() end)
   if not ok then pcall(vim.cmd, "Lexplore") end
+end
+
+-- Terminal dispatcher / TOGGLE. SSH-connected → toggle a REMOTE PTY terminal
+-- for the active alias (summon/dismiss from anywhere); otherwise fall back to
+-- the local terminal (snacks, else :terminal). Bound to terminal_keys in setup.
+function M.terminal()
+  local alias = M._active_alias
+  if alias and M.clients[alias] and M.clients[alias].job then
+    require("jupynvim.remote_term").toggle(alias)
+    return
+  end
+  local ok = pcall(function() require("snacks").terminal() end)
+  if not ok then pcall(vim.cmd, "botright split | terminal") end
 end
 
 -- Switch back to a local backend. Clears the active-remote alias so
@@ -2235,23 +2252,34 @@ function M.setup(opts)
   -- session is active, local snacks otherwise). Done on User VeryLazy so it
   -- lands AFTER LazyVim sets its own <leader>e — otherwise LazyVim would
   -- overwrite ours. Falls back to immediate set if VeryLazy already fired.
-  local function bind_explorer_keys()
+  local function bind_dispatch_keys()
     for _, lhs in ipairs(M.config.explorer_keys or {}) do
       pcall(vim.keymap.set, "n", lhs, function() M.explorer() end,
         { desc = "jupynvim: explorer (remote when SSH-connected)" })
     end
+    -- Terminal toggle works from normal AND terminal mode (so <C-/> dismisses
+    -- the remote term while you're typing in it).
+    for _, lhs in ipairs(M.config.terminal_keys or {}) do
+      pcall(vim.keymap.set, { "n", "t" }, lhs, function()
+        if vim.fn.mode() == "t" then
+          vim.cmd("stopinsert")
+        end
+        M.terminal()
+      end, { desc = "jupynvim: terminal toggle (remote when SSH-connected)" })
+    end
   end
-  if M.config.explorer_keys and #M.config.explorer_keys > 0 then
-    -- LazyVim registers <leader>e via snacks' `keys` spec, and lazy.nvim sets
-    -- those at startup. We must bind AFTER that or LazyVim wins. Bind on
-    -- VeryLazy AND on a 500ms timer (belt + braces) to reliably land last.
+  if (M.config.explorer_keys and #M.config.explorer_keys > 0)
+     or (M.config.terminal_keys and #M.config.terminal_keys > 0) then
+    -- LazyVim registers <leader>e / <C-/> via snacks' `keys` spec, and
+    -- lazy.nvim sets those at startup. We must bind AFTER that or LazyVim
+    -- wins. Bind on VeryLazy AND on a 500ms timer (belt + braces) to land last.
     vim.api.nvim_create_autocmd("User", {
       pattern = "VeryLazy",
       once = true,
-      callback = function() vim.defer_fn(bind_explorer_keys, 100) end,
+      callback = function() vim.defer_fn(bind_dispatch_keys, 100) end,
     })
-    vim.defer_fn(bind_explorer_keys, 500)
-    bind_explorer_keys()
+    vim.defer_fn(bind_dispatch_keys, 500)
+    bind_dispatch_keys()
   end
 
   -- Hijack .ipynb opens

@@ -12,6 +12,8 @@ local M = {}
 
 -- Map of (alias, pid) → terminal state. Keys are formatted "alias:pid".
 local terms = {}
+-- Most recent terminal buffer per alias, for toggle/reuse.
+M._last = {}
 
 local function key(alias, pid) return alias .. ":" .. pid end
 
@@ -32,6 +34,10 @@ function M.open(alias, opts)
   local win = vim.api.nvim_get_current_win()
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].swapfile = false
+  vim.bo[buf].bufhidden = "hide"  -- survive window close so toggle can reshow it
+  vim.b[buf].jupynvim_term_alias = alias
+  vim.b[buf].jupynvim_term_alive = true
+  M._last[alias] = buf
   vim.api.nvim_buf_set_name(buf, string.format("term://%s/[connecting]", alias))
 
   local cols = vim.api.nvim_win_get_width(win)
@@ -80,6 +86,9 @@ function M.open(alias, opts)
       elseif e.kind == "exit" then
         pcall(vim.api.nvim_chan_send, entry.chan,
               "\r\n[process exited with code " .. tostring(e.code) .. "]\r\n")
+        if entry.buf and vim.api.nvim_buf_is_valid(entry.buf) then
+          vim.b[entry.buf].jupynvim_term_alive = false
+        end
         terms[key(alias, e.pid)] = nil
       end
     end)
@@ -108,6 +117,30 @@ function M.open(alias, opts)
   -- Drop into terminal mode immediately
   vim.cmd("startinsert")
   return buf, res.pid
+end
+
+-- Toggle the remote terminal for `alias`:
+--   • visible  → hide it (close the window; PTY keeps running, bufhidden=hide)
+--   • hidden+alive → reshow in a split, enter insert
+--   • none/dead → spawn a fresh one
+-- So you can summon/dismiss a terminal from anywhere mid-task.
+function M.toggle(alias, opts)
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(w)
+    if vim.b[b].jupynvim_term_alias == alias then
+      pcall(vim.api.nvim_win_close, w, false)
+      return
+    end
+  end
+  local last = M._last[alias]
+  if last and vim.api.nvim_buf_is_valid(last) and vim.b[last].jupynvim_term_alive then
+    local split = (opts and opts.split) or "below"
+    vim.cmd((split == "right" and "botright vert sb " or "botright sb ") .. last)
+    vim.cmd("resize 15")
+    vim.cmd("startinsert")
+    return
+  end
+  M.open(alias, opts)
 end
 
 return M
