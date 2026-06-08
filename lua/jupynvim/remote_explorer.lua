@@ -446,6 +446,13 @@ local function make_sidebar_for(state)
   close_empty_windows(win)
 end
 
+-- The explorer's current root dir for an alias (where the user has browsed /
+-- remote-cd'd to), or nil. Used so a new remote terminal opens there.
+function M.current_root(alias)
+  local st = states[alias]
+  return st and st.root or nil
+end
+
 -- The window currently showing this alias's explorer buffer, or nil.
 function M.visible_win(alias)
   local state = states[alias]

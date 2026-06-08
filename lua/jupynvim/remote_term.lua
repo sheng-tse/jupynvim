@@ -34,7 +34,8 @@ function M.open(alias, opts)
   local win = vim.api.nvim_get_current_win()
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].swapfile = false
-  vim.bo[buf].bufhidden = "hide"  -- survive window close so toggle can reshow it
+  vim.bo[buf].bufhidden = "hide"   -- survive window close so toggle can reshow it
+  vim.bo[buf].buflisted = false    -- keep out of the bufferline
   vim.b[buf].jupynvim_term_alias = alias
   vim.b[buf].jupynvim_term_alive = true
   M._last[alias] = buf
@@ -54,10 +55,17 @@ function M.open(alias, opts)
     end,
   })
 
-  -- Spawn
+  -- Spawn (cwd defaults to the explorer's current root if not given, so the
+  -- terminal lands in the dir you're browsing / remote-cd'd to).
+  local cwd = opts.cwd
+  if not cwd then
+    local ok, root = pcall(function() return require("jupynvim.remote_explorer").current_root(alias) end)
+    if ok then cwd = root end
+  end
   local err, res = client:call_sync("proc_spawn", {
     cmd = opts.cmd or "bash",
     args = opts.args or { "-l", "-i" },
+    cwd = cwd,
     env = { TERM = "xterm-256color", COLORTERM = "truecolor" },
     cols = cols,
     rows = rows,

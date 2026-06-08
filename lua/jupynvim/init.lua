@@ -405,6 +405,7 @@ function M.connect(alias)
   vim.cmd("botright 15split")
   vim.cmd("enew")
   term_buf = vim.api.nvim_get_current_buf()
+  vim.bo[term_buf].buflisted = false  -- keep the auth terminal out of the bufferline
   vim.fn.termopen(args, {
     on_exit = function(_, code)
       vim.schedule(function()
