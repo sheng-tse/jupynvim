@@ -2419,8 +2419,23 @@ function M.setup(opts)
       vim.bo[args.buf].modified = false
       vim.b[args.buf].jupynvim_alias = alias
       vim.b[args.buf].jupynvim_remote_path = path
+      -- Filetype detection → syntax, treesitter, ftplugin (indent etc).
       local ft = vim.filetype.match({ filename = path, buf = args.buf })
       if ft then vim.bo[args.buf].filetype = ft end
+      -- The file often opens into a window that the dashboard/explorer left
+      -- with number/signcolumn OFF — restore the user's normal display opts
+      -- so a remote .py/.cpp looks like a normal buffer (line numbers etc).
+      local w = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(w) == args.buf then
+        vim.wo[w].number = vim.go.number
+        vim.wo[w].relativenumber = vim.go.relativenumber
+        vim.wo[w].signcolumn = "yes"
+        vim.wo[w].cursorline = vim.go.cursorline
+        vim.wo[w].foldcolumn = vim.go.foldcolumn
+        vim.wo[w].winfixwidth = false
+        vim.wo[w].list = vim.go.list
+        vim.wo[w].wrap = vim.go.wrap
+      end
     end,
   })
 

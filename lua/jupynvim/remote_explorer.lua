@@ -35,6 +35,7 @@ vim.api.nvim_set_hl(0, "JupynvimExplorerDir",    { default = true, link = "Direc
 vim.api.nvim_set_hl(0, "JupynvimExplorerLink",   { default = true, link = "Special" })
 vim.api.nvim_set_hl(0, "JupynvimExplorerChevron",{ default = true, link = "Comment" })
 vim.api.nvim_set_hl(0, "JupynvimExplorerIgnored",{ default = true, link = "Comment" })
+vim.api.nvim_set_hl(0, "JupynvimExplorerRootIcon",{ default = true, link = "Directory" })
 local ns = vim.api.nvim_create_namespace("jupynvim.remote_explorer")
 
 -- per-alias state:
@@ -121,8 +122,17 @@ end
 -- ── rendering ──
 render = function(state)
   if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
-  local lines = { "  " .. state.alias .. ":" .. (state.root or "") }
-  local hls = { { 0, 0, -1, "JupynvimExplorerHeader" } }
+  -- Root header: open-folder icon + basename (not the full path), like snacks.
+  local root = state.root or ""
+  local base = root:match("[^/]+$") or root
+  if base == "" then base = "/" end
+  local root_icon = vim.fn.nr2char(0xF07C)  -- open folder
+  local header = " " .. root_icon .. " " .. base
+  local lines = { header }
+  local hls = {
+    { 0, 1, 1 + #root_icon, "JupynvimExplorerRootIcon" },
+    { 0, 1 + #root_icon, -1, "JupynvimExplorerHeader" },
+  }
   local line_nodes = {}
 
   local function walk(dir, depth)
@@ -389,17 +399,21 @@ end
 -- user sees a jupynvim landing screen, not the LOCAL dashboard whose
 -- Find File / Recent act locally.
 local function place_dashboard(state)
+  local RD = require("jupynvim.remote_dashboard")
   for _, w in ipairs(vim.api.nvim_list_wins()) do
     if w ~= state.win and vim.api.nvim_win_get_config(w).relative == "" then
       local ft = vim.bo[vim.api.nvim_win_get_buf(w)].filetype or ""
       if ft == "snacks_dashboard" or ft == "dashboard" or ft == "alpha"
          or ft == "starter" or ft == "ministarter" or ft == "jupynvim-dashboard" then
-        local width = vim.api.nvim_win_get_width(w)
-        local dbuf = require("jupynvim.remote_dashboard").build(state.alias, state.root or "~", width)
+        local dbuf = RD.build(state.alias, state.root or "~", w)
         pcall(vim.api.nvim_win_set_buf, w, dbuf)
       end
     end
   end
+  -- Re-center once the split layout has fully settled (the first build can run
+  -- before the window reaches its final size, which made the logo position
+  -- jump between first-open and later toggles). The deferred refresh pins it.
+  vim.schedule(function() RD.refresh_layout() end)
 end
 
 -- Close any window already showing a jupynvim explorer (any alias / orphaned),

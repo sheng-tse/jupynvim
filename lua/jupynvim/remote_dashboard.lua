@@ -160,9 +160,9 @@ function M.refresh_layout()
   end
 end
 
--- Re-center on window/editor resize (covers the explorer toggling, which
--- changes the dashboard window's width).
-vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+-- Re-center on any layout change that affects the dashboard window's size:
+-- resize, explorer toggle (WinResized), and entering the dashboard window.
+vim.api.nvim_create_autocmd({ "WinResized", "VimResized", "WinEnter", "BufWinEnter" }, {
   group = vim.api.nvim_create_augroup("JupynvimDashboardResize", { clear = true }),
   callback = function() vim.schedule(M.refresh_layout) end,
 })
