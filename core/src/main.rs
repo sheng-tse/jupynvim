@@ -18,6 +18,13 @@ mod session;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `--version` prints the version and exits (used by the frontend to verify
+    // a deployed remote binary). Must short-circuit before the stdio server.
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("jupynvim-core {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     init_logging()?;
     tracing::info!("jupynvim-core starting (v{})", env!("CARGO_PKG_VERSION"));
 

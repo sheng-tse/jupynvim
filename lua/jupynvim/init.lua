@@ -85,6 +85,75 @@ local function locate_core()
   return "jupynvim-core"
 end
 
+-- Path to this plugin's repo root (.../jupynvim).
+local function plugin_root()
+  local src = debug.getinfo(1, "S").source
+  if src:sub(1, 1) == "@" then src = src:sub(2) end
+  return vim.fn.fnamemodify(src, ":h:h:h")
+end
+
+-- Path to the cross-compiled linux binary on THIS machine, for auto-upload to
+-- remotes. Override per-profile with `local_core`. Default: the musl target
+-- built by `:JupynvimCrossBuild` (cargo zigbuild --target x86_64-unknown-linux-musl).
+local function locate_local_linux_core(profile)
+  if profile and profile.local_core then return vim.fn.expand(profile.local_core) end
+  return plugin_root() .. "/core/target/x86_64-unknown-linux-musl/release/jupynvim-core"
+end
+
+-- Ensure the remote alias has the current backend binary at profile.core_path,
+-- uploading the locally cross-built linux binary over the SSH ControlMaster if
+-- the remote copy is missing or stale (sha256 mismatch). PSC blocks scp/sftp,
+-- so we stream the bytes via `ssh 'cat > path'`. Synchronous (must finish
+-- before the backend spawns). Best-effort: on any problem we warn and let the
+-- spawn use whatever's already on the remote.
+local function ensure_remote_binary(alias, profile)
+  if profile.transport_cmd then return end  -- custom transport: user owns deployment
+  local cp = control_path(alias)
+  if not cp or not master_alive(alias, profile) then return end
+  local local_bin = locate_local_linux_core(profile)
+  if vim.fn.filereadable(local_bin) ~= 1 then
+    vim.notify("jupynvim: no local linux binary at " .. local_bin ..
+               "\n  run :JupynvimCrossBuild (one-time: brew install zig; " ..
+               "cargo install cargo-zigbuild; rustup target add x86_64-unknown-linux-musl)",
+               vim.log.levels.WARN)
+    return
+  end
+  local core_path = profile.core_path or "jupynvim-core"
+  local local_sha = (vim.fn.system({ "shasum", "-a", "256", local_bin }) or ""):match("^(%x+)")
+  if not local_sha then return end
+  -- Read remote marker (best-effort; absent = needs upload).
+  local marker = core_path .. ".sha256"
+  local remote_sha = vim.fn.system({
+    "ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlPath=" .. cp, profile.host,
+    "cat " .. vim.fn.shellescape(marker) .. " 2>/dev/null",
+  }):gsub("%s+", "")
+  if remote_sha == local_sha then return end  -- already current
+
+  vim.notify("jupynvim: uploading backend to " .. alias .. " ...", vim.log.levels.INFO)
+  -- Stream the binary to a temp path, chmod, atomically move into place,
+  -- then write the sha marker. core_path may contain ~ (remote shell expands).
+  local dir = core_path:match("^(.*)/[^/]+$") or "."
+  local remote_cmd = string.format(
+    "mkdir -p %s && cat > %s.up && chmod +x %s.up && mv -f %s.up %s",
+    dir, core_path, core_path, core_path, core_path)
+  local data = io.open(local_bin, "rb")
+  if not data then return end
+  local bytes = data:read("*a"); data:close()
+  vim.fn.system({
+    "ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlPath=" .. cp, profile.host, remote_cmd,
+  }, bytes)
+  if vim.v.shell_error ~= 0 then
+    vim.notify("jupynvim: binary upload to " .. alias .. " failed", vim.log.levels.ERROR)
+    return
+  end
+  vim.fn.system({
+    "ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlPath=" .. cp, profile.host,
+    "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. vim.fn.shellescape(marker),
+  })
+  vim.notify("jupynvim: backend updated on " .. alias .. " (" .. local_sha:sub(1, 12) .. ")",
+             vim.log.levels.INFO)
+end
+
 -- Multi-client storage. Keyed by alias ("local" for the default local backend,
 -- or any user-defined remote alias from M.config.remote). Lets you have a
 -- local notebook AND multiple remote notebooks open simultaneously, each
@@ -236,6 +305,14 @@ function M.client_for(alias)
   local profile = M.config.remote and M.config.remote[alias]
   if not profile then
     error("jupynvim: no remote profile '" .. alias .. "'")
+  end
+  -- Auto-upload the cross-built linux binary if the remote copy is stale.
+  -- Once per session per alias (cleared on disconnect). Synchronous so the
+  -- spawn below uses the fresh binary.
+  M._binary_verified = M._binary_verified or {}
+  if not M._binary_verified[alias] then
+    pcall(ensure_remote_binary, alias, profile)
+    M._binary_verified[alias] = true
   end
   -- Attach alias as `label` so build_ssh_cmd can find the cached slurm string.
   local spec = vim.tbl_extend("force", {}, profile, { label = alias })
@@ -426,6 +503,7 @@ function M.disconnect(alias)
   if cl then pcall(function() cl:stop() end); M.clients[alias] = nil end
   pcall(function() require("jupynvim.remote_explorer").reset(alias) end)
   if M._active_alias == alias then M._active_alias = nil end
+  if M._binary_verified then M._binary_verified[alias] = nil end
   vim.notify("jupynvim: " .. alias .. " control socket closed")
 end
 
@@ -2471,6 +2549,33 @@ function M.setup(opts)
   -- :JupynvimExplorer — open the explorer dispatcher (remote tree if an SSH
   -- session is active, else local). Same as the explorer_keys binding.
   vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
+
+  -- :JupynvimCrossBuild — cross-compile the linux backend binary locally
+  -- (static musl, runs on PSC's old glibc). Output is auto-uploaded to remotes
+  -- on the next connect. One-time setup: brew install zig; cargo install
+  -- cargo-zigbuild; rustup target add x86_64-unknown-linux-musl.
+  vim.api.nvim_create_user_command("JupynvimCrossBuild", function()
+    local root = plugin_root()
+    local manifest = root .. "/core/Cargo.toml"
+    vim.notify("jupynvim: cross-building linux backend (musl)...", vim.log.levels.INFO)
+    vim.system({
+      "cargo", "zigbuild", "--release",
+      "--target", "x86_64-unknown-linux-musl",
+      "--manifest-path", manifest,
+    }, { text = true }, function(res)
+      vim.schedule(function()
+        if res.code == 0 then
+          M._binary_verified = {}  -- force re-upload check on next connect
+          vim.notify("jupynvim: cross-build OK → " ..
+            root .. "/core/target/x86_64-unknown-linux-musl/release/jupynvim-core" ..
+            "\n  reconnect (or it uploads on next connect)", vim.log.levels.INFO)
+        else
+          vim.notify("jupynvim: cross-build failed:\n" .. (res.stderr or res.stdout or "?"),
+                     vim.log.levels.ERROR)
+        end
+      end)
+    end)
+  end, {})
 
   -- :JupynvimUseJob <alias> [<jobid>]  — route next backend spawn through
   -- srun --jobid=N --overlap. Omit jobid to clear (back to login node).
