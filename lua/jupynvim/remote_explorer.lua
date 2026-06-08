@@ -371,27 +371,20 @@ local function close_local_explorers()
   end
 end
 
--- A single shared, UNLISTED scratch used as the neutral main-pane landing
--- buffer. Unlisted → bufferline shows nothing (no [No Name] clutter), and
--- reused → we never create more than one.
-local shared_scratch
-local function get_scratch()
-  if shared_scratch and vim.api.nvim_buf_is_valid(shared_scratch) then return shared_scratch end
-  shared_scratch = vim.api.nvim_create_buf(false, true)  -- unlisted scratch
-  return shared_scratch
-end
-
--- Replace a local startup dashboard (snacks/alpha/etc) in the main pane with
--- the shared neutral scratch, so while SSH-connected the user doesn't see the
--- LOCAL dashboard's "Find File / Recent" (which act locally) next to a remote
--- tree. Only touches real dashboard filetypes, not arbitrary buffers.
-local function neutralize_dashboard()
+-- Replace a startup dashboard (local snacks/alpha, or our own jupynvim
+-- dashboard) in any non-explorer main pane with the jupynvim remote dashboard
+-- (logo + actions), built to that window's width. So while SSH-connected the
+-- user sees a jupynvim landing screen, not the LOCAL dashboard whose
+-- Find File / Recent act locally.
+local function place_dashboard(state)
   for _, w in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_config(w).relative == "" then
+    if w ~= state.win and vim.api.nvim_win_get_config(w).relative == "" then
       local ft = vim.bo[vim.api.nvim_win_get_buf(w)].filetype or ""
       if ft == "snacks_dashboard" or ft == "dashboard" or ft == "alpha"
-         or ft == "starter" or ft == "ministarter" then
-        pcall(vim.api.nvim_win_set_buf, w, get_scratch())
+         or ft == "starter" or ft == "ministarter" or ft == "jupynvim-dashboard" then
+        local width = vim.api.nvim_win_get_width(w)
+        local dbuf = require("jupynvim.remote_dashboard").build(state.alias, state.root or "~", width)
+        pcall(vim.api.nvim_win_set_buf, w, dbuf)
       end
     end
   end
@@ -411,12 +404,12 @@ end
 
 local function make_sidebar_for(state)
   close_local_explorers()
-  neutralize_dashboard()
   vim.cmd("topleft 36vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, state.buf)
   state.win = win
   set_win_opts(win)
+  place_dashboard(state)
 end
 
 -- The window currently showing this alias's explorer buffer, or nil.
@@ -491,6 +484,7 @@ function M.open(alias, root_path)
     state.kids[state.root] = { loaded = true, items = items_from_entries(state.root, res.entries) }
     render(state)
     start_watch(state, state.root)
+    place_dashboard(state)  -- refresh dashboard's connection line with resolved root
   end)
 
   return buf, state.win
