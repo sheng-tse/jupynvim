@@ -746,6 +746,10 @@ impl Server {
     async fn fs_list(&self, p: Json) -> Result<Json> {
         use std::os::unix::fs::MetadataExt;
         let path = arg_path(&p, "path")?;
+        // Build a gitignore matcher for this dir (walk up for .git + collect
+        // .gitignore files between the repo root and here). Lets the frontend
+        // hide gitignored entries by default with an `I` toggle, like snacks.
+        let ignore_matcher = build_gitignore_matcher(&path);
         let mut rd = tokio::fs::read_dir(&path).await
             .with_context(|| format!("read_dir {}", path.display()))?;
         let mut entries = Vec::new();
@@ -769,12 +773,16 @@ impl Server {
             let mtime = meta.modified().ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64).unwrap_or(0);
+            let ignored = ignore_matcher.as_ref()
+                .map(|m| m.matched(&entry_path, meta.is_dir()).is_ignore())
+                .unwrap_or(false);
             entries.push(json!({
                 "name": entry.file_name().to_string_lossy(),
                 "kind": kind,
                 "size": meta.len(),
                 "mode": meta.mode() & 0o777,
                 "mtime": mtime,
+                "ignored": ignored,
             }));
         }
         // Sort: dirs first, then alphabetical
@@ -1207,6 +1215,43 @@ fn arg_path(p: &Json, key: &str) -> Result<PathBuf> {
         }
     }
     Ok(PathBuf::from(s))
+}
+
+/// Build a gitignore matcher for `dir`: find the nearest enclosing git repo
+/// (walk up for a `.git`), then add every `.gitignore` from the repo root down
+/// to `dir`. Returns None if `dir` isn't inside a git repo. Used by fs_list to
+/// flag ignored entries so the explorer can hide them by default.
+fn build_gitignore_matcher(dir: &std::path::Path) -> Option<ignore::gitignore::Gitignore> {
+    // Locate repo root (nearest ancestor containing .git).
+    let mut root = None;
+    let mut cur = Some(dir);
+    while let Some(d) = cur {
+        if d.join(".git").exists() {
+            root = Some(d.to_path_buf());
+            break;
+        }
+        cur = d.parent();
+    }
+    let root = root?;
+    // Collect ancestor dirs from root → dir (so deeper .gitignores win).
+    let mut chain = Vec::new();
+    let mut c = Some(dir);
+    while let Some(d) = c {
+        chain.push(d.to_path_buf());
+        if d == root { break; }
+        c = d.parent();
+    }
+    chain.reverse();
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(&root);
+    for d in &chain {
+        let gi = d.join(".gitignore");
+        if gi.exists() {
+            let _ = builder.add(gi);
+        }
+    }
+    // Always ignore the .git dir itself.
+    let _ = builder.add_line(None, ".git/");
+    builder.build().ok()
 }
 
 pub fn json_to_mp(v: &Json) -> Mp {

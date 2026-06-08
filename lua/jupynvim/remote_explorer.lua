@@ -34,6 +34,7 @@ vim.api.nvim_set_hl(0, "JupynvimExplorerHeader", { default = true, link = "Title
 vim.api.nvim_set_hl(0, "JupynvimExplorerDir",    { default = true, link = "Directory" })
 vim.api.nvim_set_hl(0, "JupynvimExplorerLink",   { default = true, link = "Special" })
 vim.api.nvim_set_hl(0, "JupynvimExplorerChevron",{ default = true, link = "Comment" })
+vim.api.nvim_set_hl(0, "JupynvimExplorerIgnored",{ default = true, link = "Comment" })
 local ns = vim.api.nvim_create_namespace("jupynvim.remote_explorer")
 
 -- per-alias state:
@@ -64,7 +65,7 @@ end
 local function items_from_entries(dir, entries)
   local items = {}
   for _, e in ipairs(entries or {}) do
-    table.insert(items, { path = join(dir, e.name), name = e.name, kind = e.kind })
+    table.insert(items, { path = join(dir, e.name), name = e.name, kind = e.kind, ignored = e.ignored })
   end
   return items
 end
@@ -127,8 +128,12 @@ render = function(state)
     local entry = state.kids[dir]
     if not (entry and entry.loaded) then return end
     for _, node in ipairs(entry.items) do
-      -- Hidden files (dotfiles) are hidden by default; toggle with `H`.
+      -- Dotfiles hidden by default (toggle `H`); gitignored hidden by default
+      -- (toggle `I`). Matches snacks/LazyVim.
       if (not state.show_hidden) and node.name:sub(1, 1) == "." then
+        goto continue
+      end
+      if (not state.show_ignored) and node.ignored then
         goto continue
       end
       local indent = string.rep("  ", depth)
@@ -143,6 +148,8 @@ render = function(state)
         namehl = (node.kind == "link") and "JupynvimExplorerLink" or nil
         suffix = (node.kind == "link") and "@" or ""
       end
+      -- Dim gitignored entries when revealed (like snacks).
+      if node.ignored then namehl = "JupynvimExplorerIgnored"; ihl = "JupynvimExplorerIgnored" end
       local prefix = " " .. indent .. chev .. " "
       local text = prefix .. icon .. " " .. node.name .. suffix
       table.insert(lines, text)
@@ -338,11 +345,17 @@ local function bind_keys(state)
   map("<2-LeftMouse>", function() act_cr(state) end)
   map("h", function() act_collapse(state) end)
   map("H", function() state.show_hidden = not state.show_hidden; render(state) end)
+  map("I", function() state.show_ignored = not state.show_ignored; render(state) end)
   map("R", function() M.refresh(state.alias) end)
   map("a", function() act_create(state) end)
   map("d", function() act_delete(state) end)
   map("r", function() act_rename(state) end)
   map("q", function() if state.win and vim.api.nvim_win_is_valid(state.win) then pcall(vim.api.nvim_win_close, state.win, true) end end)
+  -- The buffer is nomodifiable; neutralize the reflexive insert/edit keys so
+  -- pressing i/A/o/c/p/x/etc doesn't throw E21 ("Cannot make changes").
+  for _, k in ipairs({ "i", "A", "O", "c", "C", "s", "S", "x", "X", "p", "P", "D", "u", "<C-r>" }) do
+    map(k, function() end)
+  end
 end
 
 -- Close any local file explorer so ours takes the sidebar slot. Narrow match
@@ -358,23 +371,40 @@ local function close_local_explorers()
   end
 end
 
--- Replace a local startup dashboard (snacks/alpha/etc) or empty [No Name] in
--- the main pane with a blank scratch, so while SSH-connected the user doesn't
--- see the LOCAL dashboard's "Find File / Recent" (which act locally) next to
--- a remote tree. The blank pane is where tree-opened files land.
+-- A single shared, UNLISTED scratch used as the neutral main-pane landing
+-- buffer. Unlisted → bufferline shows nothing (no [No Name] clutter), and
+-- reused → we never create more than one.
+local shared_scratch
+local function get_scratch()
+  if shared_scratch and vim.api.nvim_buf_is_valid(shared_scratch) then return shared_scratch end
+  shared_scratch = vim.api.nvim_create_buf(false, true)  -- unlisted scratch
+  return shared_scratch
+end
+
+-- Replace a local startup dashboard (snacks/alpha/etc) in the main pane with
+-- the shared neutral scratch, so while SSH-connected the user doesn't see the
+-- LOCAL dashboard's "Find File / Recent" (which act locally) next to a remote
+-- tree. Only touches real dashboard filetypes, not arbitrary buffers.
 local function neutralize_dashboard()
   for _, w in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_config(w).relative == "" then
-      local b = vim.api.nvim_win_get_buf(w)
-      local ft = vim.bo[b].filetype or ""
-      local empty = vim.api.nvim_buf_get_name(b) == ""
-        and #vim.api.nvim_buf_get_lines(b, 0, -1, false) <= 1
-        and (vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] or "") == ""
+      local ft = vim.bo[vim.api.nvim_win_get_buf(w)].filetype or ""
       if ft == "snacks_dashboard" or ft == "dashboard" or ft == "alpha"
-         or ft == "starter" or ft == "ministarter" or (empty and not vim.b[b].jupynvim_explorer) then
-        local scratch = vim.api.nvim_create_buf(true, false)
-        pcall(vim.api.nvim_win_set_buf, w, scratch)
+         or ft == "starter" or ft == "ministarter" then
+        pcall(vim.api.nvim_win_set_buf, w, get_scratch())
       end
+    end
+  end
+end
+
+-- Close any window already showing a jupynvim explorer (any alias / orphaned),
+-- so opening never stacks a second sidebar. Never closes the last window.
+local function close_existing_explorer_windows()
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(w)
+       and vim.b[vim.api.nvim_win_get_buf(w)].jupynvim_explorer
+       and #vim.api.nvim_list_wins() > 1 then
+      pcall(vim.api.nvim_win_close, w, true)
     end
   end
 end
@@ -403,16 +433,19 @@ end
 -- (defaults to remote $HOME via "~"). Tree/expand state persists across
 -- close+reopen.
 function M.open(alias, root_path)
-  local state = states[alias]
+  -- Already visible for this alias → just focus it (no new window).
+  local shown = M.visible_win(alias)
+  if shown then
+    vim.api.nvim_set_current_win(shown)
+    return states[alias].buf, shown
+  end
 
+  -- Not visible: close any stray/other explorer windows so we don't stack.
+  close_existing_explorer_windows()
+
+  local state = states[alias]
   -- Reuse existing instance + tree state if its buffer is still alive.
   if state and state.buf and vim.api.nvim_buf_is_valid(state.buf) then
-    for _, w in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_get_buf(w) == state.buf then
-        vim.api.nvim_set_current_win(w)
-        return state.buf, w
-      end
-    end
     make_sidebar_for(state)
     render(state)
     return state.buf, state.win
@@ -463,9 +496,14 @@ function M.open(alias, root_path)
   return buf, state.win
 end
 
--- Drop cached state for an alias (called on disconnect so a reconnect
--- re-lists fresh).
+-- Drop cached state for an alias (called on disconnect / job-switch so a
+-- reconnect re-lists fresh). Wipes the old buffer too, which also closes any
+-- window still showing it (prevents orphaned/stacked sidebars).
 function M.reset(alias)
+  local st = states[alias]
+  if st and st.buf and vim.api.nvim_buf_is_valid(st.buf) then
+    pcall(vim.api.nvim_buf_delete, st.buf, { force = true })
+  end
   states[alias] = nil
 end
 
