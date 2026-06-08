@@ -23,21 +23,33 @@ vim.api.nvim_set_hl(0, "JupynvimDashFooter", { default = true, link = "Comment" 
 vim.api.nvim_set_hl(0, "JupynvimDashInfo",   { default = true, link = "Title" })
 local ns = vim.api.nvim_create_namespace("jupynvim.remote_dashboard")
 
+-- Icons by codepoint (classic FontAwesome, present in every Nerd Font patch —
+-- the same family mini.icons/LazyVim use, which render in this setup).
+-- Encoding by codepoint avoids editor/byte ambiguity in the literal glyph.
+local function u(cp) return vim.fn.nr2char(cp) end
+local ICON = {
+  folder = u(0xF07B),   --
+  term   = u(0xF120),   --
+  search = u(0xF002),   --
+  home   = u(0xF015),   --
+  power  = u(0xF011),   --
+}
+
 local actions = {
-  { key = "e", icon = "", desc = "Explorer",        run = function(a) require("jupynvim").remote_browse(a) end },
-  { key = "t", icon = "", desc = "Remote terminal", run = function(a) require("jupynvim.remote_term").open(a) end },
-  { key = "g", icon = "", desc = "Search remote",   run = function(a)
+  { key = "e", icon = ICON.folder, desc = "Explorer",        run = function(a) require("jupynvim").remote_browse(a) end },
+  { key = "t", icon = ICON.term,   desc = "Remote terminal", run = function(a) require("jupynvim.remote_term").open(a) end },
+  { key = "g", icon = ICON.search, desc = "Search remote",   run = function(a)
       vim.ui.input({ prompt = "Grep " .. a .. ": " }, function(pat)
         if pat and pat ~= "" then vim.cmd("JupynvimGrep " .. a .. " " .. pat) end
       end)
     end },
-  { key = "l", icon = "", desc = "Local backend",   run = function()
+  { key = "l", icon = ICON.home,   desc = "Local backend",   run = function()
       local J = require("jupynvim")
       J.use_local()
       vim.notify("jupynvim: switched to local backend", vim.log.levels.INFO)
       J.explorer()  -- active alias cleared → opens the local (snacks) explorer
     end },
-  { key = "q", icon = "", desc = "Quit",            run = function() vim.cmd("qa") end },
+  { key = "q", icon = ICON.power,  desc = "Quit",            run = function() vim.cmd("qa") end },
 }
 
 local KEYHINT = "notebook:  <leader>nr run · <leader>nR run-all · <leader>nK kernel · <C-j/k> output"

@@ -414,6 +414,27 @@ local function close_existing_explorer_windows()
   end
 end
 
+-- Close leftover empty [No Name] windows (e.g. the buffer `vim .` or a prior
+-- split leaves behind) so the layout is just: explorer sidebar + main pane.
+-- Never closes explorer/dashboard windows, real files, or the last window.
+local function close_empty_windows(keep_win)
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if w ~= keep_win and vim.api.nvim_win_is_valid(w)
+       and vim.api.nvim_win_get_config(w).relative == ""
+       and #vim.api.nvim_list_wins() > 1 then
+      local b = vim.api.nvim_win_get_buf(w)
+      local nameless = vim.api.nvim_buf_get_name(b) == ""
+      local oneline = #vim.api.nvim_buf_get_lines(b, 0, -1, false) <= 1
+        and (vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] or "") == ""
+      local plain = (vim.bo[b].buftype == "" or vim.bo[b].buftype == "nofile")
+      if nameless and oneline and plain
+         and not vim.b[b].jupynvim_explorer and not vim.b[b].jupynvim_dashboard then
+        pcall(vim.api.nvim_win_close, w, false)
+      end
+    end
+  end
+end
+
 local function make_sidebar_for(state)
   close_local_explorers()
   vim.cmd("topleft 36vsplit")
@@ -422,6 +443,7 @@ local function make_sidebar_for(state)
   state.win = win
   set_win_opts(win)
   place_dashboard(state)
+  close_empty_windows(win)
 end
 
 -- The window currently showing this alias's explorer buffer, or nil.
@@ -489,8 +511,28 @@ load_root = function(state, root_path)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "  loading " .. (root_path or "~") .. " ..." })
   vim.bo[buf].modifiable = false
+  -- Loading-timeout guard: if the backend never answers (dead node / hung
+  -- spawn), don't sit on "loading..." forever — show an escapable error so
+  -- `q` works. `done` is flipped by whichever (callback or timeout) fires first.
+  local done = false
+  vim.defer_fn(function()
+    if done or not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
+    if not state.root then
+      done = true
+      vim.bo[buf].modifiable = true
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        "  [" .. state.alias .. "] timed out", "",
+        "  the remote backend did not respond.", "",
+        "  • node/job may be down — :JupynvimUseJob " .. state.alias .. " <new jobid>",
+        "  • or :JupynvimDisconnect " .. state.alias .. " then reconnect",
+        "", "  press q to close",
+      })
+      vim.bo[buf].modifiable = false
+    end
+  end, 35000)
   client(state.alias):call("fs_list", { path = root_path or "~" }, function(err, res)
-    if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
+    if done or not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
+    done = true
     if err or not res then
       vim.bo[buf].modifiable = true
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {

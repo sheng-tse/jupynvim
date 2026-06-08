@@ -92,6 +92,11 @@ local function plugin_root()
   return vim.fn.fnamemodify(src, ":h:h:h")
 end
 
+-- Forward declarations: these helpers are defined further down but referenced
+-- by ensure_remote_binary (just below). Without forward-declaring, the refs
+-- would resolve to nil globals and the upload would silently no-op.
+local control_path, master_alive, ssh_base
+
 -- Path to the cross-compiled linux binary on THIS machine, for auto-upload to
 -- remotes. Override per-profile with `local_core`. Default: the musl target
 -- built by `:JupynvimCrossBuild` (cargo zigbuild --target x86_64-unknown-linux-musl).
@@ -123,10 +128,12 @@ local function ensure_remote_binary(alias, profile)
   if not local_sha then return end
   -- Read remote marker (best-effort; absent = needs upload).
   local marker = core_path .. ".sha256"
-  local remote_sha = vim.fn.system({
-    "ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlPath=" .. cp, profile.host,
-    "cat " .. vim.fn.shellescape(marker) .. " 2>/dev/null",
-  }):gsub("%s+", "")
+  local function ssh(args, input)
+    local c = ssh_base(cp, profile.host)
+    for _, a in ipairs(args) do table.insert(c, a) end
+    return vim.fn.system(c, input)
+  end
+  local remote_sha = ssh({ "cat " .. vim.fn.shellescape(marker) .. " 2>/dev/null" }):gsub("%s+", "")
   if remote_sha == local_sha then return end  -- already current
 
   vim.notify("jupynvim: uploading backend to " .. alias .. " ...", vim.log.levels.INFO)
@@ -139,17 +146,12 @@ local function ensure_remote_binary(alias, profile)
   local data = io.open(local_bin, "rb")
   if not data then return end
   local bytes = data:read("*a"); data:close()
-  vim.fn.system({
-    "ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlPath=" .. cp, profile.host, remote_cmd,
-  }, bytes)
+  ssh({ remote_cmd }, bytes)
   if vim.v.shell_error ~= 0 then
     vim.notify("jupynvim: binary upload to " .. alias .. " failed", vim.log.levels.ERROR)
     return
   end
-  vim.fn.system({
-    "ssh", "-T", "-o", "BatchMode=yes", "-o", "ControlPath=" .. cp, profile.host,
-    "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. vim.fn.shellescape(marker),
-  })
+  ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. vim.fn.shellescape(marker) })
   vim.notify("jupynvim: backend updated on " .. alias .. " (" .. local_sha:sub(1, 12) .. ")",
              vim.log.levels.INFO)
 end
@@ -219,7 +221,7 @@ end
 -- ControlMaster socket path for an alias. Multiplexed SSH: run
 -- `:JupynvimConnect <alias>` once to authenticate interactively (password,
 -- 2FA, etc); subsequent ssh commands reuse the socket and skip auth.
-local function control_path(alias)
+control_path = function(alias)
   if not alias or alias == "" then return nil end
   local dir = vim.fn.stdpath("cache") .. "/jupynvim"
   vim.fn.mkdir(dir, "p")
@@ -232,6 +234,24 @@ end
 local function resolve(field, spec)
   if type(field) == "function" then return field(spec) end
   return field
+end
+
+-- ssh options that make a hung/dead connection FAIL FAST instead of blocking
+-- nvim forever. Without these, a timed-out compute node freezes the editor on
+-- the blocking vim.fn.system ssh calls (master_alive, binary upload, etc).
+-- ConnectTimeout caps the initial connect; ServerAlive* drops a silent-dead
+-- session in ~15s. Inserted into every ssh invocation.
+local SSH_TIMEOUT_OPTS = {
+  "-o", "ConnectTimeout=10",
+  "-o", "ServerAliveInterval=5",
+  "-o", "ServerAliveCountMax=3",
+}
+ssh_base = function(cp, host)
+  local c = { "ssh", "-T", "-o", "BatchMode=yes" }
+  for _, o in ipairs(SSH_TIMEOUT_OPTS) do table.insert(c, o) end
+  if cp then table.insert(c, "-o"); table.insert(c, "ControlPath=" .. cp) end
+  if host then table.insert(c, host) end
+  return c
 end
 
 -- Build an SSH command vector that spawns jupynvim-core on a remote host.
@@ -248,21 +268,10 @@ end
 --     return ("srun --jobid=%s --overlap --unbuffered"):format(jid)
 --   end
 local function build_ssh_cmd(spec)
-  local cmd = { "ssh" }
-  -- -T disables remote PTY (we want raw stdio for msgpack).
-  -- BatchMode=yes blocks interactive prompts (no password hangs). Use
-  -- :JupynvimConnect <alias> first for hosts that need interactive auth.
-  table.insert(cmd, "-T")
-  table.insert(cmd, "-o")
-  table.insert(cmd, "BatchMode=yes")
-  -- Always pass ControlPath: if a ControlMaster socket exists (from a prior
-  -- :JupynvimConnect), this reuses it (no auth). If not, ssh just makes a
-  -- fresh connection. Either way, no extra wiring needed by the user.
+  -- -T raw stdio (msgpack), BatchMode no prompts, timeout opts fail fast,
+  -- ControlPath reuses the :JupynvimConnect master (or makes a fresh conn).
   local cp = control_path(spec.label or spec.host)
-  if cp then
-    table.insert(cmd, "-o")
-    table.insert(cmd, "ControlPath=" .. cp)
-  end
+  local cmd = ssh_base(cp, nil)  -- host appended after ssh_args
   local ssh_args = resolve(spec.ssh_args, spec) or {}
   for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
@@ -343,9 +352,10 @@ function M.use_remote(alias_or_spec)
 end
 
 -- Is the ControlMaster for this alias alive?
-local function master_alive(alias, profile)
+master_alive = function(alias, profile)
   local cp = control_path(alias)
   if not cp then return false end
+  -- `ssh -O check` is local (queries the control socket), fast, no network.
   vim.fn.system({ "ssh", "-O", "check", "-o", "ControlPath=" .. cp, profile.host })
   return vim.v.shell_error == 0
 end
