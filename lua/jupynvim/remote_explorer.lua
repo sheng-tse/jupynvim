@@ -127,6 +127,10 @@ render = function(state)
     local entry = state.kids[dir]
     if not (entry and entry.loaded) then return end
     for _, node in ipairs(entry.items) do
+      -- Hidden files (dotfiles) are hidden by default; toggle with `H`.
+      if (not state.show_hidden) and node.name:sub(1, 1) == "." then
+        goto continue
+      end
       local indent = string.rep("  ", depth)
       local chev, icon, ihl, namehl, suffix
       if node.kind == "dir" then
@@ -152,6 +156,7 @@ render = function(state)
       if node.kind == "dir" and state.expanded[node.path] then
         walk(node.path, depth + 1)
       end
+      ::continue::
     end
   end
   walk(state.root, 0)
@@ -332,6 +337,7 @@ local function bind_keys(state)
   map("o", function() act_cr(state) end)
   map("<2-LeftMouse>", function() act_cr(state) end)
   map("h", function() act_collapse(state) end)
+  map("H", function() state.show_hidden = not state.show_hidden; render(state) end)
   map("R", function() M.refresh(state.alias) end)
   map("a", function() act_create(state) end)
   map("d", function() act_delete(state) end)
@@ -352,13 +358,45 @@ local function close_local_explorers()
   end
 end
 
+-- Replace a local startup dashboard (snacks/alpha/etc) or empty [No Name] in
+-- the main pane with a blank scratch, so while SSH-connected the user doesn't
+-- see the LOCAL dashboard's "Find File / Recent" (which act locally) next to
+-- a remote tree. The blank pane is where tree-opened files land.
+local function neutralize_dashboard()
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_config(w).relative == "" then
+      local b = vim.api.nvim_win_get_buf(w)
+      local ft = vim.bo[b].filetype or ""
+      local empty = vim.api.nvim_buf_get_name(b) == ""
+        and #vim.api.nvim_buf_get_lines(b, 0, -1, false) <= 1
+        and (vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] or "") == ""
+      if ft == "snacks_dashboard" or ft == "dashboard" or ft == "alpha"
+         or ft == "starter" or ft == "ministarter" or (empty and not vim.b[b].jupynvim_explorer) then
+        local scratch = vim.api.nvim_create_buf(true, false)
+        pcall(vim.api.nvim_win_set_buf, w, scratch)
+      end
+    end
+  end
+end
+
 local function make_sidebar_for(state)
   close_local_explorers()
+  neutralize_dashboard()
   vim.cmd("topleft 36vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, state.buf)
   state.win = win
   set_win_opts(win)
+end
+
+-- The window currently showing this alias's explorer buffer, or nil.
+function M.visible_win(alias)
+  local state = states[alias]
+  if not (state and state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return nil end
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(w) == state.buf then return w end
+  end
+  return nil
 end
 
 -- Open (or focus) the remote explorer for `alias`, rooted at `root_path`

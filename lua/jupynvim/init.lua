@@ -449,13 +449,19 @@ function M.remote_browse(alias, subpath)
   require("jupynvim.remote_explorer").open(alias, (subpath ~= nil and subpath ~= "") and subpath or "~")
 end
 
--- <leader>e dispatcher. When an SSH session is active, open the REMOTE tree
--- explorer (PSC files); otherwise fall through to the local explorer
--- (snacks). Bound to the user's explorer keys in M.setup (see explorer_keys).
+-- <leader>e dispatcher / TOGGLE. When an SSH session is active, toggle the
+-- REMOTE tree explorer (open if hidden, close if shown); otherwise fall
+-- through to the local explorer (snacks). Bound to explorer_keys in M.setup.
 function M.explorer()
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
-    M.remote_browse(alias)
+    local re = require("jupynvim.remote_explorer")
+    local win = re.visible_win(alias)
+    if win and #vim.api.nvim_list_wins() > 1 then
+      pcall(vim.api.nvim_win_close, win, false)  -- toggle: hide it
+    else
+      M.remote_browse(alias)
+    end
     return
   end
   -- Local fallback: snacks explorer, else netrw.
@@ -2148,13 +2154,16 @@ function M.setup(opts)
     end
   end
   if M.config.explorer_keys and #M.config.explorer_keys > 0 then
+    -- LazyVim registers <leader>e via snacks' `keys` spec, and lazy.nvim sets
+    -- those at startup. We must bind AFTER that or LazyVim wins. Bind on
+    -- VeryLazy AND on a 500ms timer (belt + braces) to reliably land last.
     vim.api.nvim_create_autocmd("User", {
       pattern = "VeryLazy",
       once = true,
-      callback = function() vim.schedule(bind_explorer_keys) end,
+      callback = function() vim.defer_fn(bind_explorer_keys, 100) end,
     })
-    -- If VeryLazy already fired (jupynvim loaded late), bind now too.
-    vim.schedule(bind_explorer_keys)
+    vim.defer_fn(bind_explorer_keys, 500)
+    bind_explorer_keys()
   end
 
   -- Hijack .ipynb opens
