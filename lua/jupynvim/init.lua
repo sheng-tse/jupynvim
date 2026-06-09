@@ -2422,6 +2422,16 @@ function M.setup(opts)
       -- Filetype detection → syntax, treesitter, ftplugin (indent etc).
       local ft = vim.filetype.match({ filename = path, buf = args.buf })
       if ft then vim.bo[args.buf].filetype = ft end
+      -- Remote LSP: attach a language server running ON the remote (Phase 6).
+      -- Deferred so the buffer/filetype are fully settled first.
+      if ft and ft ~= "" then
+        local b = args.buf
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(b) then
+            pcall(function() require("jupynvim.remote_lsp").attach(b, alias, path, ft) end)
+          end
+        end)
+      end
       -- The file often opens into a window that the dashboard/explorer left
       -- with number/signcolumn OFF — restore the user's normal display opts
       -- so a remote .py/.cpp looks like a normal buffer (line numbers etc).
