@@ -45,7 +45,20 @@ function M.spawn(opts)
     env = env_list,
   }, function(code, signal)
     log.warn("jupynvim-core exited code=" .. tostring(code) .. " signal=" .. tostring(signal))
-    if c.on_exit then vim.schedule(function() c.on_exit(code) end) end
+    c.dead = true
+    c.job = nil
+    -- Fail every in-flight call NOW. Without this, a backend that dies on
+    -- spawn (e.g. ssh BatchMode refused because no auth master is up yet)
+    -- leaves callers hanging until their own timeouts (the explorer waited
+    -- 35s on a process that exited in 200ms).
+    vim.schedule(function()
+      local pending = c.pending
+      c.pending = {}
+      for _, cb in pairs(pending) do
+        pcall(cb, "backend exited (code=" .. tostring(code) .. ") - not connected? :JupynvimConnect", nil)
+      end
+      if c.on_exit then c.on_exit(code) end
+    end)
     pcall(function() if not stdin:is_closing() then stdin:close() end end)
     pcall(function() if not stdout:is_closing() then stdout:close() end end)
     pcall(function() if not stderr:is_closing() then stderr:close() end end)
@@ -147,9 +160,17 @@ function Client:_write(payload)
 end
 
 function Client:call(method, params, cb)
+  cb = cb or function() end
+  if self.dead then
+    -- Dead transport: fail immediately instead of queueing forever.
+    vim.schedule(function()
+      cb("backend not running - :JupynvimConnect first", nil)
+    end)
+    return
+  end
   local id = self.next_id
   self.next_id = self.next_id + 1
-  self.pending[id] = cb or function() end
+  self.pending[id] = cb
   local payload = mpack.encode({ 0, id, method, { params or vim.empty_dict() } })
   self:_write(payload)
 end

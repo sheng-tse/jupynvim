@@ -385,6 +385,46 @@ master_alive = function(alias, profile)
   return vim.v.shell_error == 0
 end
 
+-- Interactive connection chooser: configured profiles + "new connection".
+-- So you aren't locked to one hardcoded account; pick an existing profile or
+-- type any user@host on the fly (saved for this session as an ad-hoc profile).
+function M.connect_choose()
+  local entries, labels = {}, {}
+  for name, prof in pairs(M.config.remote or {}) do
+    table.insert(entries, name)
+    table.insert(labels, name .. "  (" .. (prof.host or "?") .. ")")
+  end
+  table.sort(entries)
+  table.sort(labels)
+  table.insert(labels, "new connection (user@host) ...")
+  vim.ui.select(labels, { prompt = "jupynvim: connect to" }, function(choice, idx)
+    if not choice then return end
+    if idx == #labels then
+      vim.ui.input({ prompt = "user@host: " }, function(host)
+        if host and host ~= "" then M.connect_adhoc(vim.trim(host)) end
+      end)
+      return
+    end
+    M.connect(entries[idx])
+  end)
+end
+
+-- Connect to an arbitrary user@host with no pre-declared profile. Creates a
+-- session-scoped profile (alias = sanitized host string) with the default
+-- core_path; everything (auto binary upload, explorer, LSP, terminal) works
+-- the same. Add it under config.remote to make it permanent.
+function M.connect_adhoc(host)
+  local alias = host:gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+  if alias == "" then alias = "adhoc" end
+  M.config.remote = M.config.remote or {}
+  if not M.config.remote[alias] then
+    M.config.remote[alias] = { host = host, core_path = "~/.local/bin/jupynvim-core" }
+    vim.notify(("jupynvim: session profile '%s' -> %s\n  add to config.remote to persist"):format(alias, host),
+      vim.log.levels.INFO)
+  end
+  M.connect(alias)
+end
+
 -- Open an interactive SSH ControlMaster session in a terminal split. After
 -- you authenticate (password, 2FA, key passphrase), the connection persists
 -- as a multiplexed socket. Subsequent :JupynvimOpenRemote calls reuse it
@@ -467,7 +507,12 @@ function M.connect(alias)
       end)
     end,
   })
-  vim.notify("jupynvim: authenticate " .. alias .. " in the terminal split below",
+  -- Drop straight into terminal-insert mode so the password prompt is
+  -- immediately typeable. Without this the split is in NORMAL mode: keys do
+  -- vim motions, nothing reaches ssh, and the prompt looks frozen.
+  vim.cmd("startinsert")
+  vim.notify("jupynvim: authenticate " .. alias .. " in the terminal split below"
+             .. " (type password; press i if you clicked away)",
              vim.log.levels.INFO)
 end
 
@@ -2819,8 +2864,19 @@ function M.setup(opts)
   -- :JupynvimConnect <alias>  — open a terminal split for interactive SSH
   -- auth (password / 2FA). Sets up a ControlMaster socket; future
   -- :JupynvimOpenRemote calls for this alias reuse it without prompting.
-  vim.api.nvim_create_user_command("JupynvimConnect", function(o) M.connect(o.args) end, {
-    nargs = 1,
+  -- :JupynvimConnect                 -> pick a profile (or "new connection")
+  -- :JupynvimConnect <alias>         -> connect a configured profile
+  -- :JupynvimConnect <user@host>     -> ad-hoc connection (session profile;
+  --                                     add to config.remote to persist)
+  vim.api.nvim_create_user_command("JupynvimConnect", function(o)
+    local arg = vim.trim(o.args or "")
+    if arg == "" then return M.connect_choose() end
+    if (M.config.remote or {})[arg] then return M.connect(arg) end
+    if arg:find("@") or arg:find("%.") then return M.connect_adhoc(arg) end
+    vim.notify("jupynvim: no profile '" .. arg .. "'. Use <user@host> for a new connection.",
+      vim.log.levels.WARN)
+  end, {
+    nargs = "?",
     complete = function()
       local names = {}
       for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
