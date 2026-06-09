@@ -22,6 +22,14 @@ local servers = {}
 -- per (alias, server) provisioning result cache: nil=unknown, false=unavailable, string=cmd[1]
 local provisioned = {}
 
+-- Breadcrumbs for :JupynvimLspStatus. Every step of the attach chain records
+-- what happened so a silent failure on a real remote is diagnosable.
+local steps = {}
+local function step(key, k, v)
+  steps[key] = steps[key] or {}
+  steps[key][k] = v
+end
+
 -- ── server selection ──────────────────────────────────────────────────────
 
 -- Built-in defaults (last resort). Standard binaries; users override via config.
@@ -164,6 +172,7 @@ local function ensure_provisioned(alias, cmd, cb)
   local cache_key = alias .. ":" .. bin
   local hit = provisioned[cache_key]
   if hit ~= nil then
+    step(cache_key, "probe", hit and ("cached: " .. tostring(hit)) or "cached: unavailable (:JupynvimLspRetry to reprobe)")
     if hit == false then return cb(nil) end
     local c = vim.deepcopy(cmd); c[1] = hit
     return cb(c)
@@ -177,14 +186,23 @@ local function ensure_provisioned(alias, cmd, cb)
     local probe = ("command -v %s || { [ -x \"$HOME/.local/bin\"/%s ] && echo \"$HOME/.local/bin\"/%s; }")
       :format(q, q, q)
     client:call("run", { argv = { "sh", "-lc", probe } }, function(err, res)
-      local abs = (not err and res and tonumber(res.code) == 0)
+      if err then
+        -- run RPC itself failed (old backend without `run`, dead client, ...)
+        step(cache_key, "probe", "run RPC error: " .. tostring(err))
+        vim.notify("jupynvim: LSP probe failed on " .. alias .. ": " .. tostring(err), vim.log.levels.WARN)
+        return cb(nil)  -- not cached: retried on next open
+      end
+      local abs = (res and tonumber(res.code) == 0)
         and (res.stdout or ""):match("^%s*(%S+)") or nil
       if abs then
+        step(cache_key, "probe", "found " .. abs)
         provisioned[cache_key] = abs
         local c = vim.deepcopy(cmd); c[1] = abs
         return cb(c)
       end
+      step(cache_key, "probe", "not on PATH (code=" .. tostring(res and res.code) .. ")")
       if after_install then
+        step(cache_key, "install", "completed but binary still not found")
         vim.notify(("jupynvim: '%s' installed but not found on %s PATH"):format(bin, alias),
           vim.log.levels.ERROR)
         provisioned[cache_key] = false
@@ -194,21 +212,26 @@ local function ensure_provisioned(alias, cmd, cb)
       local profile = (J.config.remote or {})[alias] or {}
       local recipe = (profile.lsp_install and profile.lsp_install[bin]) or DEFAULT_INSTALL[bin]
       if not recipe then
+        step(cache_key, "install", "no recipe")
         vim.notify(("jupynvim: LSP '%s' not on %s PATH and no install recipe.\n  add remote.%s.lsp_install['%s'] = {...}")
           :format(bin, alias, alias, bin), vim.log.levels.WARN)
         provisioned[cache_key] = false
         return cb(nil)
       end
       if type(recipe) == "string" then recipe = { "sh", "-lc", recipe } end
+      step(cache_key, "install", "running...")
       vim.notify(("jupynvim: installing LSP '%s' on %s (one-time, in background)..."):format(bin, alias),
         vim.log.levels.INFO)
       client:call("run", { argv = recipe }, function(ierr, ires)
         if ierr or not ires or tonumber(ires.code) ~= 0 then
-          vim.notify(("jupynvim: install of '%s' failed:\n%s"):format(bin, (ires and ires.stderr) or tostring(ierr)),
+          local why = (ires and ires.stderr) or tostring(ierr)
+          step(cache_key, "install", "FAILED: " .. tostring(why):sub(1, 200))
+          vim.notify(("jupynvim: install of '%s' failed:\n%s"):format(bin, why),
             vim.log.levels.ERROR)
           provisioned[cache_key] = false
           return cb(nil)
         end
+        step(cache_key, "install", "ok")
         vim.notify(("jupynvim: '%s' installed on %s"):format(bin, alias), vim.log.levels.INFO)
         resolve(true)
       end)
@@ -345,8 +368,11 @@ end
 -- attaches for the same (alias, root, server) queue on pending_bufs instead
 -- of double-starting.
 local function start_one(buf, alias, path, spec)
+  local skey = alias .. ":" .. spec.name
+  step(skey, "spec", table.concat(spec.cmd, " "))
   ensure_provisioned(alias, spec.cmd, function(launch)
-    if not launch then return end
+    if not launch then step(skey, "state", "provisioning failed (see probe/install)"); return end
+    step(skey, "state", "provisioned: " .. launch[1])
 
     -- root_markers may be a list, a string, or a function; normalize to a list.
     local markers = spec.root_markers
@@ -355,6 +381,7 @@ local function start_one(buf, alias, path, spec)
     local start_dir = path:match("^(.*)/[^/]+$") or "/"
 
     find_remote_root(alias, start_dir, markers, function(root)
+      step(skey, "root", root)
       local key = alias .. ":" .. root .. ":" .. spec.name
       local st = servers[key]
       if st then
@@ -373,11 +400,13 @@ local function start_one(buf, alias, path, spec)
       local client = require("jupynvim").client_for(alias)
       client:call("lsp_start", { cmd = launch, cwd = root }, function(err, res)
         if err or not res or not res.lsp_id then
+          step(skey, "state", "lsp_start FAILED: " .. tostring(err))
           vim.notify("jupynvim: lsp_start " .. spec.name .. " failed: " .. tostring(err), vim.log.levels.ERROR)
           servers[key] = nil
           return
         end
         st.lsp_id_ref.id = res.lsp_id
+        step(skey, "state", "server running (lsp_id " .. tostring(res.lsp_id) .. ")")
 
         local first
         for _, b in ipairs(st.pending_bufs) do
@@ -393,14 +422,22 @@ local function start_one(buf, alias, path, spec)
         -- root_dir = the REMOTE absolute path; vim.lsp turns it into rootUri
         -- file://<root>, exactly what the remote server expects. Forward the
         -- user's settings + init_options so behavior matches local.
+        -- didChangeWatchedFiles is disabled: vim.lsp's libuv watcher would try
+        -- to watch the REMOTE root path on the LOCAL machine (the
+        -- "watch.watch: ENOENT" error).
+        local caps = vim.lsp.protocol.make_client_capabilities()
+        caps.workspace = caps.workspace or {}
+        caps.workspace.didChangeWatchedFiles = { dynamicRegistration = false }
         local client_id = vim.lsp.start({
           name = "jupynvim:" .. spec.name .. "@" .. alias,
           cmd = make_cmd(alias, st.lsp_id_ref, st),
           root_dir = root,
           settings = spec.settings,
           init_options = spec.init_options,
+          capabilities = caps,
         }, { bufnr = first, reuse_client = function() return false end })
         st.client_id = client_id
+        step(skey, "client", client_id and ("attached (client " .. client_id .. ")") or "vim.lsp.start returned nil")
         if client_id then
           for _, b in ipairs(st.pending_bufs) do
             if b ~= first and vim.api.nvim_buf_is_valid(b) then
@@ -423,10 +460,42 @@ end
 -- (alias, root, server).
 function M.attach(buf, alias, path, ft)
   if not ft or ft == "" then return end
-  local specs = resolve_servers(alias, ft)
-  for _, spec in ipairs(specs) do
-    pcall(start_one, buf, alias, path, spec)
+  local ok, specs = pcall(resolve_servers, alias, ft)
+  if not ok then
+    step(alias .. " [" .. ft .. "]", "resolve", "ERROR: " .. tostring(specs))
+    return
   end
+  local names = {}
+  for _, s in ipairs(specs) do table.insert(names, s.name) end
+  step(alias .. " [" .. ft .. "]", "resolve",
+    #specs > 0 and table.concat(names, ", ") or "NO servers found for this filetype")
+  for _, spec in ipairs(specs) do
+    local ok2, e2 = pcall(start_one, buf, alias, path, spec)
+    if not ok2 then
+      step(alias .. ":" .. spec.name, "state", "attach ERROR: " .. tostring(e2))
+    end
+  end
+end
+
+-- Dump the attach-chain breadcrumbs (what resolved, probe/install results,
+-- root, server/client state). :JupynvimLspStatus
+function M.status()
+  local keys = {}
+  for k in pairs(steps) do table.insert(keys, k) end
+  table.sort(keys)
+  if #keys == 0 then
+    vim.notify("jupynvim: no remote-LSP activity yet (open a remote file first)", vim.log.levels.INFO)
+    return
+  end
+  local lines = { "jupynvim remote LSP status:" }
+  for _, k in ipairs(keys) do
+    table.insert(lines, "  " .. k)
+    local order = { "resolve", "spec", "probe", "install", "root", "state", "client" }
+    for _, f in ipairs(order) do
+      if steps[k][f] then table.insert(lines, "    " .. f .. ": " .. tostring(steps[k][f])) end
+    end
+  end
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end
 
 -- Clear provisioning/root caches for `alias` (or all) and re-attach every

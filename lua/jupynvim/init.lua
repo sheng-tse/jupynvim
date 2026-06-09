@@ -2998,6 +2998,12 @@ function M.setup(opts)
     end,
   })
 
+  -- :JupynvimLspStatus — dump the remote-LSP attach chain breadcrumbs
+  -- (resolved servers, probe/install results, root, server/client state).
+  vim.api.nvim_create_user_command("JupynvimLspStatus", function()
+    require("jupynvim.remote_lsp").status()
+  end, {})
+
   -- :JupynvimLspRetry [alias] — clear cached LSP provisioning failures and
   -- re-attach remote language servers for open jupynvim:// buffers.
   vim.api.nvim_create_user_command("JupynvimLspRetry", function(o)
