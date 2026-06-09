@@ -376,6 +376,9 @@ local function bind_keys(state)
       if p and p ~= "" then load_root(state, (p:gsub("/+$", ""):gsub("^$", "/"))) end
     end)
   end)
+  -- `/` fuzzy-find files under the current root (remote), like snacks explorer.
+  -- (Grep file contents is on the global <leader>/ / <leader>sg dispatch.)
+  map("/", function() require("jupynvim.remote_pick").files(state.alias, state.root) end)
   map("a", function() act_create(state) end)
   map("d", function() act_delete(state) end)
   map("r", function() act_rename(state) end)

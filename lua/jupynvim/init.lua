@@ -74,6 +74,14 @@ M.config = {
   -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
   -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
   terminal_keys = { "<c-/>", "<c-_>" },
+  -- File-picker / grep keys that should target the REMOTE when SSH-connected
+  -- and otherwise replay your own local mapping (captured at bind time, so
+  -- LazyVim's local behavior is preserved). Defaults match LazyVim. Set a
+  -- group to {} to leave those keys alone.
+  pick_keys = {
+    files = { "<leader>ff", "<leader><space>" },
+    grep  = { "<leader>/", "<leader>sg" },
+  },
 }
 
 -- ---------- backend helpers ----------
@@ -594,6 +602,32 @@ function M.terminal()
   end
   local ok = pcall(function() require("snacks").terminal() end)
   if not ok then pcall(vim.cmd, "botright split | terminal") end
+end
+
+-- True when an SSH session is the active context (so file/search keys should
+-- target the remote). Otherwise callers fall back to the user's local mapping.
+function M.remote_active()
+  local a = M._active_alias
+  return a and M.clients[a] and M.clients[a].job and true or false
+end
+
+-- Find-files dispatcher: remote picker when SSH-connected, else the user's own
+-- local mapping (captured at bind time). Bound to pick_keys.files.
+function M.find_files()
+  if M.remote_active() then
+    require("jupynvim.remote_pick").files(M._active_alias)
+    return true
+  end
+  return false
+end
+
+-- Grep dispatcher: remote grep when SSH-connected, else local mapping.
+function M.grep_pick()
+  if M.remote_active() then
+    require("jupynvim.remote_pick").grep(M._active_alias)
+    return true
+  end
+  return false
 end
 
 -- Switch back to a local backend. Clears the active-remote alias so
@@ -2289,9 +2323,39 @@ function M.setup(opts)
         M.terminal()
       end, { desc = "jupynvim: terminal toggle (remote when SSH-connected)" })
     end
+    -- Pick keys (find-files / grep): target the remote when connected, else
+    -- REPLAY the user's own local mapping (captured here, after LazyVim set
+    -- it). So local behavior is untouched; only the remote case is added.
+    M._pick_orig = M._pick_orig or {}
+    local function capture_and_bind(lhs, kind)
+      local cur = vim.fn.maparg(lhs, "n", false, true)
+      -- Capture the original only if the current map isn't already ours
+      -- (avoids capturing our own dispatcher → infinite replay loop).
+      if not (cur.desc and cur.desc:match("^jupynvim:")) then
+        M._pick_orig[lhs] = cur
+      end
+      local function replay()
+        local orig = M._pick_orig[lhs]
+        if orig and orig.callback then pcall(orig.callback)
+        elseif orig and orig.rhs and orig.rhs ~= "" then
+          local feed = vim.api.nvim_replace_termcodes(orig.rhs, true, true, true)
+          vim.api.nvim_feedkeys(feed, orig.noremap == 1 and "n" or "m", false)
+        else
+          pcall(function() require("snacks").picker[kind]() end)
+        end
+      end
+      pcall(vim.keymap.set, "n", lhs, function()
+        local handled = (kind == "files") and M.find_files() or M.grep_pick()
+        if not handled then replay() end
+      end, { desc = "jupynvim: " .. kind .. " (remote when SSH-connected)", silent = true })
+    end
+    for _, lhs in ipairs((M.config.pick_keys or {}).files or {}) do capture_and_bind(lhs, "files") end
+    for _, lhs in ipairs((M.config.pick_keys or {}).grep or {}) do capture_and_bind(lhs, "grep") end
   end
+  local pk = M.config.pick_keys or {}
   if (M.config.explorer_keys and #M.config.explorer_keys > 0)
-     or (M.config.terminal_keys and #M.config.terminal_keys > 0) then
+     or (M.config.terminal_keys and #M.config.terminal_keys > 0)
+     or (pk.files and #pk.files > 0) or (pk.grep and #pk.grep > 0) then
     -- LazyVim registers <leader>e / <C-/> via snacks' `keys` spec, and
     -- lazy.nvim sets those at startup. We must bind AFTER that or LazyVim
     -- wins. Bind on VeryLazy AND on a 500ms timer (belt + braces) to land last.

@@ -272,6 +272,7 @@ impl Server {
             "proc_resize" => self.proc_resize(p).await,
             "proc_kill" => self.proc_kill(p).await,
             "search" => self.search(p).await,
+            "find_files" => self.find_files(p).await,
             "fs_watch" => self.fs_watch(p).await,
             "fs_unwatch" => self.fs_unwatch(p).await,
             "run" => self.run_cmd(p).await,
@@ -1114,6 +1115,37 @@ impl Server {
 
         let truncated = matches.len() >= max;
         Ok(json!({ "matches": matches, "truncated": truncated }))
+    }
+
+    // List files under `path` (recursive, respecting .gitignore) for a remote
+    // file picker. Returns paths relative to `path` plus the absolute root, so
+    // the frontend can build jupynvim:// URIs. Files only; capped by `max`.
+    async fn find_files(&self, p: Json) -> Result<Json> {
+        let root = arg_path(&p, "path")?;
+        let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(20000) as usize;
+        let include_hidden = p.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+        let root2 = root.clone();
+        let files = tokio::task::spawn_blocking(move || {
+            let mut out: Vec<String> = Vec::new();
+            let walker = ignore::WalkBuilder::new(&root2)
+                .hidden(!include_hidden)
+                .ignore(true)
+                .git_ignore(true)
+                .git_global(false)
+                .git_exclude(true)
+                .build();
+            for entry_result in walker {
+                if out.len() >= max { break; }
+                let entry = match entry_result { Ok(e) => e, Err(_) => continue };
+                if !entry.file_type().map_or(false, |t| t.is_file()) { continue; }
+                if let Ok(rel) = entry.path().strip_prefix(&root2) {
+                    out.push(rel.to_string_lossy().to_string());
+                }
+            }
+            out
+        }).await.map_err(|e| anyhow!("find_files task: {e}"))?;
+        let truncated = files.len() >= max;
+        Ok(json!({ "root": root.to_string_lossy(), "files": files, "truncated": truncated }))
     }
 
     // ===========================================================
