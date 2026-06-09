@@ -169,7 +169,14 @@ local function ensure_provisioned(alias, cmd, cb)
     return cb(c)
   end
   local function resolve(after_install)
-    client:call("run", { argv = { "sh", "-lc", "command -v " .. vim.fn.shellescape(bin) } }, function(err, res)
+    -- command -v under a login shell, with an explicit ~/.local/bin fallback:
+    -- pip --user installs land there, and on some clusters the login-shell
+    -- PATH only picks it up on a fresh login (basedpyright was "installed but
+    -- not found" without this).
+    local q = vim.fn.shellescape(bin)
+    local probe = ("command -v %s || { [ -x \"$HOME/.local/bin\"/%s ] && echo \"$HOME/.local/bin\"/%s; }")
+      :format(q, q, q)
+    client:call("run", { argv = { "sh", "-lc", probe } }, function(err, res)
       local abs = (not err and res and tonumber(res.code) == 0)
         and (res.stdout or ""):match("^%s*(%S+)") or nil
       if abs then
@@ -420,6 +427,35 @@ function M.attach(buf, alias, path, ft)
   for _, spec in ipairs(specs) do
     pcall(start_one, buf, alias, path, spec)
   end
+end
+
+-- Clear provisioning/root caches for `alias` (or all) and re-attach every
+-- loaded jupynvim:// buffer. Use after fixing a failed install (the failure
+-- is cached per session so we don't probe on every file open).
+-- :JupynvimLspRetry [alias]
+function M.retry(alias)
+  for k in pairs(provisioned) do
+    if not alias or k:sub(1, #alias + 1) == alias .. ":" then provisioned[k] = nil end
+  end
+  for k in pairs(root_cache) do
+    if not alias or k:sub(1, #alias + 1) == alias .. "|" then root_cache[k] = nil end
+  end
+  local n = 0
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) then
+      local name = vim.api.nvim_buf_get_name(buf)
+      local a, path = name:match("^jupynvim://([^/]+)(/.*)$")
+      if a and (not alias or a == alias) then
+        local ft = vim.bo[buf].filetype
+        if ft and ft ~= "" then
+          M.attach(buf, a, path, ft)
+          n = n + 1
+        end
+      end
+    end
+  end
+  vim.notify(("jupynvim: LSP retry for %s (%d buffer%s)"):format(alias or "all", n, n == 1 and "" or "s"),
+    vim.log.levels.INFO)
 end
 
 return M

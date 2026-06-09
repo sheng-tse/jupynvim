@@ -1085,6 +1085,7 @@ impl Server {
             let mut out = Vec::new();
             let walker = ignore::WalkBuilder::new(&root)
                 .hidden(false)       // include dotfiles (match common ripgrep -uu)
+                .follow_links(true)  // symlinked dirs are common on HPC homes
                 .ignore(true)        // respect .ignore
                 .git_ignore(true)    // respect .gitignore
                 .git_global(false)
@@ -1136,6 +1137,7 @@ impl Server {
             let mut builder = ignore::WalkBuilder::new(&root2);
             builder
                 .hidden(!include_hidden)
+                .follow_links(true) // HPC homes are full of symlinked dirs (e.g. ~/github)
                 .ignore(true)
                 .git_ignore(true)
                 .git_global(false)

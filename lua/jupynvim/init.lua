@@ -2998,6 +2998,20 @@ function M.setup(opts)
     end,
   })
 
+  -- :JupynvimLspRetry [alias] — clear cached LSP provisioning failures and
+  -- re-attach remote language servers for open jupynvim:// buffers.
+  vim.api.nvim_create_user_command("JupynvimLspRetry", function(o)
+    local alias = vim.trim(o.args or "")
+    require("jupynvim.remote_lsp").retry(alias ~= "" and alias or M._active_alias)
+  end, {
+    nargs = "?",
+    complete = function()
+      local names = {}
+      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      return names
+    end,
+  })
+
   -- :JupynvimDisconnect <alias>  — close the ControlMaster socket.
   vim.api.nvim_create_user_command("JupynvimDisconnect", function(o) M.disconnect(o.args) end, {
     nargs = 1,

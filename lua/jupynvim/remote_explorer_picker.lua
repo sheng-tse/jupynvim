@@ -216,6 +216,14 @@ end
 
 local function state_of(picker) return states[picker.opts.jupynvim_alias] end
 
+-- Remember the current list position before a re-find so the cursor stays on
+-- the same item after the tree rebuilds (snacks re-targets on set_target()).
+-- Without this every expand/collapse jumped the cursor back to the root.
+local function refind(picker)
+  pcall(function() picker.list:set_target() end)
+  picker:find()
+end
+
 -- Directory context for create/delete/rename: the item's dir, or its parent.
 local function dir_of(state, item)
   if not item or not item.jv_path then return state.root end
@@ -224,6 +232,7 @@ local function dir_of(state, item)
 end
 
 local function reload_dir(state, picker, dir)
+  pcall(function() picker.list:set_target() end)
   state.kids[dir] = nil
   state.files_cache = nil
   fetch_dir(state, dir, function(ok)
@@ -242,6 +251,7 @@ local ACTIONS = {
     if item.dir then
       local p = item.jv_path
       if p == state.root then return end
+      pcall(function() picker.list:set_target() end)  -- keep cursor on this dir
       if state.expanded[p] then
         state.expanded[p] = nil
         picker:find()
@@ -263,10 +273,10 @@ local ACTIONS = {
     if not (state and item) then return end
     if item.dir and state.expanded[item.jv_path] then
       state.expanded[item.jv_path] = nil
-      picker:find()
+      refind(picker)
     elseif item.parent and item.parent.jv_path and item.parent.jv_path ~= state.root then
       state.expanded[item.parent.jv_path] = nil
-      picker:find()
+      refind(picker)
     end
   end,
   jv_up = function(picker)
@@ -294,11 +304,11 @@ local ACTIONS = {
     picker.opts.hidden = not picker.opts.hidden
     local state = state_of(picker)
     if state then state.files_cache = nil end  -- hidden affects find_files too
-    picker:find()
+    refind(picker)
   end,
   jv_toggle_ignored = function(picker)
     picker.opts.ignored = not picker.opts.ignored
-    picker:find()
+    refind(picker)
   end,
   jv_add = function(picker, item)
     local state = state_of(picker)
