@@ -12,6 +12,18 @@
 local log = require("jupynvim.log")
 local M = {}
 
+-- When snacks.picker is available, the explorer is the picker-based
+-- implementation (identical to the local snacks explorer: permanent input
+-- box, live tree filtering). This buffer-tree version remains the fallback
+-- for non-snacks setups, keeping the feature general for all users.
+local function picker_impl()
+  local ok = pcall(require, "snacks")
+  if ok and package.loaded["snacks"] and Snacks and Snacks.picker then
+    return require("jupynvim.remote_explorer_picker")
+  end
+  return nil
+end
+
 -- ── icons (mini.icons if present, else nerd-font fallbacks) ──
 local has_mini, MiniIcons = pcall(require, "mini.icons")
 local function file_icon(name)
@@ -479,12 +491,19 @@ end
 -- The explorer's current root dir for an alias (where the user has browsed /
 -- remote-cd'd to), or nil. Used so a new remote terminal opens there.
 function M.current_root(alias)
+  local pi = picker_impl()
+  if pi then
+    local r = pi.current_root(alias)
+    if r then return r end
+  end
   local st = states[alias]
   return st and st.root or nil
 end
 
--- The window currently showing this alias's explorer buffer, or nil.
+-- The window currently showing this alias's explorer, or nil.
 function M.visible_win(alias)
+  local pi = picker_impl()
+  if pi then return pi.visible_win(alias) end
   local state = states[alias]
   if not (state and state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return nil end
   for _, w in ipairs(vim.api.nvim_list_wins()) do
@@ -493,10 +512,22 @@ function M.visible_win(alias)
   return nil
 end
 
+-- Hide the explorer (used by the <leader>e toggle).
+function M.close(alias)
+  local pi = picker_impl()
+  if pi then return pi.close(alias) end
+  local win = M.visible_win(alias)
+  if win and #vim.api.nvim_list_wins() > 1 then
+    pcall(vim.api.nvim_win_close, win, false)
+  end
+end
+
 -- Open (or focus) the remote explorer for `alias`, rooted at `root_path`
 -- (defaults to remote $HOME via "~"). Tree/expand state persists across
 -- close+reopen.
 function M.open(alias, root_path)
+  local pi = picker_impl()
+  if pi then return pi.open(alias, root_path) end
   -- Already visible for this alias → just focus it (no new window).
   local shown = M.visible_win(alias)
   if shown then
@@ -590,6 +621,8 @@ end
 
 -- Change the explorer root for an alias (used by re-root keys + :JupynvimRemoteCd).
 function M.set_root(alias, path)
+  local pi = picker_impl()
+  if pi then return pi.set_root(alias, path) end
   local state = states[alias]
   if not state then return M.open(alias, path) end
   if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return M.open(alias, path) end
@@ -603,6 +636,8 @@ end
 -- reconnect re-lists fresh). Wipes the old buffer too, which also closes any
 -- window still showing it (prevents orphaned/stacked sidebars).
 function M.reset(alias)
+  local pi = picker_impl()
+  if pi then pi.reset(alias) end
   local st = states[alias]
   if st and st.buf and vim.api.nvim_buf_is_valid(st.buf) then
     pcall(vim.api.nvim_buf_delete, st.buf, { force = true })

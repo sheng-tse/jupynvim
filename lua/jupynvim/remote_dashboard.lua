@@ -154,6 +154,23 @@ function M.build(alias, root, win)
   return buf
 end
 
+-- Swap any startup-dashboard window (local snacks/alpha/starter, or our own)
+-- for the jupynvim remote dashboard. Skips floating windows and the explorer.
+-- Used by the explorers when a session connects.
+function M.place(alias, root)
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_config(w).relative == "" then
+      local ft = vim.bo[vim.api.nvim_win_get_buf(w)].filetype or ""
+      if ft == "snacks_dashboard" or ft == "dashboard" or ft == "alpha"
+         or ft == "starter" or ft == "ministarter" or ft == "jupynvim-dashboard" then
+        local dbuf = M.build(alias, root or "~", w)
+        pcall(vim.api.nvim_win_set_buf, w, dbuf)
+      end
+    end
+  end
+  vim.schedule(function() M.refresh_layout() end)
+end
+
 -- Re-center the dashboard in whatever window currently shows it (on resize /
 -- explorer toggle). No-op if it isn't visible.
 function M.refresh_layout()

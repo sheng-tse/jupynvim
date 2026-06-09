@@ -700,7 +700,8 @@ function M.explorer()
     local re = require("jupynvim.remote_explorer")
     local win = re.visible_win(alias)
     if win and #vim.api.nvim_list_wins() > 1 then
-      pcall(vim.api.nvim_win_close, win, false)  -- toggle: hide it
+      -- toggle: hide it (picker-based explorer needs picker:close, not win_close)
+      if re.close then pcall(re.close, alias) else pcall(vim.api.nvim_win_close, win, false) end
     else
       M.remote_browse(alias)
     end
