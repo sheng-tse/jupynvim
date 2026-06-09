@@ -141,12 +141,17 @@ local function ensure_remote_binary(alias, profile)
   local core_q = rp(core_path)
   local marker_q = rp(core_path .. ".sha256")
   local dir_q = rp(core_path:match("^(.*)/[^/]+$") or ".")
+  -- Use vim.system (not vim.fn.system): the latter throws E976 "Using a Blob
+  -- as a String" when stdin contains NUL bytes, so piping the binary silently
+  -- failed inside the caller's pcall and the upload never happened. vim.system
+  -- writes raw binary stdin correctly. Returns (stdout, exit_code).
   local function ssh(args, input)
     local c = ssh_base(cp, profile.host)
     for _, a in ipairs(args) do table.insert(c, a) end
-    return vim.fn.system(c, input)
+    local res = vim.system(c, input and { stdin = input } or {}):wait()
+    return res.stdout or "", res.code or -1
   end
-  local remote_sha = ssh({ "cat " .. marker_q .. " 2>/dev/null" }):gsub("%s+", "")
+  local remote_sha = (ssh({ "cat " .. marker_q .. " 2>/dev/null" })):gsub("%s+", "")
   if remote_sha == local_sha then return end  -- already current
 
   vim.notify("jupynvim: uploading backend to " .. alias .. " ...", vim.log.levels.INFO)
@@ -158,9 +163,9 @@ local function ensure_remote_binary(alias, profile)
   local data = io.open(local_bin, "rb")
   if not data then return end
   local bytes = data:read("*a"); data:close()
-  ssh({ remote_cmd }, bytes)
-  if vim.v.shell_error ~= 0 then
-    vim.notify("jupynvim: binary upload to " .. alias .. " failed", vim.log.levels.ERROR)
+  local _, code = ssh({ remote_cmd }, bytes)
+  if code ~= 0 then
+    vim.notify("jupynvim: binary upload to " .. alias .. " failed (exit " .. code .. ")", vim.log.levels.ERROR)
     return
   end
   ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. marker_q })
