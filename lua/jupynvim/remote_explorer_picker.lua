@@ -440,9 +440,26 @@ function M.open(alias, root)
     end,
   })
 
-  -- Swap any startup dashboard in the main pane for the jupynvim one.
+  -- Swap any startup dashboard in the main pane for the jupynvim one, and
+  -- sweep leftover empty [No Name] windows (e.g. the auth split's husk or a
+  -- `vim .` remnant) so the layout is just sidebar + main pane. Floating
+  -- windows (the picker itself) and real files are untouched.
   vim.schedule(function()
     pcall(function() require("jupynvim.remote_dashboard").place(alias, state.root) end)
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_is_valid(w)
+         and vim.api.nvim_win_get_config(w).relative == ""
+         and #vim.api.nvim_list_wins() > 1 then
+        local b = vim.api.nvim_win_get_buf(w)
+        local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
+        if vim.api.nvim_buf_get_name(b) == ""
+           and (vim.bo[b].buftype == "" or vim.bo[b].buftype == "nofile")
+           and #lines <= 1 and (lines[1] or "") == ""
+           and not vim.b[b].jupynvim_dashboard and not vim.b[b].jupynvim_explorer then
+          pcall(vim.api.nvim_win_close, w, false)
+        end
+      end
+    end
   end)
 end
 

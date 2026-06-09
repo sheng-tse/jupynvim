@@ -559,6 +559,15 @@ function M.connect(alias)
         -- actually failed, code != 0 and we leave the terminal up.
         if code == 0 then
           if term_buf and vim.api.nvim_buf_is_valid(term_buf) then
+            -- Close the auth split's WINDOW first: deleting only the buffer
+            -- leaves the window open on a fresh [No Name] buffer (the stray
+            -- bottom strip after login).
+            for _, w in ipairs(vim.api.nvim_list_wins()) do
+              if vim.api.nvim_win_get_buf(w) == term_buf
+                 and #vim.api.nvim_list_wins() > 1 then
+                pcall(vim.api.nvim_win_close, w, true)
+              end
+            end
             pcall(vim.api.nvim_buf_delete, term_buf, { force = true })
           end
           -- Poll briefly for master to appear (FSEvent race after fork).
