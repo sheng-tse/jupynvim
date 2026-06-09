@@ -42,6 +42,18 @@ local DEFAULT_INSTALL = {
   ["pyright-langserver"]      = { "pip", "install", "--user", "pyright" },
   ["ruff"]                    = { "pip", "install", "--user", "ruff" },
   ["pylsp"]                   = { "pip", "install", "--user", "python-lsp-server" },
+  -- clangd is a prebuilt binary (not pip): download the LLVM release, extract
+  -- into ~/.local/share/jupynvim, symlink onto ~/.local/bin (its lib/clang
+  -- resource dir must stay beside the binary, so we symlink the bin not copy).
+  ["clangd"] = { "sh", "-lc", table.concat({
+    "set -e",
+    "mkdir -p ~/.local/share/jupynvim ~/.local/bin",
+    "cd ~/.local/share/jupynvim",
+    'V=18.1.3',
+    'curl -fsSL -o clangd.zip "https://github.com/clangd/clangd/releases/download/$V/clangd-linux-$V.zip"',
+    "unzip -oq clangd.zip && rm -f clangd.zip",
+    'ln -sf "$HOME/.local/share/jupynvim/clangd_$V/bin/clangd" ~/.local/bin/clangd',
+  }, " && ") },
 }
 
 -- The cmd lspconfig would use for `ft`, preferring servers the user has

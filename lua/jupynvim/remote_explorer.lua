@@ -334,15 +334,22 @@ function M.refresh(alias)
 end
 
 -- ── window / buffer setup ──
+-- Use nvim_set_option_value with scope="local": `vim.wo[win].x = v` on the
+-- CURRENT window leaks window-local options like 'number' to the GLOBAL value
+-- (Neovim quirk), which turned line numbers off everywhere after opening the
+-- explorer. scope="local" sets only this window.
+local function setlocalwin(win, name, val)
+  pcall(vim.api.nvim_set_option_value, name, val, { scope = "local", win = win })
+end
 local function set_win_opts(win)
-  vim.wo[win].number = false
-  vim.wo[win].relativenumber = false
-  vim.wo[win].signcolumn = "no"
-  vim.wo[win].wrap = false
-  vim.wo[win].cursorline = true
-  vim.wo[win].winfixwidth = true
-  vim.wo[win].foldcolumn = "0"
-  vim.wo[win].statuscolumn = ""
+  setlocalwin(win, "number", false)
+  setlocalwin(win, "relativenumber", false)
+  setlocalwin(win, "signcolumn", "no")
+  setlocalwin(win, "wrap", false)
+  setlocalwin(win, "cursorline", true)
+  setlocalwin(win, "winfixwidth", true)
+  setlocalwin(win, "foldcolumn", "0")
+  setlocalwin(win, "statuscolumn", "")
 end
 
 local function bind_keys(state)

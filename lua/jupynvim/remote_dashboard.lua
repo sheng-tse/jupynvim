@@ -136,13 +136,19 @@ function M.build(alias, root, win)
     vim.keymap.set("n", a.key, function() a.run(alias) end,
       { buffer = buf, nowait = true, silent = true })
   end
+  -- scope="local" so these don't leak to the GLOBAL option (the `vim.wo[w].x`
+  -- form on the current window does, which was turning line numbers off
+  -- everywhere). See remote_explorer.setlocalwin.
+  local function setlocalwin(w, name, val)
+    pcall(vim.api.nvim_set_option_value, name, val, { scope = "local", win = w })
+  end
   for _, w in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(w) == buf then
-      vim.wo[w].number = false
-      vim.wo[w].relativenumber = false
-      vim.wo[w].signcolumn = "no"
-      vim.wo[w].cursorline = false
-      vim.wo[w].fillchars = "eob: "
+      setlocalwin(w, "number", false)
+      setlocalwin(w, "relativenumber", false)
+      setlocalwin(w, "signcolumn", "no")
+      setlocalwin(w, "cursorline", false)
+      setlocalwin(w, "fillchars", "eob: ")
     end
   end
   return buf
