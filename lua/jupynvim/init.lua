@@ -691,7 +691,9 @@ function M.remote_browse(alias, subpath)
     vim.notify("jupynvim: no remote profile '" .. tostring(alias or "?") .. "'", vim.log.levels.ERROR)
     return
   end
-  if not master_alive(alias, profile) then
+  -- Custom transports (transport_cmd) don't use an SSH ControlMaster; the
+  -- master check only applies to plain ssh profiles.
+  if not profile.transport_cmd and not master_alive(alias, profile) then
     vim.notify("jupynvim: " .. alias .. " not connected; run :JupynvimConnect " .. alias .. " first",
                vim.log.levels.WARN)
     return
