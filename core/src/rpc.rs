@@ -1120,21 +1120,32 @@ impl Server {
     // List files under `path` (recursive, respecting .gitignore) for a remote
     // file picker. Returns paths relative to `path` plus the absolute root, so
     // the frontend can build jupynvim:// URIs. Files only; capped by `max`.
+    // `excludes` (dir/file names) prunes bulk junk so a $HOME scan isn't
+    // dominated by conda installs and __pycache__.
     async fn find_files(&self, p: Json) -> Result<Json> {
         let root = arg_path(&p, "path")?;
         let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(20000) as usize;
         let include_hidden = p.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+        let excludes: std::collections::HashSet<String> = p.get("excludes")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
         let root2 = root.clone();
         let files = tokio::task::spawn_blocking(move || {
             let mut out: Vec<String> = Vec::new();
-            let walker = ignore::WalkBuilder::new(&root2)
+            let mut builder = ignore::WalkBuilder::new(&root2);
+            builder
                 .hidden(!include_hidden)
                 .ignore(true)
                 .git_ignore(true)
                 .git_global(false)
-                .git_exclude(true)
-                .build();
-            for entry_result in walker {
+                .git_exclude(true);
+            if !excludes.is_empty() {
+                builder.filter_entry(move |e| {
+                    e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
+                });
+            }
+            for entry_result in builder.build() {
                 if out.len() >= max { break; }
                 let entry = match entry_result { Ok(e) => e, Err(_) => continue };
                 if !entry.file_type().map_or(false, |t| t.is_file()) { continue; }

@@ -377,8 +377,14 @@ local function bind_keys(state)
     end)
   end)
   -- `/` fuzzy-find files under the current root (remote), like snacks explorer.
+  -- Same layout as the snacks explorer search (sidebar preset: bordered input
+  -- with title on top, list below, left strip) instead of a centered popup.
   -- (Grep file contents is on the global <leader>/ / <leader>sg dispatch.)
-  map("/", function() require("jupynvim.remote_pick").files(state.alias, state.root) end)
+  map("/", function()
+    require("jupynvim.remote_pick").files(state.alias, state.root, {
+      layout = { preset = "sidebar", preview = false },
+    })
+  end)
   map("a", function() act_create(state) end)
   map("d", function() act_delete(state) end)
   map("r", function() act_rename(state) end)

@@ -149,42 +149,65 @@ end
 -- ── provisioning (zero-manual) ─────────────────────────────────────────────
 
 -- Ensure the server binary exists on the remote; install once if a recipe is
--- known. Returns the cmd to launch (possibly unchanged) or nil if unavailable.
--- Synchronous (uses the backend `run` RPC); cached per (alias, bin).
-local function ensure_provisioned(alias, cmd)
-  local client = require("jupynvim").client_for(alias)
+-- known. Fully ASYNC (a pip install can take minutes; the old sync version
+-- froze the editor for its duration). Calls cb(launch_cmd or nil).
+--
+-- On success the binary is resolved to its ABSOLUTE path via `command -v`
+-- under a login shell (sh -lc): pip --user installs land in ~/.local/bin,
+-- which is on the login-shell PATH but not necessarily on the backend
+-- process's PATH, so spawning by bare name could fail for any user whose
+-- shell setup differs. The absolute path works regardless.
+local function ensure_provisioned(alias, cmd, cb)
+  local J = require("jupynvim")
+  local client = J.client_for(alias)
   local bin = cmd[1]
   local cache_key = alias .. ":" .. bin
-  if provisioned[cache_key] ~= nil then
-    return provisioned[cache_key] and cmd or nil
+  local hit = provisioned[cache_key]
+  if hit ~= nil then
+    if hit == false then return cb(nil) end
+    local c = vim.deepcopy(cmd); c[1] = hit
+    return cb(c)
   end
-  -- already on PATH?
-  local err, res = client:call_sync("run", { argv = { "sh", "-lc", "command -v " .. vim.fn.shellescape(bin) } }, 8000)
-  if not err and res and tonumber(res.code) == 0 and (res.stdout or ""):match("%S") then
-    provisioned[cache_key] = true
-    return cmd
+  local function resolve(after_install)
+    client:call("run", { argv = { "sh", "-lc", "command -v " .. vim.fn.shellescape(bin) } }, function(err, res)
+      local abs = (not err and res and tonumber(res.code) == 0)
+        and (res.stdout or ""):match("^%s*(%S+)") or nil
+      if abs then
+        provisioned[cache_key] = abs
+        local c = vim.deepcopy(cmd); c[1] = abs
+        return cb(c)
+      end
+      if after_install then
+        vim.notify(("jupynvim: '%s' installed but not found on %s PATH"):format(bin, alias),
+          vim.log.levels.ERROR)
+        provisioned[cache_key] = false
+        return cb(nil)
+      end
+      -- not on PATH: try an install recipe
+      local profile = (J.config.remote or {})[alias] or {}
+      local recipe = (profile.lsp_install and profile.lsp_install[bin]) or DEFAULT_INSTALL[bin]
+      if not recipe then
+        vim.notify(("jupynvim: LSP '%s' not on %s PATH and no install recipe.\n  add remote.%s.lsp_install['%s'] = {...}")
+          :format(bin, alias, alias, bin), vim.log.levels.WARN)
+        provisioned[cache_key] = false
+        return cb(nil)
+      end
+      if type(recipe) == "string" then recipe = { "sh", "-lc", recipe } end
+      vim.notify(("jupynvim: installing LSP '%s' on %s (one-time, in background)..."):format(bin, alias),
+        vim.log.levels.INFO)
+      client:call("run", { argv = recipe }, function(ierr, ires)
+        if ierr or not ires or tonumber(ires.code) ~= 0 then
+          vim.notify(("jupynvim: install of '%s' failed:\n%s"):format(bin, (ires and ires.stderr) or tostring(ierr)),
+            vim.log.levels.ERROR)
+          provisioned[cache_key] = false
+          return cb(nil)
+        end
+        vim.notify(("jupynvim: '%s' installed on %s"):format(bin, alias), vim.log.levels.INFO)
+        resolve(true)
+      end)
+    end)
   end
-  -- try an install recipe
-  local profile = (require("jupynvim").config.remote or {})[alias] or {}
-  local recipe = (profile.lsp_install and profile.lsp_install[bin]) or DEFAULT_INSTALL[bin]
-  if not recipe then
-    vim.notify(("jupynvim: LSP '%s' not on %s PATH and no install recipe.\n  add remote.%s.lsp_install['%s'] = {...}")
-      :format(bin, alias, alias, bin), vim.log.levels.WARN)
-    provisioned[cache_key] = false
-    return nil
-  end
-  if type(recipe) == "string" then recipe = { "sh", "-lc", recipe } end
-  vim.notify(("jupynvim: installing LSP '%s' on %s (one-time)..."):format(bin, alias), vim.log.levels.INFO)
-  local ierr, ires = client:call_sync("run", { argv = recipe }, 180000)
-  if ierr or not ires or tonumber(ires.code) ~= 0 then
-    vim.notify(("jupynvim: install of '%s' failed:\n%s"):format(bin, (ires and ires.stderr) or tostring(ierr)),
-      vim.log.levels.ERROR)
-    provisioned[cache_key] = false
-    return nil
-  end
-  provisioned[cache_key] = true
-  vim.notify(("jupynvim: '%s' installed on %s"):format(bin, alias), vim.log.levels.INFO)
-  return cmd
+  resolve(false)
 end
 
 -- ── URI rewriting (jupynvim://<alias>  <->  file://) ───────────────────────
@@ -292,68 +315,97 @@ end
 
 -- Find the project root on the REMOTE by walking up from `start_dir` for any
 -- of `markers` (root_markers from the user's server config). Falls back to the
--- file's dir. One `run` call. Cached per (alias, start_dir, markers).
+-- file's dir. Async: one `run` call, cached per (alias, start_dir, markers).
 local root_cache = {}
-local function find_remote_root(alias, start_dir, markers)
-  if not markers or #markers == 0 then return start_dir end
+local function find_remote_root(alias, start_dir, markers, cb)
+  if not markers or #markers == 0 then return cb(start_dir) end
   local ck = alias .. "|" .. start_dir .. "|" .. table.concat(markers, ",")
-  if root_cache[ck] then return root_cache[ck] end
+  if root_cache[ck] then return cb(root_cache[ck]) end
   local pat = table.concat(vim.tbl_map(function(m) return vim.fn.shellescape(m) end, markers), " ")
   local script = ([[d=%s; while [ "$d" != / ]; do for m in %s; do [ -e "$d/$m" ] && echo "$d" && exit 0; done; d=$(dirname "$d"); done; echo %s]])
     :format(vim.fn.shellescape(start_dir), pat, vim.fn.shellescape(start_dir))
   local cl = require("jupynvim").client_for(alias)
-  local err, res = cl:call_sync("run", { argv = { "sh", "-lc", script } }, 8000)
-  local root = (not err and res and (res.stdout or ""):match("([^\n]+)")) or start_dir
-  root_cache[ck] = root
-  return root
+  cl:call("run", { argv = { "sh", "-lc", script } }, function(err, res)
+    local root = (not err and res and (res.stdout or ""):match("([^\n]+)")) or start_dir
+    root_cache[ck] = root
+    cb(root)
+  end)
 end
 
 -- Start (or reuse) one server `spec` for `buf` rooted under `path`'s project.
+-- Fully async (provision -> root-find -> lsp_start are all background RPCs);
+-- the editor never blocks while a server installs or spawns. Concurrent
+-- attaches for the same (alias, root, server) queue on pending_bufs instead
+-- of double-starting.
 local function start_one(buf, alias, path, spec)
-  local launch = ensure_provisioned(alias, spec.cmd)
-  if not launch then return end
+  ensure_provisioned(alias, spec.cmd, function(launch)
+    if not launch then return end
 
-  -- root_markers may be a list, a string, or a function; normalize to a list.
-  local markers = spec.root_markers
-  if type(markers) == "string" then markers = { markers } end
-  if type(markers) ~= "table" then markers = { ".git" } end
-  local start_dir = path:match("^(.*)/[^/]+$") or "/"
-  local root = find_remote_root(alias, start_dir, markers)
+    -- root_markers may be a list, a string, or a function; normalize to a list.
+    local markers = spec.root_markers
+    if type(markers) == "string" then markers = { markers } end
+    if type(markers) ~= "table" then markers = { ".git" } end
+    local start_dir = path:match("^(.*)/[^/]+$") or "/"
 
-  local key = alias .. ":" .. root .. ":" .. spec.name
-  local st = servers[key]
-  if st and st.client_id and vim.lsp.get_client_by_id(st.client_id) then
-    pcall(vim.lsp.buf_attach_client, buf, st.client_id)
-    return
-  end
+    find_remote_root(alias, start_dir, markers, function(root)
+      local key = alias .. ":" .. root .. ":" .. spec.name
+      local st = servers[key]
+      if st then
+        if st.client_id and vim.lsp.get_client_by_id(st.client_id) then
+          if vim.api.nvim_buf_is_valid(buf) then pcall(vim.lsp.buf_attach_client, buf, st.client_id) end
+        else
+          table.insert(st.pending_bufs, buf)  -- start in flight; attach when ready
+        end
+        return
+      end
 
-  st = { alias = alias, lsp_id_ref = { id = nil } }
-  servers[key] = st
-  hook_lsp_messages(alias)
+      st = { alias = alias, lsp_id_ref = { id = nil }, pending_bufs = { buf } }
+      servers[key] = st
+      hook_lsp_messages(alias)
 
-  local client = require("jupynvim").client_for(alias)
-  local err, res = client:call_sync("lsp_start", { cmd = launch, cwd = root }, 15000)
-  if err or not res or not res.lsp_id then
-    vim.notify("jupynvim: lsp_start " .. spec.name .. " failed: " .. tostring(err), vim.log.levels.ERROR)
-    servers[key] = nil
-    return
-  end
-  st.lsp_id_ref.id = res.lsp_id
+      local client = require("jupynvim").client_for(alias)
+      client:call("lsp_start", { cmd = launch, cwd = root }, function(err, res)
+        if err or not res or not res.lsp_id then
+          vim.notify("jupynvim: lsp_start " .. spec.name .. " failed: " .. tostring(err), vim.log.levels.ERROR)
+          servers[key] = nil
+          return
+        end
+        st.lsp_id_ref.id = res.lsp_id
 
-  -- root_dir = the REMOTE absolute path; vim.lsp turns it into rootUri
-  -- file://<root>, exactly what the remote server expects. Forward the user's
-  -- settings + init_options for this server so behavior matches local.
-  local client_id = vim.lsp.start({
-    name = "jupynvim:" .. spec.name .. "@" .. alias,
-    cmd = make_cmd(alias, st.lsp_id_ref, st),
-    root_dir = root,
-    settings = spec.settings,
-    init_options = spec.init_options,
-  }, { bufnr = buf, reuse_client = function() return false end })
-  st.client_id = client_id
-  if client_id then
-    log.info(("remote-lsp: %s attached buf=%d (%s)"):format(spec.name, buf, root))
-  end
+        local first
+        for _, b in ipairs(st.pending_bufs) do
+          if vim.api.nvim_buf_is_valid(b) then first = b; break end
+        end
+        if not first then
+          -- every waiting buffer died while the server started; clean up
+          client:call("lsp_stop", { lsp_id = res.lsp_id }, function() end)
+          servers[key] = nil
+          return
+        end
+
+        -- root_dir = the REMOTE absolute path; vim.lsp turns it into rootUri
+        -- file://<root>, exactly what the remote server expects. Forward the
+        -- user's settings + init_options so behavior matches local.
+        local client_id = vim.lsp.start({
+          name = "jupynvim:" .. spec.name .. "@" .. alias,
+          cmd = make_cmd(alias, st.lsp_id_ref, st),
+          root_dir = root,
+          settings = spec.settings,
+          init_options = spec.init_options,
+        }, { bufnr = first, reuse_client = function() return false end })
+        st.client_id = client_id
+        if client_id then
+          for _, b in ipairs(st.pending_bufs) do
+            if b ~= first and vim.api.nvim_buf_is_valid(b) then
+              pcall(vim.lsp.buf_attach_client, b, client_id)
+            end
+          end
+          log.info(("remote-lsp: %s attached buf=%d (%s)"):format(spec.name, first, root))
+        end
+        st.pending_bufs = {}
+      end)
+    end)
+  end)
 end
 
 -- ── public: attach a remote buffer ─────────────────────────────────────────
