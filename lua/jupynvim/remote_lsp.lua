@@ -56,34 +56,94 @@ local DEFAULT_INSTALL = {
   }, " && ") },
 }
 
--- The cmd lspconfig would use for `ft`, preferring servers the user has
--- actually configured. Returns (cmd_table, server_name) or nil.
-local function lspconfig_cmd_for_ft(ft)
+-- A server spec: { cmd=table, name=string, settings=?, init_options=?, root_markers=? }
+
+-- Modern API (Neovim 0.11+): the user's enabled servers live in
+-- vim.lsp.config + vim.lsp._enabled_configs. Return EVERY enabled server whose
+-- filetypes include `ft` (a user may run several per language, e.g.
+-- basedpyright + ruff for python). This is the primary, general source.
+local function modern_servers_for_ft(ft)
+  local out = {}
+  local enabled = rawget(vim.lsp, "_enabled_configs")
+  if type(enabled) ~= "table" or not vim.lsp.config then return out end
+  for name, _ in pairs(enabled) do
+    local ok, cfg = pcall(function() return vim.lsp.config[name] end)
+    if ok and type(cfg) == "table" and type(cfg.cmd) == "table"  -- skip function cmds
+       and cfg.filetypes and vim.tbl_contains(cfg.filetypes, ft) then
+      out[#out + 1] = {
+        cmd = vim.deepcopy(cfg.cmd), name = name,
+        settings = cfg.settings, init_options = cfg.init_options,
+        root_markers = cfg.root_markers or cfg.root_dir,
+      }
+    end
+  end
+  return out
+end
+
+-- Old lspconfig API (pre-0.11 setups): servers in lspconfig.configs.
+local function lspconfig_servers_for_ft(ft)
+  local out = {}
   local ok_cfg, configs = pcall(require, "lspconfig.configs")
   local ok_lc, lspconfig = pcall(require, "lspconfig")
-  if not (ok_cfg and ok_lc) then return nil end
+  if not (ok_cfg and ok_lc) then return out end
   for name, _ in pairs(configs or {}) do
     local mod = lspconfig[name]
     local dc = mod and mod.document_config and mod.document_config.default_config
-    if dc and dc.cmd and dc.filetypes and vim.tbl_contains(dc.filetypes, ft) then
-      return vim.deepcopy(dc.cmd), name
+    if dc and type(dc.cmd) == "table" and dc.filetypes and vim.tbl_contains(dc.filetypes, ft) then
+      out[#out + 1] = { cmd = vim.deepcopy(dc.cmd), name = name,
+                        settings = dc.settings, init_options = dc.init_options,
+                        root_markers = dc.root_dir }
     end
   end
-  return nil
+  return out
 end
 
--- Resolve (cmd, server_name) for an alias+filetype, honoring user config first.
-local function resolve_server(alias, ft)
+-- Lazy-loaders (lazy.nvim/LazyVim) only load the LSP layer on real file
+-- events, which our BufReadCmd doesn't fire — so vim.lsp._enabled_configs can
+-- be empty when we resolve, hiding the user's real servers. Best-effort load
+-- it once so modern detection sees the full set (e.g. basedpyright + ruff).
+local lsp_layer_loaded = false
+local function ensure_lsp_layer_loaded()
+  if lsp_layer_loaded then return end
+  local enabled = rawget(vim.lsp, "_enabled_configs")
+  if type(enabled) == "table" and next(enabled) then lsp_layer_loaded = true; return end
+  pcall(function()
+    require("lazy").load({ plugins = { "nvim-lspconfig", "mason-lspconfig.nvim", "mason.nvim" } })
+  end)
+  -- Generic fallback: fire the file events lazy-loaders gate on.
+  pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "LazyFile" })
+  lsp_layer_loaded = true
+end
+
+-- Resolve the LIST of server specs for an alias+filetype, mirroring the user's
+-- own setup. Order: explicit config override → modern vim.lsp.config (enabled)
+-- → old lspconfig → built-in defaults. Generalized: whatever servers the user
+-- runs locally for this language get launched on the remote.
+local function resolve_servers(alias, ft)
+  ensure_lsp_layer_loaded()
   local profile = (require("jupynvim").config.remote or {})[alias] or {}
   local override = profile.lsp and profile.lsp[ft]
   if override then
-    local cmd = override.cmd or override  -- allow {cmd=...} or a bare cmd table
-    if type(cmd) == "table" and cmd[1] then return cmd, (override.name or cmd[1]) end
+    -- allow a single {cmd=...} / bare cmd table, or a list of them
+    local list = override
+    if override.cmd or (override[1] and type(override[1]) == "string") then list = { override } end
+    local specs = {}
+    for _, o in ipairs(list) do
+      local cmd = o.cmd or o
+      if type(cmd) == "table" and cmd[1] then
+        specs[#specs + 1] = { cmd = cmd, name = o.name or cmd[1], settings = o.settings, init_options = o.init_options }
+      end
+    end
+    if #specs > 0 then return specs end
   end
-  local cmd, name = lspconfig_cmd_for_ft(ft)
-  if cmd then return cmd, name end
-  if DEFAULT_SERVERS[ft] then return vim.deepcopy(DEFAULT_SERVERS[ft]), DEFAULT_SERVERS[ft][1] end
-  return nil
+  local specs = modern_servers_for_ft(ft)
+  if #specs > 0 then return specs end
+  specs = lspconfig_servers_for_ft(ft)
+  if #specs > 0 then return specs end
+  if DEFAULT_SERVERS[ft] then
+    return { { cmd = vim.deepcopy(DEFAULT_SERVERS[ft]), name = DEFAULT_SERVERS[ft][1] } }
+  end
+  return {}
 end
 
 -- ── provisioning (zero-manual) ─────────────────────────────────────────────
@@ -230,29 +290,42 @@ local function hook_lsp_messages(alias)
   end)
 end
 
--- ── public: attach a remote buffer ─────────────────────────────────────────
+-- Find the project root on the REMOTE by walking up from `start_dir` for any
+-- of `markers` (root_markers from the user's server config). Falls back to the
+-- file's dir. One `run` call. Cached per (alias, start_dir, markers).
+local root_cache = {}
+local function find_remote_root(alias, start_dir, markers)
+  if not markers or #markers == 0 then return start_dir end
+  local ck = alias .. "|" .. start_dir .. "|" .. table.concat(markers, ",")
+  if root_cache[ck] then return root_cache[ck] end
+  local pat = table.concat(vim.tbl_map(function(m) return vim.fn.shellescape(m) end, markers), " ")
+  local script = ([[d=%s; while [ "$d" != / ]; do for m in %s; do [ -e "$d/$m" ] && echo "$d" && exit 0; done; d=$(dirname "$d"); done; echo %s]])
+    :format(vim.fn.shellescape(start_dir), pat, vim.fn.shellescape(start_dir))
+  local cl = require("jupynvim").client_for(alias)
+  local err, res = cl:call_sync("run", { argv = { "sh", "-lc", script } }, 8000)
+  local root = (not err and res and (res.stdout or ""):match("([^\n]+)")) or start_dir
+  root_cache[ck] = root
+  return root
+end
 
--- Attach a remote-LSP client to `buf` (a jupynvim:// file buffer) for `alias`,
--- remote absolute `path`, filetype `ft`. Idempotent; reuses a server per
--- (alias, root, server). Async-friendly: provisioning may block briefly.
-function M.attach(buf, alias, path, ft)
-  if not ft or ft == "" then return end
-  local cmd, server_name = resolve_server(alias, ft)
-  if not cmd then return end  -- no server for this filetype; that's fine
+-- Start (or reuse) one server `spec` for `buf` rooted under `path`'s project.
+local function start_one(buf, alias, path, spec)
+  local launch = ensure_provisioned(alias, spec.cmd)
+  if not launch then return end
 
-  -- root = nearest ancestor dir of the file (good enough; servers refine it).
-  local root = path:match("^(.*)/[^/]+$") or "/"
-  local key = alias .. ":" .. root .. ":" .. server_name
+  -- root_markers may be a list, a string, or a function; normalize to a list.
+  local markers = spec.root_markers
+  if type(markers) == "string" then markers = { markers } end
+  if type(markers) ~= "table" then markers = { ".git" } end
+  local start_dir = path:match("^(.*)/[^/]+$") or "/"
+  local root = find_remote_root(alias, start_dir, markers)
 
+  local key = alias .. ":" .. root .. ":" .. spec.name
   local st = servers[key]
   if st and st.client_id and vim.lsp.get_client_by_id(st.client_id) then
     pcall(vim.lsp.buf_attach_client, buf, st.client_id)
     return
   end
-
-  -- provision (sync, cached) then start the server on the remote
-  local launch = ensure_provisioned(alias, cmd)
-  if not launch then return end
 
   st = { alias = alias, lsp_id_ref = { id = nil } }
   servers[key] = st
@@ -261,23 +334,39 @@ function M.attach(buf, alias, path, ft)
   local client = require("jupynvim").client_for(alias)
   local err, res = client:call_sync("lsp_start", { cmd = launch, cwd = root }, 15000)
   if err or not res or not res.lsp_id then
-    vim.notify("jupynvim: lsp_start failed: " .. tostring(err), vim.log.levels.ERROR)
+    vim.notify("jupynvim: lsp_start " .. spec.name .. " failed: " .. tostring(err), vim.log.levels.ERROR)
     servers[key] = nil
     return
   end
   st.lsp_id_ref.id = res.lsp_id
 
-  -- root_dir = the REMOTE absolute path: vim.lsp turns it into rootUri
-  -- file://<root>, which is exactly what the remote server expects.
+  -- root_dir = the REMOTE absolute path; vim.lsp turns it into rootUri
+  -- file://<root>, exactly what the remote server expects. Forward the user's
+  -- settings + init_options for this server so behavior matches local.
   local client_id = vim.lsp.start({
-    name = "jupynvim:" .. server_name .. "@" .. alias,
+    name = "jupynvim:" .. spec.name .. "@" .. alias,
     cmd = make_cmd(alias, st.lsp_id_ref, st),
     root_dir = root,
-    settings = ((require("jupynvim").config.remote or {})[alias] or {}).lsp_settings,
+    settings = spec.settings,
+    init_options = spec.init_options,
   }, { bufnr = buf, reuse_client = function() return false end })
   st.client_id = client_id
   if client_id then
-    log.info(("remote-lsp: %s attached buf=%d (%s)"):format(server_name, buf, root))
+    log.info(("remote-lsp: %s attached buf=%d (%s)"):format(spec.name, buf, root))
+  end
+end
+
+-- ── public: attach a remote buffer ─────────────────────────────────────────
+
+-- Attach remote LSP to `buf` (a jupynvim:// file) for `alias`, remote abs
+-- `path`, filetype `ft`. Starts ALL servers the user runs for this filetype
+-- (mirrors their setup), each on the remote. Idempotent; servers reused per
+-- (alias, root, server).
+function M.attach(buf, alias, path, ft)
+  if not ft or ft == "" then return end
+  local specs = resolve_servers(alias, ft)
+  for _, spec in ipairs(specs) do
+    pcall(start_one, buf, alias, path, spec)
   end
 end
 

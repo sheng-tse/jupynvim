@@ -2475,6 +2475,23 @@ function M.setup(opts)
     end,
   })
 
+  -- Guard: Neovim 0.11's vim.lsp auto-enable may try to attach the user's
+  -- LOCAL language servers to a jupynvim:// buffer (same filetype). Those
+  -- can't read the remote file and would duplicate our relay. Detach any
+  -- non-jupynvim client from a jupynvim:// buffer; our relay clients are
+  -- named "jupynvim:..." and are kept.
+  vim.api.nvim_create_autocmd("LspAttach", {
+    group = group,
+    callback = function(args)
+      local name = vim.api.nvim_buf_get_name(args.buf)
+      if not name:match("^jupynvim://") then return end
+      local client = vim.lsp.get_client_by_id(args.data.client_id)
+      if client and not client.name:match("^jupynvim:") then
+        pcall(vim.lsp.buf_detach_client, args.buf, args.data.client_id)
+      end
+    end,
+  })
+
   -- Remote FILE buffers (not the explorer tree / dashboard) should look like
   -- normal editable files: restore the window's display options every time the
   -- buffer is shown. BufWinEnter is the reliable place (the BufReadCmd reset
