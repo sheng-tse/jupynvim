@@ -130,23 +130,31 @@ local function ensure_remote_binary(alias, profile)
   local core_path = profile.core_path or "jupynvim-core"
   local local_sha = (vim.fn.system({ "shasum", "-a", "256", local_bin }) or ""):match("^(%x+)")
   if not local_sha then return end
-  -- Read remote marker (best-effort; absent = needs upload).
-  local marker = core_path .. ".sha256"
+  -- Make a remote-shell-expandable, quoted path: "~/.x" -> "$HOME/.x", wrapped
+  -- in double quotes so $HOME expands AND spaces survive. (shellescape uses
+  -- single quotes, which would keep ~ literal — the marker never persisted and
+  -- the upload path could be wrong.)
+  local function rp(p)
+    if p:sub(1, 2) == "~/" then p = "$HOME/" .. p:sub(3) end
+    return '"' .. p .. '"'
+  end
+  local core_q = rp(core_path)
+  local marker_q = rp(core_path .. ".sha256")
+  local dir_q = rp(core_path:match("^(.*)/[^/]+$") or ".")
   local function ssh(args, input)
     local c = ssh_base(cp, profile.host)
     for _, a in ipairs(args) do table.insert(c, a) end
     return vim.fn.system(c, input)
   end
-  local remote_sha = ssh({ "cat " .. vim.fn.shellescape(marker) .. " 2>/dev/null" }):gsub("%s+", "")
+  local remote_sha = ssh({ "cat " .. marker_q .. " 2>/dev/null" }):gsub("%s+", "")
   if remote_sha == local_sha then return end  -- already current
 
   vim.notify("jupynvim: uploading backend to " .. alias .. " ...", vim.log.levels.INFO)
-  -- Stream the binary to a temp path, chmod, atomically move into place,
-  -- then write the sha marker. core_path may contain ~ (remote shell expands).
-  local dir = core_path:match("^(.*)/[^/]+$") or "."
+  -- Stream the binary to a temp path, chmod, atomically move into place, then
+  -- write the sha marker. Quoted-$HOME paths expand on the remote shell.
   local remote_cmd = string.format(
     "mkdir -p %s && cat > %s.up && chmod +x %s.up && mv -f %s.up %s",
-    dir, core_path, core_path, core_path, core_path)
+    dir_q, core_q, core_q, core_q, core_q)
   local data = io.open(local_bin, "rb")
   if not data then return end
   local bytes = data:read("*a"); data:close()
@@ -155,7 +163,7 @@ local function ensure_remote_binary(alias, profile)
     vim.notify("jupynvim: binary upload to " .. alias .. " failed", vim.log.levels.ERROR)
     return
   end
-  ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. vim.fn.shellescape(marker) })
+  ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. marker_q })
   vim.notify("jupynvim: backend updated on " .. alias .. " (" .. local_sha:sub(1, 12) .. ")",
              vim.log.levels.INFO)
 end
@@ -384,7 +392,15 @@ function M.connect(alias)
   -- specific slurm job (for kernel execution on GPU/compute nodes).
   local cp = control_path(alias)
   if master_alive(alias, profile) then
-    -- Already connected — just open the browser.
+    -- Already connected. Restart the backend so an explicit :JupynvimConnect
+    -- always picks up a fresh binary: stop the (possibly stale) backend
+    -- process and clear the per-session upload guard, so the next client_for
+    -- re-verifies/uploads and respawns. The ControlMaster (auth) stays up, so
+    -- no re-auth. Without this, a backend started before a rebuild keeps
+    -- serving old code ("unknown method 'run'").
+    local existing = M.clients[alias]
+    if existing then pcall(function() existing:stop() end); M.clients[alias] = nil end
+    if M._binary_verified then M._binary_verified[alias] = nil end
     M.remote_browse(alias)
     return
   end
