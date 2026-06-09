@@ -109,12 +109,22 @@ end
 -- would resolve to nil globals and the upload would silently no-op.
 local control_path, master_alive, ssh_base
 
--- Path to the cross-compiled linux binary on THIS machine, for auto-upload to
--- remotes. Override per-profile with `local_core`. Default: the musl target
--- built by `:JupynvimCrossBuild` (cargo zigbuild --target x86_64-unknown-linux-musl).
-local function locate_local_linux_core(profile)
+-- Map a remote `uname -m` to the musl target triple we cross-build. Covers
+-- x86 (PSC, most cloud VMs) and arm64 (AWS Graviton, GCP Tau T2A, etc.).
+local ARCH_TRIPLE = {
+  x86_64 = "x86_64-unknown-linux-musl",
+  amd64 = "x86_64-unknown-linux-musl",
+  aarch64 = "aarch64-unknown-linux-musl",
+  arm64 = "aarch64-unknown-linux-musl",
+}
+
+-- Path to the cross-compiled linux binary on THIS machine for the remote's
+-- architecture, for auto-upload. Override per-profile with `local_core`.
+-- Built by :JupynvimCrossBuild (cargo zigbuild, musl targets).
+local function locate_local_linux_core(profile, triple)
   if profile and profile.local_core then return vim.fn.expand(profile.local_core) end
-  return plugin_root() .. "/core/target/x86_64-unknown-linux-musl/release/jupynvim-core"
+  triple = triple or "x86_64-unknown-linux-musl"
+  return plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
 end
 
 -- Ensure the remote alias has the current backend binary at profile.core_path,
@@ -127,11 +137,23 @@ local function ensure_remote_binary(alias, profile)
   if profile.transport_cmd then return end  -- custom transport: user owns deployment
   local cp = control_path(alias)
   if not cp or not master_alive(alias, profile) then return end
-  local local_bin = locate_local_linux_core(profile)
+  -- Detect the remote architecture so multi-cloud setups work: PSC/most VMs
+  -- are x86_64, AWS Graviton / GCP Tau T2A are aarch64. One RTT, once per
+  -- session (this whole function runs behind the _binary_verified guard).
+  local arch_probe = vim.system(
+    vim.list_extend(ssh_base(cp, profile.host), { "uname -m" }), {}):wait()
+  local arch = ((arch_probe.stdout or ""):match("(%S+)")) or "x86_64"
+  local triple = ARCH_TRIPLE[arch]
+  if not triple then
+    vim.notify("jupynvim: unsupported remote arch '" .. arch .. "' on " .. alias ..
+               " - deploy jupynvim-core manually (profile.core_path)", vim.log.levels.WARN)
+    return
+  end
+  local local_bin = locate_local_linux_core(profile, triple)
   if vim.fn.filereadable(local_bin) ~= 1 then
     vim.notify("jupynvim: no local linux binary at " .. local_bin ..
                "\n  run :JupynvimCrossBuild (one-time: brew install zig; " ..
-               "cargo install cargo-zigbuild; rustup target add x86_64-unknown-linux-musl)",
+               "cargo install cargo-zigbuild; rustup target add " .. triple .. ")",
                vim.log.levels.WARN)
     return
   end
@@ -385,27 +407,80 @@ master_alive = function(alias, profile)
   return vim.v.shell_error == 0
 end
 
--- Interactive connection chooser: configured profiles + "new connection".
--- So you aren't locked to one hardcoded account; pick an existing profile or
--- type any user@host on the fly (saved for this session as an ad-hoc profile).
-function M.connect_choose()
-  local entries, labels = {}, {}
-  for name, prof in pairs(M.config.remote or {}) do
-    table.insert(entries, name)
-    table.insert(labels, name .. "  (" .. (prof.host or "?") .. ")")
+-- Hosts declared in ~/.ssh/config (incl. Include files): the natural home of
+-- AWS/GCP boxes (`gcloud compute config-ssh`, ProxyCommand/IAP entries, EC2
+-- aliases). Wildcard patterns are skipped. Best-effort parse.
+local function ssh_config_hosts()
+  local hosts, seen = {}, {}
+  local function parse(path, depth)
+    if depth > 3 then return end
+    local f = io.open(path, "r")
+    if not f then return end
+    for line in f:lines() do
+      local inc = line:match("^%s*[Ii]nclude%s+(.+)$")
+      local hs = not inc and line:match("^%s*[Hh]ost%s+(.+)$") or nil
+      if inc then
+        for _, pat in ipairs(vim.split(inc, "%s+", { trimempty = true })) do
+          if not pat:match("^[/~]") then pat = "~/.ssh/" .. pat end
+          for _, p in ipairs(vim.fn.glob(vim.fn.expand(pat), true, true)) do
+            parse(p, depth + 1)
+          end
+        end
+      elseif hs then
+        for _, h in ipairs(vim.split(hs, "%s+", { trimempty = true })) do
+          if not h:match("[%*%?!]") and not seen[h] then
+            seen[h] = true
+            table.insert(hosts, h)
+          end
+        end
+      end
+    end
+    f:close()
   end
-  table.sort(entries)
-  table.sort(labels)
-  table.insert(labels, "new connection (user@host) ...")
-  vim.ui.select(labels, { prompt = "jupynvim: connect to" }, function(choice, idx)
-    if not choice then return end
-    if idx == #labels then
+  parse(vim.fn.expand("~/.ssh/config"), 0)
+  table.sort(hosts)
+  return hosts
+end
+M._ssh_config_hosts = ssh_config_hosts  -- exposed for the :JupynvimConnect completion
+
+-- Interactive connection chooser: configured jupynvim profiles, then hosts
+-- from ~/.ssh/config, then "new connection". So AWS + GCP + PSC (and any mix
+-- of accounts) coexist: each is one entry; pick or type one on the fly.
+function M.connect_choose()
+  local items = {}
+  local profile_hosts = {}
+  local names = {}
+  for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+  table.sort(names)
+  for _, name in ipairs(names) do
+    local prof = M.config.remote[name]
+    profile_hosts[prof.host or ""] = true
+    table.insert(items, {
+      label = name .. "  (" .. (prof.host or "?") .. ")",
+      run = function() M.connect(name) end,
+    })
+  end
+  for _, h in ipairs(ssh_config_hosts()) do
+    if not (M.config.remote or {})[h] and not profile_hosts[h] then
+      table.insert(items, {
+        label = "ssh: " .. h .. "  (~/.ssh/config)",
+        run = function() M.connect_adhoc(h) end,
+      })
+    end
+  end
+  table.insert(items, {
+    label = "new connection (user@host) ...",
+    run = function()
       vim.ui.input({ prompt = "user@host: " }, function(host)
         if host and host ~= "" then M.connect_adhoc(vim.trim(host)) end
       end)
-      return
-    end
-    M.connect(entries[idx])
+    end,
+  })
+  vim.ui.select(items, {
+    prompt = "jupynvim: connect to",
+    format_item = function(it) return it.label end,
+  }, function(choice)
+    if choice then choice.run() end
   end)
 end
 
@@ -2816,27 +2891,45 @@ function M.setup(opts)
   -- (static musl, runs on PSC's old glibc). Output is auto-uploaded to remotes
   -- on the next connect. One-time setup: brew install zig; cargo install
   -- cargo-zigbuild; rustup target add x86_64-unknown-linux-musl.
+  -- Builds every installed linux-musl rustup target (x86_64 always once
+  -- added; add aarch64-unknown-linux-musl for arm64 remotes like AWS
+  -- Graviton). Auto-upload then picks the right one per remote via uname -m.
   vim.api.nvim_create_user_command("JupynvimCrossBuild", function()
     local root = plugin_root()
     local manifest = root .. "/core/Cargo.toml"
-    vim.notify("jupynvim: cross-building linux backend (musl)...", vim.log.levels.INFO)
-    vim.system({
-      "cargo", "zigbuild", "--release",
-      "--target", "x86_64-unknown-linux-musl",
-      "--manifest-path", manifest,
-    }, { text = true }, function(res)
-      vim.schedule(function()
-        if res.code == 0 then
-          M._binary_verified = {}  -- force re-upload check on next connect
-          vim.notify("jupynvim: cross-build OK → " ..
-            root .. "/core/target/x86_64-unknown-linux-musl/release/jupynvim-core" ..
-            "\n  reconnect (or it uploads on next connect)", vim.log.levels.INFO)
-        else
-          vim.notify("jupynvim: cross-build failed:\n" .. (res.stderr or res.stdout or "?"),
-                     vim.log.levels.ERROR)
-        end
+    local installed = vim.fn.systemlist({ "rustup", "target", "list", "--installed" }) or {}
+    local targets = {}
+    for _, t in ipairs(installed) do
+      if t:match("linux%-musl$") then table.insert(targets, t) end
+    end
+    if #targets == 0 then
+      vim.notify("jupynvim: no linux-musl rustup targets installed.\n" ..
+                 "  rustup target add x86_64-unknown-linux-musl" ..
+                 "  (and aarch64-unknown-linux-musl for arm64 remotes)", vim.log.levels.WARN)
+      return
+    end
+    local function build(i)
+      if i > #targets then return end
+      local triple = targets[i]
+      vim.notify("jupynvim: cross-building " .. triple .. " ...", vim.log.levels.INFO)
+      vim.system({
+        "cargo", "zigbuild", "--release", "--target", triple, "--manifest-path", manifest,
+      }, { text = true }, function(res)
+        vim.schedule(function()
+          if res.code == 0 then
+            M._binary_verified = {}  -- force re-upload check on next connect
+            vim.notify("jupynvim: " .. triple .. " OK -> " ..
+              root .. "/core/target/" .. triple .. "/release/jupynvim-core",
+              vim.log.levels.INFO)
+          else
+            vim.notify("jupynvim: " .. triple .. " build failed:\n" ..
+              (res.stderr or res.stdout or "?"), vim.log.levels.ERROR)
+          end
+          build(i + 1)
+        end)
       end)
-    end)
+    end
+    build(1)
   end, {})
 
   -- :JupynvimUseJob <alias> [<jobid>]  — route next backend spawn through
@@ -2872,14 +2965,23 @@ function M.setup(opts)
     local arg = vim.trim(o.args or "")
     if arg == "" then return M.connect_choose() end
     if (M.config.remote or {})[arg] then return M.connect(arg) end
-    if arg:find("@") or arg:find("%.") then return M.connect_adhoc(arg) end
-    vim.notify("jupynvim: no profile '" .. arg .. "'. Use <user@host> for a new connection.",
-      vim.log.levels.WARN)
+    -- ssh-config aliases (e.g. a gcloud/EC2 Host entry) have no @ or dot;
+    -- accept them when they exist in ~/.ssh/config.
+    if vim.tbl_contains(M._ssh_config_hosts(), arg)
+       or arg:find("@") or arg:find("%.") then
+      return M.connect_adhoc(arg)
+    end
+    vim.notify("jupynvim: no profile or ssh-config host '" .. arg ..
+      "'. Use <user@host> for a new connection.", vim.log.levels.WARN)
   end, {
     nargs = "?",
     complete = function()
       local names = {}
       for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      table.sort(names)
+      for _, h in ipairs(M._ssh_config_hosts()) do
+        if not (M.config.remote or {})[h] then table.insert(names, h) end
+      end
       return names
     end,
   })
