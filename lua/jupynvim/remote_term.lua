@@ -12,51 +12,119 @@ local M = {}
 
 -- Map of (alias, pid) → terminal state. Keys are formatted "alias:pid".
 local terms = {}
--- Most recent terminal buffer per alias, for toggle/reuse.
-M._last = {}
+-- The <C-/> "primary" terminal buffer per alias (the one toggle reuses).
+-- Additional terminals (e.g. a left split for claude) are NOT primary.
+M._primary = {}
 
 local function key(alias, pid) return alias .. ":" .. pid end
 
--- Open a remote shell. opts.cmd defaults to "bash", opts.args = {"-l", "-i"}.
--- opts.split: "below" (default), "right", "tab".
+-- The window currently showing `buf`, or nil.
+local function win_of(buf)
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(w) == buf then return w end
+  end
+  return nil
+end
+
+-- Push the buffer's CURRENT window size to its PTY. Used on every resize and
+-- on reshow — critical because the PTY keeps its old size while the window is
+-- hidden, so without this the shell's line wrapping is wrong after a toggle
+-- (the garbled prompt after hide/show).
+function M.sync_size(buf)
+  local pid = buf and vim.b[buf].jupynvim_term_pid
+  local alias = buf and vim.b[buf].jupynvim_term_alias
+  if not (pid and alias) then return end
+  local w = win_of(buf)
+  if not w then return end
+  local entry = terms[key(alias, pid)]
+  if not entry then return end
+  entry.client:call("proc_resize", {
+    pid = pid,
+    cols = vim.api.nvim_win_get_width(w),
+    rows = vim.api.nvim_win_get_height(w),
+  }, function() end)
+end
+
+-- Resize step + keys (configurable via config.terminal). Ctrl+arrows by
+-- default: they work in terminal-INSERT mode (so you can resize while using
+-- the shell) and don't collide with typing the way Shift+hjkl would.
+local function resize_cfg()
+  local c = (require("jupynvim").config or {}).terminal or {}
+  return {
+    step = c.resize_step or 3,
+    taller  = c.resize_taller  or "<C-Up>",
+    shorter = c.resize_shorter or "<C-Down>",
+    wider   = c.resize_wider   or "<C-Right>",
+    narrower= c.resize_narrower or "<C-Left>",
+  }
+end
+
+local function bind_resize_keys(buf)
+  local cfg = resize_cfg()
+  local function rk(lhs, cmd)
+    if not lhs or lhs == "" then return end
+    pcall(vim.keymap.set, { "n", "t" }, lhs, function()
+      pcall(vim.cmd, cmd)
+      vim.schedule(function() M.sync_size(buf) end)
+    end, { buffer = buf, silent = true, desc = "jupynvim: resize remote terminal" })
+  end
+  rk(cfg.taller,   "resize +" .. cfg.step)
+  rk(cfg.shorter,  "resize -" .. cfg.step)
+  rk(cfg.wider,    "vertical resize +" .. cfg.step)
+  rk(cfg.narrower, "vertical resize -" .. cfg.step)
+end
+
+-- Build the split for a position. `reshow` uses `sb <buf>` to re-display an
+-- existing (hidden) buffer; otherwise a fresh empty split.
+local SIZE = { below = "resize 15", left = "vertical resize 80", right = "vertical resize 80" }
+local function make_split(split, buf)
+  if split == "tab" then
+    if buf then vim.cmd("tab sb " .. buf) else vim.cmd("tabnew") end
+    return
+  end
+  local cmds = {
+    below = buf and ("botright sb " .. buf) or "botright new",
+    right = buf and ("botright vert sb " .. buf) or "botright vnew",
+    left  = buf and ("topleft vert sb " .. buf) or "topleft vnew",
+  }
+  vim.cmd(cmds[split] or cmds.below)
+  if SIZE[split] then pcall(vim.cmd, SIZE[split]) end
+end
+
+-- Open a remote shell. opts.cmd defaults to "bash", opts.args = {"-l","-i"}.
+-- opts.split: "below" (default), "right", "left", "tab".
+-- opts.primary: mark as the <C-/> toggle terminal for this alias.
+-- opts.cwd / opts.start_cmd: working dir / a command to type on open.
 function M.open(alias, opts)
   opts = opts or {}
   local J = require("jupynvim")
   local client = J.client_for(alias)
 
-  -- Layout
-  local split = opts.split or "below"
-  if split == "below" then vim.cmd("botright new")
-  elseif split == "right" then vim.cmd("botright vnew")
-  elseif split == "tab" then vim.cmd("tabnew")
-  else vim.cmd("botright new") end
+  make_split(opts.split or "below", nil)
   local buf = vim.api.nvim_get_current_buf()
-  local win = vim.api.nvim_get_current_win()
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].swapfile = false
   vim.bo[buf].bufhidden = "hide"   -- survive window close so toggle can reshow it
   vim.bo[buf].buflisted = false    -- keep out of the bufferline
   vim.b[buf].jupynvim_term_alias = alias
   vim.b[buf].jupynvim_term_alive = true
-  M._last[alias] = buf
-  vim.api.nvim_buf_set_name(buf, string.format("term://%s/[connecting]", alias))
+  if opts.primary ~= false then M._primary[alias] = buf end
+  vim.api.nvim_buf_set_name(buf,
+    string.format("term://%s/%s[connecting]", alias, opts.label and (opts.label .. "-") or ""))
 
+  local win = vim.api.nvim_get_current_win()
   local cols = vim.api.nvim_win_get_width(win)
   local rows = vim.api.nvim_win_get_height(win)
 
-  -- Create the terminal channel BEFORE spawning so we can write the initial
-  -- "spawning..." message and any early output without race.
   local pid_ref = { pid = nil }
   local chan = vim.api.nvim_open_term(buf, {
     on_input = function(_event, _term, _bufnr, data)
       if not pid_ref.pid then return end
-      local b64 = vim.base64.encode(data)
-      client:call("proc_stdin", { pid = pid_ref.pid, data_b64 = b64 }, function() end)
+      client:call("proc_stdin", { pid = pid_ref.pid, data_b64 = vim.base64.encode(data) }, function() end)
     end,
   })
 
-  -- Spawn (cwd defaults to the explorer's current root if not given, so the
-  -- terminal lands in the dir you're browsing / remote-cd'd to).
+  -- cwd defaults to the explorer's current root.
   local cwd = opts.cwd
   if not cwd then
     local ok, root = pcall(function() return require("jupynvim.remote_explorer").current_root(alias) end)
@@ -76,12 +144,12 @@ function M.open(alias, opts)
     return
   end
   pid_ref.pid = res.pid
+  vim.b[buf].jupynvim_term_pid = res.pid
   local k = key(alias, res.pid)
-  terms[k] = { buf = buf, win = win, chan = chan, alias = alias, pid = res.pid, client = client }
-  vim.api.nvim_buf_set_name(buf, string.format("term://%s/%d", alias, res.pid))
+  terms[k] = { buf = buf, chan = chan, alias = alias, pid = res.pid, client = client }
+  vim.api.nvim_buf_set_name(buf,
+    string.format("term://%s/%s%d", alias, opts.label and (opts.label .. "-") or "", res.pid))
 
-  -- Subscribe to proc_event for this pid. Register on the client once;
-  -- multi-pid demuxing happens by filtering inside the handler.
   if not client._proc_event_hooked then
     client._proc_event_hooked = true
     client:on("proc_event", function(args)
@@ -89,8 +157,7 @@ function M.open(alias, opts)
       local entry = terms[key(alias, e.pid)]
       if not entry then return end
       if e.kind == "stdout" then
-        local data = vim.base64.decode(e.data_b64)
-        pcall(vim.api.nvim_chan_send, entry.chan, data)
+        pcall(vim.api.nvim_chan_send, entry.chan, vim.base64.decode(e.data_b64))
       elseif e.kind == "exit" then
         pcall(vim.api.nvim_chan_send, entry.chan,
               "\r\n[process exited with code " .. tostring(e.code) .. "]\r\n")
@@ -102,53 +169,47 @@ function M.open(alias, opts)
     end)
   end
 
-  -- Propagate window resize → proc_resize
+  -- Propagate window resize → PTY. Look up the buffer's CURRENT window each
+  -- time (NOT a captured handle): after a hide/reshow the buffer lives in a
+  -- different window, and a stale handle silently dropped every resize.
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
     buffer = buf,
-    callback = function()
-      if not vim.api.nvim_win_is_valid(win) then return end
-      local c = vim.api.nvim_win_get_width(win)
-      local r = vim.api.nvim_win_get_height(win)
-      client:call("proc_resize", { pid = res.pid, cols = c, rows = r }, function() end)
-    end,
+    callback = function() M.sync_size(buf) end,
   })
 
-  -- On buffer wipeout, kill the remote process
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = buf,
     callback = function()
       client:call("proc_kill", { pid = res.pid }, function() end)
       terms[k] = nil
+      if M._primary[alias] == buf then M._primary[alias] = nil end
     end,
   })
 
-  -- Drop into terminal mode immediately
+  bind_resize_keys(buf)
+  if opts.start_cmd then
+    client:call("proc_stdin", { pid = res.pid, data_b64 = vim.base64.encode(opts.start_cmd .. "\n") }, function() end)
+  end
   vim.cmd("startinsert")
   return buf, res.pid
 end
 
--- Toggle the remote terminal for `alias`:
---   • visible  → hide it (close the window; PTY keeps running, bufhidden=hide)
---   • hidden+alive → reshow in a split, enter insert
---   • none/dead → spawn a fresh one
--- So you can summon/dismiss a terminal from anywhere mid-task.
+-- Toggle the PRIMARY remote terminal for `alias` (the <C-/> one):
+--   • visible      → hide its window (PTY keeps running, bufhidden=hide)
+--   • hidden+alive → reshow in a split + resync size (fixes wrap) + insert
+--   • none/dead    → spawn a fresh one
 function M.toggle(alias, opts)
-  for _, w in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(w)
-    if vim.b[b].jupynvim_term_alias == alias then
-      pcall(vim.api.nvim_win_close, w, false)
+  local prim = M._primary[alias]
+  if prim and vim.api.nvim_buf_is_valid(prim) then
+    local w = win_of(prim)
+    if w then pcall(vim.api.nvim_win_close, w, false); return end
+    if vim.b[prim].jupynvim_term_alive then
+      make_split((opts and opts.split) or "below", prim)
+      vim.schedule(function() M.sync_size(prim); vim.cmd("startinsert") end)
       return
     end
   end
-  local last = M._last[alias]
-  if last and vim.api.nvim_buf_is_valid(last) and vim.b[last].jupynvim_term_alive then
-    local split = (opts and opts.split) or "below"
-    vim.cmd((split == "right" and "botright vert sb " or "botright sb ") .. last)
-    vim.cmd("resize 15")
-    vim.cmd("startinsert")
-    return
-  end
-  M.open(alias, opts)
+  M.open(alias, vim.tbl_extend("force", { primary = true }, opts or {}))
 end
 
 return M

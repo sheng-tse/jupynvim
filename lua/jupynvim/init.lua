@@ -74,6 +74,15 @@ M.config = {
   -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
   -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
   terminal_keys = { "<c-/>", "<c-_>" },
+  -- Remote-terminal resize keys. Bound buffer-local on the terminal (so they
+  -- only act there), in BOTH normal and terminal-insert mode, so you can
+  -- resize while using the shell. Ctrl+arrows by default: Shift+hjkl would
+  -- collide with typing capitals in the shell. Set any to "" to unbind.
+  terminal = {
+    resize_step = 3,
+    resize_taller = "<C-Up>", resize_shorter = "<C-Down>",
+    resize_wider = "<C-Right>", resize_narrower = "<C-Left>",
+  },
   -- File-picker / grep keys that should target the REMOTE when SSH-connected
   -- and otherwise replay your own local mapping (captured at bind time, so
   -- LazyVim's local behavior is preserved). Defaults match LazyVim. Set a
@@ -2786,19 +2795,40 @@ function M.setup(opts)
   })
 
   -- :JupynvimTerm <alias>  — open a PTY-backed remote shell in a split.
+  -- :JupynvimTerm [alias] [below|left|right|tab] [cmd...]
+  --   Opens a NEW remote terminal at the given position (default below). With
+  --   no position it opens a primary terminal (same as <C-/>). A trailing
+  --   command is typed into the shell on open, e.g.:
+  --     :JupynvimTerm psc left claude     (a left split running claude)
   vim.api.nvim_create_user_command("JupynvimTerm", function(o)
-    local alias = o.args:match("^%s*(%S+)%s*$")
+    local parts = vim.split(o.args or "", "%s+", { trimempty = true })
+    local alias = parts[1] or M._active_alias
     if not alias or alias == "" then
-      vim.notify("usage: :JupynvimTerm <alias>", vim.log.levels.WARN)
+      vim.notify("usage: :JupynvimTerm <alias> [below|left|right|tab] [cmd...]", vim.log.levels.WARN)
       return
     end
-    require("jupynvim.remote_term").open(alias)
+    local positions = { below = true, left = true, right = true, tab = true }
+    local opts = { primary = false }
+    local rest = {}
+    for i = 2, #parts do
+      if i == 2 and positions[parts[i]] then opts.split = parts[i]
+      else table.insert(rest, parts[i]) end
+    end
+    if #rest > 0 then opts.start_cmd = table.concat(rest, " ") end
+    if not opts.split then opts.primary = true end  -- bare form = the <C-/> terminal
+    require("jupynvim.remote_term").open(alias, opts)
   end, {
-    nargs = 1,
-    complete = function()
-      local names = {}
-      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
-      return names
+    nargs = "*",
+    complete = function(_, line)
+      local words = vim.split(line, "%s+", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      elseif #words == 3 then
+        return { "below", "left", "right", "tab" }
+      end
+      return {}
     end,
   })
 
