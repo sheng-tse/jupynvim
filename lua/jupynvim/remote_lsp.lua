@@ -348,17 +348,39 @@ end
 -- file's dir. Async: one `run` call, cached per (alias, start_dir, markers).
 local root_cache = {}
 local function find_remote_root(alias, start_dir, markers, cb)
-  if not markers or #markers == 0 then return cb(start_dir) end
-  local ck = alias .. "|" .. start_dir .. "|" .. table.concat(markers, ",")
+  -- markers can be nested (e.g. lua_ls), a function, or strings; flatten to a
+  -- clean string list. Non-strings are dropped so table.concat/shellescape
+  -- never error in this async path (an error here would vanish silently).
+  local flat = {}
+  local function add(m)
+    if type(m) == "string" then flat[#flat + 1] = m
+    elseif type(m) == "table" then for _, x in ipairs(m) do add(x) end end
+  end
+  add(markers)
+  if #flat == 0 then return cb(start_dir) end
+  local ck = alias .. "|" .. start_dir .. "|" .. table.concat(flat, ",")
   if root_cache[ck] then return cb(root_cache[ck]) end
-  local pat = table.concat(vim.tbl_map(function(m) return vim.fn.shellescape(m) end, markers), " ")
+
+  local pat = table.concat(vim.tbl_map(function(m) return vim.fn.shellescape(m) end, flat), " ")
   local script = ([[d=%s; while [ "$d" != / ]; do for m in %s; do [ -e "$d/$m" ] && echo "$d" && exit 0; done; d=$(dirname "$d"); done; echo %s]])
     :format(vim.fn.shellescape(start_dir), pat, vim.fn.shellescape(start_dir))
-  local cl = require("jupynvim").client_for(alias)
-  cl:call("run", { argv = { "sh", "-lc", script } }, function(err, res)
-    local root = (not err and res and (res.stdout or ""):match("([^\n]+)")) or start_dir
+  local done = false
+  local function finish(root)
+    if done then return end
+    done = true
     root_cache[ck] = root
     cb(root)
+  end
+  -- Timeout fallback: if the remote walk stalls (slow/hung login shell, lost
+  -- response), proceed with the file's dir so the LSP chain never gets stuck.
+  vim.defer_fn(function() finish(start_dir) end, 6000)
+  -- `sh -c` (NOT -lc): this is pure filesystem checks, so it needs no login
+  -- shell. On HPC, `sh -lc` sources module/conda init and can be slow or hang.
+  local ok, cl = pcall(function() return require("jupynvim").client_for(alias) end)
+  if not ok then return finish(start_dir) end
+  cl:call("run", { argv = { "sh", "-c", script } }, function(err, res)
+    local root = (not err and res and (res.stdout or ""):match("([^\n]+)")) or start_dir
+    finish(root)
   end)
 end
 
@@ -379,8 +401,10 @@ local function start_one(buf, alias, path, spec)
     if type(markers) == "string" then markers = { markers } end
     if type(markers) ~= "table" then markers = { ".git" } end
     local start_dir = path:match("^(.*)/[^/]+$") or "/"
+    step(skey, "state", "finding root...")
 
     find_remote_root(alias, start_dir, markers, function(root)
+      local cont_ok, cont_err = pcall(function()
       step(skey, "root", root)
       local key = alias .. ":" .. root .. ":" .. spec.name
       local st = servers[key]
@@ -398,7 +422,9 @@ local function start_one(buf, alias, path, spec)
       hook_lsp_messages(alias)
 
       local client = require("jupynvim").client_for(alias)
+      step(skey, "state", "starting server...")
       client:call("lsp_start", { cmd = launch, cwd = root }, function(err, res)
+       local sok, serr = pcall(function()
         if err or not res or not res.lsp_id then
           step(skey, "state", "lsp_start FAILED: " .. tostring(err))
           vim.notify("jupynvim: lsp_start " .. spec.name .. " failed: " .. tostring(err), vim.log.levels.ERROR)
@@ -447,7 +473,11 @@ local function start_one(buf, alias, path, spec)
           log.info(("remote-lsp: %s attached buf=%d (%s)"):format(spec.name, first, root))
         end
         st.pending_bufs = {}
+       end)  -- pcall (lsp_start callback)
+       if not sok then step(skey, "state", "lsp_start cb ERROR: " .. tostring(serr)) end
       end)
+      end)  -- pcall (find_remote_root continuation)
+      if not cont_ok then step(skey, "state", "post-root ERROR: " .. tostring(cont_err)) end
     end)
   end)
 end

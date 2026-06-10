@@ -1132,7 +1132,15 @@ impl Server {
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
             .unwrap_or_default();
         let root2 = root.clone();
-        let files = tokio::task::spawn_blocking(move || {
+        // Pruned dirs (e.g. miniconda3, node_modules): we don't scan their
+        // contents, but we still report the DIR paths so the frontend filter
+        // can show + navigate into them. Mutex so the (Fn+Send+Sync) walk
+        // filter can record into it.
+        let pruned = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let (files, pruned_out) = tokio::task::spawn_blocking({
+            let pruned = pruned.clone();
+            let root2 = root2.clone();
+            move || {
             let mut out: Vec<String> = Vec::new();
             let mut builder = ignore::WalkBuilder::new(&root2);
             builder
@@ -1143,8 +1151,21 @@ impl Server {
                 .git_global(false)
                 .git_exclude(true);
             if !excludes.is_empty() {
+                let root_f = root2.clone();
+                let pruned_f = pruned.clone();
                 builder.filter_entry(move |e| {
-                    e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
+                    let name = e.file_name().to_str().unwrap_or("");
+                    if excludes.contains(name) {
+                        // record the pruned dir's relative path, then skip it
+                        if e.file_type().map_or(false, |t| t.is_dir()) {
+                            if let Ok(rel) = e.path().strip_prefix(&root_f) {
+                                let mut p = pruned_f.lock().unwrap();
+                                if p.len() < 5000 { p.push(rel.to_string_lossy().to_string()); }
+                            }
+                        }
+                        return false;
+                    }
+                    true
                 });
             }
             for entry_result in builder.build() {
@@ -1155,10 +1176,12 @@ impl Server {
                     out.push(rel.to_string_lossy().to_string());
                 }
             }
-            out
-        }).await.map_err(|e| anyhow!("find_files task: {e}"))?;
+            let pr = pruned.lock().unwrap().clone();
+            (out, pr)
+        }}).await.map_err(|e| anyhow!("find_files task: {e}"))?;
         let truncated = files.len() >= max;
-        Ok(json!({ "root": root.to_string_lossy(), "files": files, "truncated": truncated }))
+        Ok(json!({ "root": root.to_string_lossy(), "files": files,
+                   "pruned_dirs": pruned_out, "truncated": truncated }))
     }
 
     // ===========================================================

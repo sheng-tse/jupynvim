@@ -65,6 +65,9 @@ local function fetch_files(state, hidden, cb)
     end
     state.root = res.root or state.root
     state.files_cache = res.files or {}
+    -- Pruned dirs (miniconda3, node_modules, ...): not scanned, but shown in
+    -- the filter as navigable dirs so you can still reach them.
+    state.pruned_cache = res.pruned_dirs or {}
     cb(true)
   end)
 end
@@ -175,6 +178,22 @@ local function search_items(state)
     end
     table.insert(items, item)
   end
+  -- Pruned dirs (not scanned): show as navigable dir leaves. Confirming one
+  -- re-roots the explorer into it (its contents weren't scanned).
+  for _, rel in ipairs(state.pruned_cache or {}) do
+    local abs = join(state.root, rel)
+    local reldir = rel:match("^(.*)/[^/]+$")
+    local parent = reldir and dir_item(join(state.root, reldir), reldir) or root
+    table.insert(items, {
+      file = uri(state.alias, abs),
+      text = rel,
+      dir = true,
+      parent = parent,
+      sort = parent.sort .. "!" .. (rel:match("[^/]+$") or rel) .. " ",
+      jv_path = abs,
+      jv_pruned = true,
+    })
+  end
   return items
 end
 
@@ -245,7 +264,13 @@ local ACTIONS = {
     local state = state_of(picker)
     if not (state and item) then return end
     if picker.input.filter.meta.searching then
-      if not item.dir then Snacks.picker.actions.jump(picker, item, action) end
+      if item.dir then
+        -- navigate into a dir match (e.g. a pruned dir like miniconda3 whose
+        -- contents weren't scanned): re-root there and clear the filter.
+        M.set_root(state.alias, item.jv_path)
+      else
+        Snacks.picker.actions.jump(picker, item, action)
+      end
       return
     end
     if item.dir then
