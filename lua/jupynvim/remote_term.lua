@@ -100,25 +100,56 @@ local function leave_floating()
   return false
 end
 
-local SIZE = { below = "resize 15", left = "vertical resize 80", right = "vertical resize 80" }
+-- The main editor window: a normal (non-floating) window that isn't a
+-- jupynvim terminal or the explorer/picker. Used so the BOTTOM terminal
+-- splits under the editor column only, not full-width under a right terminal
+-- (which caused the two terminals to overlap).
+local function main_win()
+  local best, best_area
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_config(w).relative == "" then
+      local b = vim.api.nvim_win_get_buf(w)
+      local ft = vim.bo[b].filetype or ""
+      if not vim.b[b].jupynvim_term_alias and not vim.b[b].jupynvim_explorer
+         and not ft:match("^snacks") then
+        local area = vim.api.nvim_win_get_width(w) * vim.api.nvim_win_get_height(w)
+        if not best_area or area > best_area then best, best_area = w, area end
+      end
+    end
+  end
+  return best
+end
+
 local function make_split(split, buf)
   leave_floating()
   if split == "tab" then
     pcall(vim.cmd, buf and ("tab sb " .. buf) or "tabnew")
     return true
   end
-  local cmds = {
-    below = buf and ("botright sb " .. buf) or "botright new",
-    right = buf and ("botright vert sb " .. buf) or "botright vnew",
-    left  = buf and ("topleft vert sb " .. buf) or "topleft vnew",
-  }
-  local ok, err = pcall(vim.cmd, cmds[split] or cmds.below)
+  local cmd
+  if split == "below" then
+    -- Split UNDER the editor column (belowright), not botright (full width),
+    -- so a bottom terminal and a full-height right terminal tile cleanly.
+    local mw = main_win()
+    if mw then pcall(vim.api.nvim_set_current_win, mw) end
+    cmd = buf and ("belowright sb " .. buf) or "belowright new"
+  elseif split == "left" then
+    cmd = buf and ("topleft vert sb " .. buf) or "topleft vnew"
+  else -- right (and default): full-height column on the far right
+    cmd = buf and ("botright vert sb " .. buf) or "botright vnew"
+  end
+  local ok, err = pcall(vim.cmd, cmd)
   if not ok then
     vim.notify("jupynvim: couldn't open terminal split (" .. tostring(err):gsub("^.-:E", "E") ..
                ").\n  Close a window/split and retry.", vim.log.levels.WARN)
     return false
   end
-  if SIZE[split] then pcall(vim.cmd, SIZE[split]) end
+  if split == "below" then
+    pcall(vim.cmd, "resize 15")
+  else
+    -- ~80 cols, but never more than 40% of the screen (keeps the editor usable)
+    pcall(vim.cmd, "vertical resize " .. math.min(80, math.floor(vim.o.columns * 0.4)))
+  end
   return true
 end
 
