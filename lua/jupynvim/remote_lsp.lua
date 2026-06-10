@@ -284,7 +284,16 @@ local function make_cmd(alias, lsp_id_ref, state)
       state.pending[id] = callback
       state.sent = state.sent + 1
       step(skey, "relay", ("sent %d, recv %d, diags %d"):format(state.sent, state.recv, state.diags))
-      send({ jsonrpc = "2.0", id = id, method = method, params = to_server(params or vim.empty_dict()) })
+      local p = to_server(params or vim.empty_dict())
+      -- CRITICAL for remote LSP: null out processId in initialize. It is
+      -- Neovim's LOCAL pid; the server runs on the REMOTE, where that pid is a
+      -- different process (or absent), so pid-watching servers (pyright/
+      -- basedpyright) decide their "parent" died and self-exit. null disables
+      -- the watchdog. clangd happens to be lenient, which is why C++ "worked".
+      if method == "initialize" and type(p) == "table" then
+        p.processId = vim.NIL
+      end
+      send({ jsonrpc = "2.0", id = id, method = method, params = p })
       return id, id
     end
 
