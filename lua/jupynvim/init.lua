@@ -85,6 +85,13 @@ M.config = {
   -- Set a field to "" to unbind it.
   terminal = {
     resize_step = 3,
+    -- Default sizes (compact; you can resize and it now persists across
+    -- toggle). bottom_height = rows for the <C-/> terminal; side_width = cols
+    -- for a left/right terminal. nil side_width auto-computes (~40% screen, a
+    -- bit narrower). A bottom terminal only resizes height (K/J); a side
+    -- terminal only resizes width (H/L) - the other keys are no-ops.
+    bottom_height = 9,
+    side_width = nil,
     resize_keys_normal = { taller = "K", shorter = "J", broader = "H", narrower = "L" },
     resize_keys = { taller = "<C-Up>", shorter = "<C-Down>", broader = "<C-Left>", narrower = "<C-Right>" },
   },

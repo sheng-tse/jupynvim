@@ -23,6 +23,38 @@ local function uri(alias, abspath)
   return "jupynvim://" .. alias .. abspath
 end
 
+-- The main editor window: a normal (non-floating) window that is NOT a
+-- jupynvim terminal or the explorer/picker. The dashboard or a real-file
+-- window qualifies. Largest preferred.
+function M.editor_win()
+  local best, best_area
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_config(w).relative == "" then
+      local b = vim.api.nvim_win_get_buf(w)
+      local ft = vim.bo[b].filetype or ""
+      if not vim.b[b].jupynvim_term_alias and not vim.b[b].jupynvim_explorer
+         and not ft:match("^snacks") then
+        local a = vim.api.nvim_win_get_width(w) * vim.api.nvim_win_get_height(w)
+        if not best_area or a > best_area then best, best_area = w, a end
+      end
+    end
+  end
+  return best
+end
+
+-- Open `file` (a jupynvim:// URI) in the editor window, never replacing a
+-- terminal/explorer buffer. `pos` = {line, col0} to jump to (grep results).
+function M.open_in_editor(file, pos)
+  local w = M.editor_win()
+  if w and vim.api.nvim_win_is_valid(w) then
+    vim.api.nvim_set_current_win(w)
+  else
+    pcall(vim.cmd, "topleft vsplit")  -- no editor window; make one
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(file))
+  if pos then pcall(vim.api.nvim_win_set_cursor, 0, { pos[1], pos[2] or 0 }) end
+end
+
 local function has_snacks()
   return pcall(require, "snacks") and package.loaded["snacks"] and Snacks and Snacks.picker
 end
@@ -164,11 +196,15 @@ function M.files(alias, root, opts)
         format = format_item,
         preview = M.preview,
         title = title,
+        confirm = function(picker, item)
+          picker:close()
+          if item and item.file then M.open_in_editor(item.file) end
+        end,
       }, opts.layout and { layout = opts.layout } or {}))
       return
     end
     vim.ui.select(files, { prompt = title }, function(choice)
-      if choice then vim.cmd("edit " .. vim.fn.fnameescape(uri(alias, base .. "/" .. choice))) end
+      if choice then M.open_in_editor(uri(alias, base .. "/" .. choice)) end
     end)
   end)
 end
@@ -216,6 +252,10 @@ function M.grep(alias, root, pattern, opts)
           format = format_item,
           preview = M.preview,
           title = title,
+          confirm = function(picker, item)
+            picker:close()
+            if item and item.file then M.open_in_editor(item.file, item.pos) end
+          end,
         }, opts.layout and { layout = opts.layout } or {}))
         return
       end

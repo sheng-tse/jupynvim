@@ -269,7 +269,7 @@ local ACTIONS = {
         -- contents weren't scanned): re-root there and clear the filter.
         M.set_root(state.alias, item.jv_path)
       else
-        Snacks.picker.actions.jump(picker, item, action)
+        require("jupynvim.remote_pick").open_in_editor(item.file)  -- editor, not a term
       end
       return
     end
@@ -290,7 +290,7 @@ local ACTIONS = {
         end
       end
     else
-      Snacks.picker.actions.jump(picker, item, action)
+      require("jupynvim.remote_pick").open_in_editor(item.file)  -- editor, not a term
     end
   end,
   jv_close_dir = function(picker, item)

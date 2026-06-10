@@ -18,6 +18,10 @@ M._slots = {}
 
 local function key(alias, pid) return alias .. ":" .. pid end
 local function slots(alias) M._slots[alias] = M._slots[alias] or {}; return M._slots[alias] end
+-- Remembered window size per slot, so a resized terminal keeps its size across
+-- hide/reshow (toggle) instead of snapping back to the default.
+M._sizes = {}
+local function skey(alias, slot) return alias .. ":" .. slot end
 
 local function win_of(buf)
   for _, w in ipairs(vim.api.nvim_list_wins()) do
@@ -52,18 +56,34 @@ function M.sync_size(buf, force)
 end
 
 -- ── resize ──────────────────────────────────────────────────────────────
--- Simple, predictable mapping (no neighbor guessing, which misbehaved in
--- multi-window layouts). Vim's `resize`/`vertical resize` grow/shrink the
--- CURRENT window correctly whatever side it's on:
---   taller/shorter -> height ; broader/narrower -> width.
--- Default keys: K taller, J shorter, H broader, L narrower (Ctrl+arrows too).
+-- Each terminal only resizes the dimension that makes sense for its position,
+-- so a key never disturbs a neighbor:
+--   below slot  -> height only (taller/shorter); width keys are no-ops
+--   left/right  -> width only  (broader/narrower); height keys are no-ops
+-- Keys: K taller, J shorter, H broader, L narrower (Ctrl+arrows mirror them).
 local ACTION_CMD = {
   taller = "resize +", shorter = "resize -",
   broader = "vertical resize +", narrower = "vertical resize -",
 }
+-- Which actions are meaningful for a slot (others bind to a silent no-op so
+-- they neither error (J=join/K=keywordprg) nor poke a neighbor).
+local function active_actions(slot)
+  if slot == "left" or slot == "right" then return { broader = true, narrower = true } end
+  if slot == "below" then return { taller = true, shorter = true } end
+  return {}  -- tab: full screen, nothing to resize
+end
+
+local function remember_size(buf)
+  local alias, slot = vim.b[buf].jupynvim_term_alias, vim.b[buf].jupynvim_term_slot
+  local w = alias and win_of(buf)
+  if not (alias and slot and w) then return end
+  M._sizes[skey(alias, slot)] = { h = vim.api.nvim_win_get_height(w), w = vim.api.nvim_win_get_width(w) }
+end
+
 local function do_resize(buf, action)
   local step = ((require("jupynvim").config or {}).terminal or {}).resize_step or 3
   pcall(vim.cmd, ACTION_CMD[action] .. step)
+  remember_size(buf)  -- persist across toggle
   vim.schedule(function() M.sync_size(buf) end)
 end
 
@@ -75,15 +95,20 @@ local function resize_cfg()
   }
 end
 
-local function bind_resize_keys(buf)
+local function bind_resize_keys(buf, slot)
   local cfg = resize_cfg()
+  local active = active_actions(slot)
   local function rk(modes, lhs, action)
     if not lhs or lhs == "" or not ACTION_CMD[action] then return end
-    pcall(vim.keymap.set, modes, lhs, function() do_resize(buf, action) end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: resize remote terminal (" .. action .. ")" })
+    local on = active[action] and true or false
+    local fn = on and function() do_resize(buf, action) end or function() end
+    pcall(vim.keymap.set, modes, lhs, fn, {
+      buffer = buf, silent = true, nowait = true,
+      desc = "jupynvim: resize term (" .. action .. (on and "" or ", n/a here") .. ")",
+    })
   end
-  for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end       -- Shift+hjkl, normal mode
-  for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end  -- Ctrl+arrows, also in insert
+  for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end
+  for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end
 end
 
 -- ── splits ─────────────────────────────────────────────────────────────────
@@ -144,13 +169,23 @@ local function make_split(split, buf)
                ").\n  Close a window/split and retry.", vim.log.levels.WARN)
     return false
   end
-  if split == "below" then
-    pcall(vim.cmd, "resize 15")
-  else
-    -- ~80 cols, but never more than 40% of the screen (keeps the editor usable)
-    pcall(vim.cmd, "vertical resize " .. math.min(80, math.floor(vim.o.columns * 0.4)))
-  end
   return true
+end
+
+-- Size the just-created split window: the slot's remembered size if any, else
+-- the (configurable) default. Defaults are intentionally compact.
+local function apply_size(split, alias, slot)
+  local c = (require("jupynvim").config or {}).terminal or {}
+  local remembered = M._sizes[skey(alias, slot)]
+  if split == "below" then
+    local h = (remembered and remembered.h) or c.bottom_height or 9
+    pcall(vim.cmd, "resize " .. h)
+  elseif split ~= "tab" then
+    local w = (remembered and remembered.w)
+      or c.side_width
+      or math.max(40, math.min(80, math.floor(vim.o.columns * 0.4)) - 27)
+    pcall(vim.cmd, "vertical resize " .. w)
+  end
 end
 
 -- ── open / toggle ──────────────────────────────────────────────────────────
@@ -164,6 +199,7 @@ function M.open(alias, opts)
   local client = J.client_for(alias)
 
   if not make_split(split, nil) then return end
+  apply_size(split, alias, slot)
   local buf = vim.api.nvim_get_current_buf()
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].swapfile = false
@@ -238,7 +274,7 @@ function M.open(alias, opts)
     end,
   })
 
-  bind_resize_keys(buf)
+  bind_resize_keys(buf, slot)
   vim.cmd("startinsert")
   return buf, res.pid
 end
@@ -255,9 +291,14 @@ function M.toggle(alias, opts)
   local buf = slots(alias)[slot]
   if buf and vim.api.nvim_buf_is_valid(buf) then
     local w = win_of(buf)
-    if w then pcall(vim.api.nvim_win_close, w, false); return end
+    if w then
+      remember_size(buf)  -- capture current size so reshow restores it
+      pcall(vim.api.nvim_win_close, w, false)
+      return
+    end
     if vim.b[buf].jupynvim_term_alive then
       if not make_split(split, buf) then return end
+      apply_size(split, alias, slot)  -- restore the size you had
       vim.schedule(function() M.sync_size(buf, true); vim.cmd("startinsert") end)
       return
     end
