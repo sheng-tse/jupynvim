@@ -74,6 +74,9 @@ M.config = {
   -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
   -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
   terminal_keys = { "<c-/>", "<c-_>" },
+  -- Toggle a SECOND remote terminal on the right (open/close like <C-/>),
+  -- for a scratch shell to run whatever you like. Set {} to disable.
+  terminal_right_keys = { "<leader>tr" },
   -- Remote-terminal resize keys, bound buffer-local on the terminal (they
   -- never shadow your global maps). Two sets:
   --   resize_keys_normal: Shift+hjkl in NORMAL mode.
@@ -745,6 +748,17 @@ function M.terminal()
   end
   local ok = pcall(function() require("snacks").terminal() end)
   if not ok then pcall(vim.cmd, "botright split | terminal") end
+end
+
+-- Toggle a SECOND remote terminal on the right (independent of the <C-/>
+-- bottom one). For a scratch/extra shell. Bound to terminal_right_keys.
+function M.terminal_right()
+  local alias = M._active_alias
+  if alias and M.clients[alias] and M.clients[alias].job then
+    require("jupynvim.remote_term").toggle(alias, { split = "right" })
+  else
+    vim.notify("jupynvim: no active SSH session", vim.log.levels.WARN)
+  end
 end
 
 -- True when an SSH session is the active context (so file/search keys should
@@ -2466,6 +2480,13 @@ function M.setup(opts)
         M.terminal()
       end, { desc = "jupynvim: terminal toggle (remote when SSH-connected)" })
     end
+    -- Second terminal on the right (toggle). Normal mode only (leader keys
+    -- aren't meaningful in terminal-insert); dismiss it from inside with the
+    -- <C-/> family or by closing the window.
+    for _, lhs in ipairs(M.config.terminal_right_keys or {}) do
+      pcall(vim.keymap.set, "n", lhs, function() M.terminal_right() end,
+        { desc = "jupynvim: toggle second remote terminal (right)" })
+    end
     -- Pick keys (find-files / grep): target the remote when connected, else
     -- REPLAY the user's own local mapping (captured here, after LazyVim set
     -- it). So local behavior is untouched; only the remote case is added.
@@ -2498,6 +2519,7 @@ function M.setup(opts)
   local pk = M.config.pick_keys or {}
   if (M.config.explorer_keys and #M.config.explorer_keys > 0)
      or (M.config.terminal_keys and #M.config.terminal_keys > 0)
+     or (M.config.terminal_right_keys and #M.config.terminal_right_keys > 0)
      or (pk.files and #pk.files > 0) or (pk.grep and #pk.grep > 0) then
     -- LazyVim registers <leader>e / <C-/> via snacks' `keys` spec, and
     -- lazy.nvim sets those at startup. We must bind AFTER that or LazyVim
@@ -2810,11 +2832,8 @@ function M.setup(opts)
       return
     end
     local positions = { below = true, left = true, right = true, tab = true }
-    if parts[2] and positions[parts[2]] then
-      require("jupynvim.remote_term").open(alias, { split = parts[2], primary = false })
-    else
-      require("jupynvim.remote_term").open(alias, { primary = true })
-    end
+    local split = (parts[2] and positions[parts[2]]) and parts[2] or "below"
+    require("jupynvim.remote_term").toggle(alias, { split = split })
   end, {
     nargs = "*",
     complete = function(_, line)
