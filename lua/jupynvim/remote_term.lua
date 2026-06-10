@@ -51,59 +51,75 @@ function M.sync_size(buf, force)
   end
 end
 
--- ── resize (side-aware) ────────────────────────────────────────────────────
--- Keys name a DIRECTION (up/down/left/right); the actual grow/shrink is chosen
--- from where the window's neighbor is, so it feels natural anywhere:
---   right-side terminal: h pushes its left border left -> broader; l -> narrower
---   left-side terminal:  l -> broader; h -> narrower
---   bottom terminal:     k -> taller; j -> shorter
-local function do_resize(buf, dir)
+-- ── resize ──────────────────────────────────────────────────────────────
+-- Simple, predictable mapping (no neighbor guessing, which misbehaved in
+-- multi-window layouts). Vim's `resize`/`vertical resize` grow/shrink the
+-- CURRENT window correctly whatever side it's on:
+--   taller/shorter -> height ; broader/narrower -> width.
+-- Default keys: K taller, J shorter, H broader, L narrower (Ctrl+arrows too).
+local ACTION_CMD = {
+  taller = "resize +", shorter = "resize -",
+  broader = "vertical resize +", narrower = "vertical resize -",
+}
+local function do_resize(buf, action)
   local step = ((require("jupynvim").config or {}).terminal or {}).resize_step or 3
-  if dir == "left" or dir == "right" then
-    local has_left = vim.fn.winnr("h") ~= vim.fn.winnr()
-    local grow = has_left and (dir == "left") or (not has_left and dir == "right")
-    pcall(vim.cmd, "vertical resize " .. (grow and "+" or "-") .. step)
-  else
-    local has_above = vim.fn.winnr("k") ~= vim.fn.winnr()
-    local grow = has_above and (dir == "up") or (not has_above and dir == "down")
-    pcall(vim.cmd, "resize " .. (grow and "+" or "-") .. step)
-  end
+  pcall(vim.cmd, ACTION_CMD[action] .. step)
   vim.schedule(function() M.sync_size(buf) end)
 end
 
 local function resize_cfg()
   local c = (require("jupynvim").config or {}).terminal or {}
   return {
-    normal = c.resize_keys_normal or { up = "K", down = "J", left = "H", right = "L" },
-    insert = c.resize_keys or { up = "<C-Up>", down = "<C-Down>", left = "<C-Left>", right = "<C-Right>" },
+    normal = c.resize_keys_normal or { taller = "K", shorter = "J", broader = "H", narrower = "L" },
+    insert = c.resize_keys or { taller = "<C-Up>", shorter = "<C-Down>", broader = "<C-Left>", narrower = "<C-Right>" },
   }
 end
 
 local function bind_resize_keys(buf)
   local cfg = resize_cfg()
-  local function rk(modes, lhs, dir)
-    if not lhs or lhs == "" then return end
-    pcall(vim.keymap.set, modes, lhs, function() do_resize(buf, dir) end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: resize remote terminal (" .. dir .. ")" })
+  local function rk(modes, lhs, action)
+    if not lhs or lhs == "" or not ACTION_CMD[action] then return end
+    pcall(vim.keymap.set, modes, lhs, function() do_resize(buf, action) end,
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: resize remote terminal (" .. action .. ")" })
   end
-  for dir, lhs in pairs(cfg.normal) do rk("n", lhs, dir) end       -- Shift+hjkl, normal mode
-  for dir, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, dir) end  -- Ctrl+arrows, also in insert
+  for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end       -- Shift+hjkl, normal mode
+  for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end  -- Ctrl+arrows, also in insert
 end
 
 -- ── splits ─────────────────────────────────────────────────────────────────
+-- If focus is in a FLOATING window (e.g. the snacks explorer picker), move to
+-- a normal window first: splitting from a float fails / mangles the layout
+-- ("E36: Not enough room"). Returns false if no normal window exists.
+local function leave_floating()
+  if vim.api.nvim_win_get_config(0).relative == "" then return true end
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_config(w).relative == "" then
+      vim.api.nvim_set_current_win(w); return true
+    end
+  end
+  return false
+end
+
 local SIZE = { below = "resize 15", left = "vertical resize 80", right = "vertical resize 80" }
 local function make_split(split, buf)
+  leave_floating()
   if split == "tab" then
-    if buf then vim.cmd("tab sb " .. buf) else vim.cmd("tabnew") end
-    return
+    pcall(vim.cmd, buf and ("tab sb " .. buf) or "tabnew")
+    return true
   end
   local cmds = {
     below = buf and ("botright sb " .. buf) or "botright new",
     right = buf and ("botright vert sb " .. buf) or "botright vnew",
     left  = buf and ("topleft vert sb " .. buf) or "topleft vnew",
   }
-  vim.cmd(cmds[split] or cmds.below)
+  local ok, err = pcall(vim.cmd, cmds[split] or cmds.below)
+  if not ok then
+    vim.notify("jupynvim: couldn't open terminal split (" .. tostring(err):gsub("^.-:E", "E") ..
+               ").\n  Close a window/split and retry.", vim.log.levels.WARN)
+    return false
+  end
   if SIZE[split] then pcall(vim.cmd, SIZE[split]) end
+  return true
 end
 
 -- ── open / toggle ──────────────────────────────────────────────────────────
@@ -116,7 +132,7 @@ function M.open(alias, opts)
   local J = require("jupynvim")
   local client = J.client_for(alias)
 
-  make_split(split, nil)
+  if not make_split(split, nil) then return end
   local buf = vim.api.nvim_get_current_buf()
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].swapfile = false
@@ -210,7 +226,7 @@ function M.toggle(alias, opts)
     local w = win_of(buf)
     if w then pcall(vim.api.nvim_win_close, w, false); return end
     if vim.b[buf].jupynvim_term_alive then
-      make_split(split, buf)
+      if not make_split(split, buf) then return end
       vim.schedule(function() M.sync_size(buf, true); vim.cmd("startinsert") end)
       return
     end

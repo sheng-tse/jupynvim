@@ -85,8 +85,8 @@ M.config = {
   -- Set a field to "" to unbind it.
   terminal = {
     resize_step = 3,
-    resize_keys_normal = { taller = "K", shorter = "J", wider = "L", narrower = "H" },
-    resize_keys = { taller = "<C-Up>", shorter = "<C-Down>", wider = "<C-Right>", narrower = "<C-Left>" },
+    resize_keys_normal = { taller = "K", shorter = "J", broader = "H", narrower = "L" },
+    resize_keys = { taller = "<C-Up>", shorter = "<C-Down>", broader = "<C-Left>", narrower = "<C-Right>" },
   },
   -- File-picker / grep keys that should target the REMOTE when SSH-connected
   -- and otherwise replay your own local mapping (captured at bind time, so
