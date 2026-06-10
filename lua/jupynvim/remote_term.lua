@@ -169,6 +169,12 @@ local function make_split(split, buf)
                ").\n  Close a window/split and retry.", vim.log.levels.WARN)
     return false
   end
+  -- Pin the terminal's size so toggling another window (e.g. the explorer)
+  -- doesn't redistribute freed space into it (the "right term grew by the
+  -- explorer's width" bug). Explicit :resize from the user still overrides.
+  local w = vim.api.nvim_get_current_win()
+  if split == "below" then vim.wo[w].winfixheight = true
+  elseif split == "left" or split == "right" then vim.wo[w].winfixwidth = true end
   return true
 end
 
@@ -270,7 +276,21 @@ function M.open(alias, opts)
     callback = function()
       client:call("proc_kill", { pid = res.pid }, function() end)
       terms[k] = nil
+      M._sizes[skey(alias, slot)] = nil  -- forget size so next open is default
       if slots(alias)[slot] == buf then slots(alias)[slot] = nil end
+    end,
+  })
+  -- `:q`/`:close` on a terminal RESETS it (vs <C-/> toggle which keeps it):
+  -- forget the remembered size and wipe the buffer (-> BufWipeout kills the
+  -- PTY + clears the slot), so the next open is a fresh default-sized shell.
+  -- Toggle hides via the window API, which doesn't fire QuitPre.
+  vim.api.nvim_create_autocmd("QuitPre", {
+    buffer = buf,
+    callback = function()
+      M._sizes[skey(alias, slot)] = nil
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(buf) then pcall(vim.api.nvim_buf_delete, buf, { force = true }) end
+      end)
     end,
   })
 

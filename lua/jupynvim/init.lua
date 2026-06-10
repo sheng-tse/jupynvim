@@ -2440,8 +2440,26 @@ end
 
 -- ---------- setup ----------
 
+-- Deep-merge user opts into config: nested MAPS merge recursively (so e.g.
+-- terminal = { bottom_height = 12 } keeps the other terminal defaults), while
+-- key-LIST arrays (explorer_keys, terminal_keys, pick_keys.*) are replaced
+-- wholesale (so you set exactly the keys you want). Makes every option
+-- independently overridable.
+local function deep_merge(dst, src)
+  local islist = vim.islist or vim.tbl_islist
+  for k, v in pairs(src) do
+    if type(v) == "table" and type(dst[k]) == "table"
+       and not islist(v) and not islist(dst[k]) then
+      dst[k] = deep_merge(vim.deepcopy(dst[k]), v)
+    else
+      dst[k] = v
+    end
+  end
+  return dst
+end
+
 function M.setup(opts)
-  M.config = vim.tbl_extend("force", M.config, opts or {})
+  M.config = deep_merge(M.config, opts or {})
   Log.set_level(M.config.log_level)
   Render.setup_highlights()
   require("jupynvim.diag").setup()
