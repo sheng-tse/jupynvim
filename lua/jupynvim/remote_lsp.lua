@@ -269,6 +269,9 @@ local function make_cmd(alias, lsp_id_ref, state)
     local function to_client(params) return rewrite_uris(params, "file://", "jupynvim://" .. alias) end
     state.to_client = to_client
 
+    state.sent, state.recv, state.diags = 0, 0, 0
+    local skey = alias .. ":" .. (state.server_name or "?")
+
     local function send(msg)
       local cl = require("jupynvim").client_for(alias)
       cl:call("lsp_send", { lsp_id = lsp_id_ref.id, message = msg }, function() end)
@@ -279,12 +282,15 @@ local function make_cmd(alias, lsp_id_ref, state)
       local id = state.next_id
       if closed then callback({ code = -32000, message = "shutdown" }, nil); return id, id end
       state.pending[id] = callback
+      state.sent = state.sent + 1
+      step(skey, "relay", ("sent %d, recv %d, diags %d"):format(state.sent, state.recv, state.diags))
       send({ jsonrpc = "2.0", id = id, method = method, params = to_server(params or vim.empty_dict()) })
       return id, id
     end
 
     function client.notify(method, params)
       if closed then return false end
+      state.sent = state.sent + 1
       send({ jsonrpc = "2.0", method = method, params = to_server(params or vim.empty_dict()) })
       return true
     end
@@ -314,28 +320,42 @@ local function hook_lsp_messages(alias)
       if s.alias == alias and s.lsp_id_ref and s.lsp_id_ref.id == e.lsp_id then st = s; break end
     end
     if not st then return end
+    local skey = alias .. ":" .. (st.server_name or "?")
     if e.exit then
+      step(skey, "relay", ("server EXITED (sent %d, recv %d, diags %d)"):format(st.sent or 0, st.recv or 0, st.diags or 0))
       if st.dispatch and st.dispatch.on_exit then pcall(st.dispatch.on_exit, 0, 0) end
       return
     end
     local msg = e.message
     if type(msg) ~= "table" then return end
+    st.recv = (st.recv or 0) + 1
     msg = st.to_client and st.to_client(msg) or msg
     if msg.id ~= nil and msg.method ~= nil then
-      -- server -> client request (e.g. workspace/configuration)
+      -- server -> client request (e.g. workspace/configuration). Neovim's
+      -- dispatchers.server_request returns (result, err) synchronously.
+      st.last_srv = msg.method
+      local result, err
       if st.dispatch and st.dispatch.server_request then
-        local result, err = st.dispatch.server_request(msg.method, msg.params or vim.empty_dict())
-        local cl2 = require("jupynvim").client_for(alias)
-        cl2:call("lsp_send", { lsp_id = e.lsp_id, message = {
-          jsonrpc = "2.0", id = msg.id, result = result, error = err,
-        } }, function() end)
+        local ok, a, b = pcall(st.dispatch.server_request, msg.method, msg.params or vim.empty_dict())
+        if ok then result, err = a, b
+        else step(skey, "relay", "server_request '" .. tostring(msg.method) .. "' ERR: " .. tostring(a)) end
       end
+      local cl2 = require("jupynvim").client_for(alias)
+      cl2:call("lsp_send", { lsp_id = e.lsp_id, message = {
+        jsonrpc = "2.0", id = msg.id, result = result == nil and vim.NIL or result, error = err,
+      } }, function() end)
     elseif msg.id ~= nil then
       -- response to one of our requests
       local cb = st.pending and st.pending[msg.id]
       if cb then st.pending[msg.id] = nil; pcall(cb, msg.error, msg.result) end
     elseif msg.method ~= nil then
       -- server -> client notification (publishDiagnostics, etc.)
+      st.last_srv = msg.method
+      if msg.method == "textDocument/publishDiagnostics" then
+        st.diags = (st.diags or 0) + 1
+        local n = msg.params and msg.params.diagnostics and #msg.params.diagnostics or 0
+        step(skey, "relay", ("sent %d, recv %d, diags %d (last: %d items)"):format(st.sent or 0, st.recv or 0, st.diags or 0, n))
+      end
       if st.dispatch and st.dispatch.notification then
         pcall(st.dispatch.notification, msg.method, msg.params or vim.empty_dict())
       end
@@ -417,7 +437,7 @@ local function start_one(buf, alias, path, spec)
         return
       end
 
-      st = { alias = alias, lsp_id_ref = { id = nil }, pending_bufs = { buf } }
+      st = { alias = alias, server_name = spec.name, lsp_id_ref = { id = nil }, pending_bufs = { buf } }
       servers[key] = st
       hook_lsp_messages(alias)
 
@@ -520,7 +540,7 @@ function M.status()
   local lines = { "jupynvim remote LSP status:" }
   for _, k in ipairs(keys) do
     table.insert(lines, "  " .. k)
-    local order = { "resolve", "spec", "probe", "install", "root", "state", "client" }
+    local order = { "resolve", "spec", "probe", "install", "root", "state", "client", "relay" }
     for _, f in ipairs(order) do
       if steps[k][f] then table.insert(lines, "    " .. f .. ": " .. tostring(steps[k][f])) end
     end
