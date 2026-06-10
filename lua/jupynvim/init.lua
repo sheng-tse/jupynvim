@@ -74,14 +74,16 @@ M.config = {
   -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
   -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
   terminal_keys = { "<c-/>", "<c-_>" },
-  -- Remote-terminal resize keys. Bound buffer-local on the terminal (so they
-  -- only act there), in BOTH normal and terminal-insert mode, so you can
-  -- resize while using the shell. Ctrl+arrows by default: Shift+hjkl would
-  -- collide with typing capitals in the shell. Set any to "" to unbind.
+  -- Remote-terminal resize keys, bound buffer-local on the terminal (they
+  -- never shadow your global maps). Two sets:
+  --   resize_keys_normal: Shift+hjkl in NORMAL mode.
+  --   resize_keys:        Ctrl+arrows in NORMAL + terminal-INSERT mode (so
+  --                       you can resize without leaving insert).
+  -- Set a field to "" to unbind it.
   terminal = {
     resize_step = 3,
-    resize_taller = "<C-Up>", resize_shorter = "<C-Down>",
-    resize_wider = "<C-Right>", resize_narrower = "<C-Left>",
+    resize_keys_normal = { taller = "K", shorter = "J", wider = "L", narrower = "H" },
+    resize_keys = { taller = "<C-Up>", shorter = "<C-Down>", wider = "<C-Right>", narrower = "<C-Left>" },
   },
   -- File-picker / grep keys that should target the REMOTE when SSH-connected
   -- and otherwise replay your own local mapping (captured at bind time, so
@@ -2795,28 +2797,24 @@ function M.setup(opts)
   })
 
   -- :JupynvimTerm <alias>  — open a PTY-backed remote shell in a split.
-  -- :JupynvimTerm [alias] [below|left|right|tab] [cmd...]
-  --   Opens a NEW remote terminal at the given position (default below). With
-  --   no position it opens a primary terminal (same as <C-/>). A trailing
-  --   command is typed into the shell on open, e.g.:
-  --     :JupynvimTerm psc left claude     (a left split running claude)
+  -- :JupynvimTerm [alias] [below|left|right|tab]
+  --   Opens a plain remote shell. With a position it's an extra terminal
+  --   alongside the <C-/> one (e.g. `:JupynvimTerm psc right` for a second
+  --   shell on the right to use however you like); bare form opens/uses the
+  --   primary <C-/> terminal.
   vim.api.nvim_create_user_command("JupynvimTerm", function(o)
     local parts = vim.split(o.args or "", "%s+", { trimempty = true })
     local alias = parts[1] or M._active_alias
     if not alias or alias == "" then
-      vim.notify("usage: :JupynvimTerm <alias> [below|left|right|tab] [cmd...]", vim.log.levels.WARN)
+      vim.notify("usage: :JupynvimTerm <alias> [below|left|right|tab]", vim.log.levels.WARN)
       return
     end
     local positions = { below = true, left = true, right = true, tab = true }
-    local opts = { primary = false }
-    local rest = {}
-    for i = 2, #parts do
-      if i == 2 and positions[parts[i]] then opts.split = parts[i]
-      else table.insert(rest, parts[i]) end
+    if parts[2] and positions[parts[2]] then
+      require("jupynvim.remote_term").open(alias, { split = parts[2], primary = false })
+    else
+      require("jupynvim.remote_term").open(alias, { primary = true })
     end
-    if #rest > 0 then opts.start_cmd = table.concat(rest, " ") end
-    if not opts.split then opts.primary = true end  -- bare form = the <C-/> terminal
-    require("jupynvim.remote_term").open(alias, opts)
   end, {
     nargs = "*",
     complete = function(_, line)

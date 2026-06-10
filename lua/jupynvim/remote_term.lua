@@ -45,33 +45,39 @@ function M.sync_size(buf)
   }, function() end)
 end
 
--- Resize step + keys (configurable via config.terminal). Ctrl+arrows by
--- default: they work in terminal-INSERT mode (so you can resize while using
--- the shell) and don't collide with typing the way Shift+hjkl would.
+-- Resize keys (configurable via config.terminal). Two sets, both buffer-local
+-- so they only act on the terminal and never shadow your global maps:
+--   * Shift+hjkl in NORMAL mode (what people reach for; J/K/H/L are useless
+--     in a terminal buffer otherwise, and unbound they hit defaults like
+--     J=join -> E21 and K=keywordprg -> E349).
+--   * Ctrl+arrows in NORMAL and TERMINAL-INSERT mode, so you can resize
+--     without leaving insert (Shift+hjkl can't work in insert: it'd type).
 local function resize_cfg()
   local c = (require("jupynvim").config or {}).terminal or {}
   return {
     step = c.resize_step or 3,
-    taller  = c.resize_taller  or "<C-Up>",
-    shorter = c.resize_shorter or "<C-Down>",
-    wider   = c.resize_wider   or "<C-Right>",
-    narrower= c.resize_narrower or "<C-Left>",
+    normal = c.resize_keys_normal
+      or { taller = "K", shorter = "J", wider = "L", narrower = "H" },
+    insert = c.resize_keys
+      or { taller = "<C-Up>", shorter = "<C-Down>", wider = "<C-Right>", narrower = "<C-Left>" },
   }
 end
 
 local function bind_resize_keys(buf)
   local cfg = resize_cfg()
-  local function rk(lhs, cmd)
+  local cmds = {
+    taller = "resize +" .. cfg.step, shorter = "resize -" .. cfg.step,
+    wider = "vertical resize +" .. cfg.step, narrower = "vertical resize -" .. cfg.step,
+  }
+  local function rk(modes, lhs, dir)
     if not lhs or lhs == "" then return end
-    pcall(vim.keymap.set, { "n", "t" }, lhs, function()
-      pcall(vim.cmd, cmd)
+    pcall(vim.keymap.set, modes, lhs, function()
+      pcall(vim.cmd, cmds[dir])
       vim.schedule(function() M.sync_size(buf) end)
-    end, { buffer = buf, silent = true, desc = "jupynvim: resize remote terminal" })
+    end, { buffer = buf, silent = true, nowait = true, desc = "jupynvim: resize remote terminal" })
   end
-  rk(cfg.taller,   "resize +" .. cfg.step)
-  rk(cfg.shorter,  "resize -" .. cfg.step)
-  rk(cfg.wider,    "vertical resize +" .. cfg.step)
-  rk(cfg.narrower, "vertical resize -" .. cfg.step)
+  for dir, lhs in pairs(cfg.normal) do rk("n", lhs, dir) end
+  for dir, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, dir) end
 end
 
 -- Build the split for a position. `reshow` uses `sb <buf>` to re-display an
@@ -94,7 +100,7 @@ end
 -- Open a remote shell. opts.cmd defaults to "bash", opts.args = {"-l","-i"}.
 -- opts.split: "below" (default), "right", "left", "tab".
 -- opts.primary: mark as the <C-/> toggle terminal for this alias.
--- opts.cwd / opts.start_cmd: working dir / a command to type on open.
+-- opts.cwd: working dir (defaults to the explorer's current root).
 function M.open(alias, opts)
   opts = opts or {}
   local J = require("jupynvim")
@@ -187,9 +193,6 @@ function M.open(alias, opts)
   })
 
   bind_resize_keys(buf)
-  if opts.start_cmd then
-    client:call("proc_stdin", { pid = res.pid, data_b64 = vim.base64.encode(opts.start_cmd .. "\n") }, function() end)
-  end
   vim.cmd("startinsert")
   return buf, res.pid
 end
