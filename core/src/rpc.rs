@@ -230,7 +230,7 @@ impl Server {
         };
         match method {
             "ping" => Ok(json!("pong")),
-            "list_kernels" => self.list_kernels(),
+            "list_kernels" => self.list_kernels(p),
             "open" => self.open(p).await,
             "close" => self.close(p).await,
             "snapshot" => self.snapshot(p),
@@ -285,8 +285,20 @@ impl Server {
 
     // ---- handlers ----
 
-    fn list_kernels(&self) -> Result<Json> {
-        let specs = kernelspec::discover_all();
+    fn list_kernels(&self, p: Json) -> Result<Json> {
+        // Optional `dir` (a notebook's directory): include kernels from
+        // project-local venvs (.venv/venv/env walking up) in the listing.
+        let dir = p
+            .get("dir")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                if let Some(rest) = s.strip_prefix("~/") {
+                    dirs::home_dir().map(|h| h.join(rest)).unwrap_or_else(|| PathBuf::from(s))
+                } else {
+                    PathBuf::from(s)
+                }
+            });
+        let specs = kernelspec::discover_for_dir(dir.as_deref());
         Ok(serde_json::to_value(specs)?)
     }
 
@@ -370,22 +382,38 @@ impl Server {
                 metadata: serde_json::Value::Null,
             }
         } else {
-            // Pick kernel: explicit > metadata > python3
-            let name = p
-                .get("kernel_name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| session.notebook.read().kernel_name())
-                .unwrap_or_else(|| "python3".to_string());
-
-            // Resolve with version-tolerant fallback so a notebook saved with
-            // kernelspec name "julia" or "julia-1.10" still opens on a machine
-            // with only julia-1.12 installed. Same for python3 vs python3.13,
-            // ir vs ir-r-4.5, etc. The notebook's metadata language gives us a
-            // last-resort hint for cross-version mismatch.
+            let explicit = p.get("kernel_name").and_then(|v| v.as_str());
+            let nb_dir = session.path.parent().map(|d| d.to_path_buf());
             let language = session.notebook.read().kernel_language();
-            kernelspec::discover_with_fallback(&name, language.as_deref())
-                .ok_or_else(|| anyhow!("no kernelspec found for '{name}' (and no fallback by language)"))?
+            // Auto-venv (backend side, so it works for REMOTE notebooks too):
+            // with no explicitly chosen kernel and a python notebook, a
+            // project-local venv (.venv/venv/env walking up from the notebook)
+            // takes priority — same semantics as the frontend's local .venv
+            // detection. Explicit picker choices always win.
+            let auto_venv = p.get("auto_venv").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_python = language.as_deref().map_or(true, |l| l.eq_ignore_ascii_case("python"));
+            let auto = if explicit.is_none() && auto_venv && is_python {
+                nb_dir.as_deref().and_then(kernelspec::closest_project_python_kernel)
+            } else {
+                None
+            };
+            if let Some(spec) = auto {
+                tracing::info!("auto_venv: using {}", spec.argv.first().map(|s| s.as_str()).unwrap_or("?"));
+                spec
+            } else {
+                // Pick kernel: explicit > metadata > python3
+                let name = explicit
+                    .map(|s| s.to_string())
+                    .or_else(|| session.notebook.read().kernel_name())
+                    .unwrap_or_else(|| "python3".to_string());
+                // Resolve with version-tolerant fallback so a notebook saved
+                // with kernelspec name "julia" or "julia-1.10" still opens on
+                // a machine with only julia-1.12. Resolution includes
+                // project-venv kernels for this notebook's dir, so names
+                // chosen in the picker (e.g. "python3-myproj-.venv") start.
+                kernelspec::discover_with_fallback_in(&name, language.as_deref(), nb_dir.as_deref())
+                    .ok_or_else(|| anyhow!("no kernelspec found for '{name}' (and no fallback by language)"))?
+            }
         };
 
         let cwd = session.path.parent().map(|p| p.to_path_buf());

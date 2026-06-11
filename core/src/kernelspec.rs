@@ -138,26 +138,69 @@ fn conda_prefixes() -> Vec<PathBuf> {
     out
 }
 
-/// Human label for a conda prefix: its basename, or `parent-basename` when
-/// the basename is just a version (module installs like
-/// `/opt/packages/anaconda3/2024.10` would otherwise label as "2024.10").
+/// Human label for an env prefix: its basename, with the parent folded in
+/// when the basename alone is ambiguous:
+///   /opt/packages/anaconda3/2024.10 -> "anaconda3-2024.10" (version dir)
+///   /home/me/myproj/.venv           -> "myproj-.venv" (generic venv name)
 fn env_label(prefix: &std::path::Path) -> String {
     let base = prefix
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "env".to_string());
-    if base.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+    let generic_venv = base == ".venv" || base == "venv" || base == "env";
+    let version_like = base.chars().next().map_or(false, |c| c.is_ascii_digit());
+    if generic_venv || version_like {
         if let Some(parent) = prefix.parent().and_then(|p| p.file_name()) {
             let parent = parent.to_string_lossy();
             // envs/<name> and .conda/<name> are user-chosen env names, not
-            // version dirs; only fold the parent in for module-style version
-            // paths like anaconda3/2024.10.
+            // version dirs; keep just the name there.
             if parent != "envs" && parent != ".conda" {
                 return format!("{parent}-{base}");
             }
         }
     }
     base
+}
+
+/// Project-local virtualenv prefixes: walk up from `start_dir` (10 levels)
+/// looking for `.venv` / `venv` / `env` dirs. Closest-first, so the first
+/// entry is the one auto-venv should prefer. Only dirs that actually contain
+/// kernels get used downstream (pip's ipykernel ships
+/// `<venv>/share/jupyter/kernels/python3`, so no manual registration needed).
+pub fn project_env_prefixes(start_dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut dir = start_dir.to_path_buf();
+    for _ in 0..10 {
+        for name in [".venv", "venv", "env"] {
+            let p = dir.join(name);
+            if p.is_dir() {
+                out.push(p);
+            }
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    out
+}
+
+/// The closest project venv's python kernel for `start_dir`, if any. Used by
+/// auto-venv on the backend (remote parity with the frontend's local `.venv`
+/// detection): a notebook inside a project with its own env runs on that env
+/// unless the user explicitly picked a kernel.
+pub fn closest_project_python_kernel(start_dir: &std::path::Path) -> Option<KernelSpec> {
+    for prefix in project_env_prefixes(start_dir) {
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, std::slice::from_ref(&prefix));
+        if let Some(spec) = found
+            .into_values()
+            .find(|s| s.language.eq_ignore_ascii_case("python"))
+        {
+            return Some(spec);
+        }
+    }
+    None
 }
 
 /// Add per-conda-env kernels (VSCode style: every env with ipykernel shows up,
@@ -226,9 +269,16 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
 }
 
 pub fn discover_all() -> Vec<KernelSpec> {
+    discover_for_dir(None)
+}
+
+/// Full kernel discovery. With `dir` set (a notebook's directory), kernels
+/// from project-local venvs (`.venv`/`venv`/`env`, walking up) are included
+/// ahead of conda envs, so the kernel picker can offer them directly.
+pub fn discover_for_dir(dir: Option<&std::path::Path>) -> Vec<KernelSpec> {
     let mut found: HashMap<String, KernelSpec> = HashMap::new();
-    for dir in search_dirs() {
-        let entries = match std::fs::read_dir(&dir) {
+    for sdir in search_dirs() {
+        let entries = match std::fs::read_dir(&sdir) {
             Ok(e) => e,
             Err(_) => continue,
         };
@@ -250,7 +300,11 @@ pub fn discover_all() -> Vec<KernelSpec> {
             }
         }
     }
-    // Conda envs (miniconda, anaconda, module-loaded system installs).
+    // Project-local venvs first (closest wins naming), then conda envs
+    // (miniconda, anaconda, module-loaded system installs).
+    if let Some(d) = dir {
+        add_conda_kernels(&mut found, &project_env_prefixes(d));
+    }
     add_conda_kernels(&mut found, &conda_prefixes());
     let mut list: Vec<KernelSpec> = found.into_values().collect();
     list.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -273,7 +327,17 @@ pub fn discover_by_name(name: &str) -> Option<KernelSpec> {
 ///      1.12 installed, even if name and prefix both differ.
 /// Returns None if nothing matches.
 pub fn discover_with_fallback(name: &str, language: Option<&str>) -> Option<KernelSpec> {
-    let all = discover_all();
+    discover_with_fallback_in(name, language, None)
+}
+
+/// discover_with_fallback over discover_for_dir, so picker-chosen project-venv
+/// kernel names (e.g. "python3-myproj-.venv") resolve when starting too.
+pub fn discover_with_fallback_in(
+    name: &str,
+    language: Option<&str>,
+    dir: Option<&std::path::Path>,
+) -> Option<KernelSpec> {
+    let all = discover_for_dir(dir);
     if let Some(s) = all.iter().find(|s| s.name == name) {
         return Some(s.clone());
     }
@@ -386,5 +450,34 @@ mod tests {
             "base env still added under a namespaced key");
 
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn project_envs_walk_up_and_label() {
+        let root = std::env::temp_dir().join(format!("jvtest-proj-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        // myproj/.venv (closest) and a parent-level env/
+        let nb_dir = root.join("work/myproj/notebooks");
+        fs::create_dir_all(&nb_dir).unwrap();
+        let dotvenv = root.join("work/myproj/.venv");
+        let envdir = root.join("work/env");
+        mk_env(&dotvenv, "Python 3 (ipykernel)");
+        mk_env(&envdir, "Python 3 (ipykernel)");
+
+        let prefixes = project_env_prefixes(&nb_dir);
+        assert_eq!(prefixes[0], dotvenv, "closest env first: {prefixes:?}");
+        assert!(prefixes.contains(&envdir));
+
+        // closest python kernel = the .venv, argv rewritten absolute
+        let closest = closest_project_python_kernel(&nb_dir).expect("found project kernel");
+        assert_eq!(closest.argv[0], dotvenv.join("bin/python").to_string_lossy());
+
+        // labels fold the project dir in for generic venv names
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, &prefixes);
+        assert!(found.values().any(|s| s.display_name.contains("(myproj-.venv)")),
+            "labels: {:?}", found.values().map(|s| s.display_name.clone()).collect::<Vec<_>>());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

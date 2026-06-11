@@ -910,19 +910,21 @@ end
 
 M._opening = M._opening or {}
 
--- Walk up from `start_dir` looking for a `.venv/bin/python` (or
--- `.venv/Scripts/python.exe` on Windows). Return the python path if the venv
--- exists AND ipykernel is importable from it. nil otherwise.
+-- Walk up from `start_dir` looking for a project venv python under `.venv`,
+-- `venv`, or `env` (`Scripts\python.exe` on Windows). Return the python path
+-- if the venv exists AND ipykernel is importable from it. nil otherwise.
 local function find_local_venv_python(start_dir)
   local is_win = package.config:sub(1, 1) == "\\"
-  local rel = is_win and ".venv\\Scripts\\python.exe" or ".venv/bin/python"
+  local bin = is_win and "Scripts\\python.exe" or "bin/python"
   local dir = start_dir
   for _ = 1, 10 do
-    local candidate = dir .. "/" .. rel
-    if vim.fn.executable(candidate) == 1 then
-      vim.fn.system({ candidate, "-c", "import ipykernel" })
-      if vim.v.shell_error == 0 then return candidate end
-      return nil  -- venv exists but no ipykernel - don't fall back silently
+    for _, name in ipairs({ ".venv", "venv", "env" }) do
+      local candidate = dir .. "/" .. name .. "/" .. bin
+      if vim.fn.executable(candidate) == 1 then
+        vim.fn.system({ candidate, "-c", "import ipykernel" })
+        if vim.v.shell_error == 0 then return candidate end
+        return nil  -- venv exists but no ipykernel - don't fall back silently
+      end
     end
     local parent = vim.fn.fnamemodify(dir, ":h")
     if parent == dir then break end
@@ -1928,7 +1930,9 @@ function M.start_kernel(buf, kernel_name)
   -- this, ensure_client() would return whatever M.client happens to point
   -- at, which can race if multiple notebooks across aliases are open.
   local cl = nb.alias and M.client_for(nb.alias) or ensure_client()
-  -- Auto-venv probes the LOCAL filesystem; meaningless for remote notebooks.
+  -- Auto-venv, local flavor: probe the local filesystem and pass the python
+  -- directly. For REMOTE notebooks the backend does the equivalent walk-up on
+  -- its own filesystem when we pass auto_venv (same .venv/venv/env semantics).
   local python_path = nil
   if not kernel_name and M.config.auto_venv ~= false and not nb.alias then
     local nb_dir = nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
@@ -1943,6 +1947,7 @@ function M.start_kernel(buf, kernel_name)
     session_id = nb.session_id,
     kernel_name = kernel_name,
     python_path = python_path,
+    auto_venv = M.config.auto_venv ~= false,
   }, function(err, res)
     if err then
       vim.notify("start_kernel: " .. tostring(err), vim.log.levels.ERROR)
@@ -2139,7 +2144,13 @@ function M.delete_image(buf)
 end
 
 function M.kernel_picker(buf)
-  ensure_client():call("list_kernels", {}, function(err, kernels)
+  -- Route to the notebook's OWN backend (a remote notebook lists kernels on
+  -- the remote, incl. its conda envs), and pass the notebook's dir so
+  -- project-local venvs (.venv/venv/env) show up as picker entries.
+  local nb = Notebook.get(buf)
+  local cl = (nb and nb.alias) and M.client_for(nb.alias) or ensure_client()
+  local dir = nb and nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
+  cl:call("list_kernels", { dir = dir }, function(err, kernels)
     if err then vim.notify("list_kernels: " .. err, vim.log.levels.ERROR); return end
     vim.ui.select(kernels, {
       prompt = "Select kernel:",
