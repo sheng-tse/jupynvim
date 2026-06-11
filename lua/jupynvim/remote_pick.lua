@@ -268,10 +268,16 @@ function M.grep(alias, root, pattern, opts)
     end
     local function live_finder(_opts, ctx)
       local pat = ctx.filter.search or ""
-      if pat == "" then return {} end
+      if #pat < 2 then return {} end  -- 1-char patterns: too broad to walk for
       return function(cb)
         local Async = require("snacks.picker.util.async")
         local task = Async.running()
+        -- Debounce INSIDE the async task: if another key arrives during this
+        -- sleep, snacks aborts this task and no remote search ever fires for
+        -- the intermediate pattern. Without this, every keystroke launched a
+        -- full remote walk and the pile-up saturated NFS ("first search fast,
+        -- then nothing returns").
+        Async.sleep(250)
         seq = seq + 1
         local sid = seq
         local queue, done = {}, false

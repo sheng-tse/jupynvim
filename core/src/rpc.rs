@@ -40,6 +40,11 @@ pub struct Server {
     /// Bumped per search request; in-flight walks quit when superseded
     /// (live grep types faster than a big NFS walk finishes).
     search_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// At most ONE filesystem walk at a time. Overlapping walks (rapid live
+    /// grep keystrokes) saturate the NFS client's request slots and make
+    /// everything crawl; the epoch pre-cancels the old walk, this makes the
+    /// new one wait for the old one's threads to actually drain.
+    search_lock: Arc<tokio::sync::Semaphore>,
 }
 
 /// One relayed language server: its child + a writer to its stdin. The reader
@@ -74,6 +79,7 @@ impl Server {
             lsps: DashMap::new(),
             next_lsp_id: std::sync::atomic::AtomicU32::new(1),
             search_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            search_lock: Arc::new(tokio::sync::Semaphore::new(1)),
         })
     }
 
@@ -1166,6 +1172,8 @@ impl Server {
         // instead of piling up.
         let my_epoch = self.search_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let epoch = self.search_epoch.clone();
+        // One walk at a time (the epoch bump above makes the old one quit).
+        let _permit = self.search_lock.clone().acquire_owned().await.ok();
         let root2 = root.clone();
         let matches = tokio::task::spawn_blocking(move || {
             use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1266,10 +1274,15 @@ impl Server {
 
         let my_epoch = self.search_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let epoch = self.search_epoch.clone();
+        // One walk at a time: wait for the (epoch-cancelled) previous walk's
+        // threads to drain before hitting the filesystem again. Held by the
+        // walker until it finishes.
+        let permit = self.search_lock.clone().acquire_owned().await.ok();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Json>(512);
 
         // Walker (blocking, parallel). Drops tx when done -> channel closes.
         tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             use std::sync::atomic::{AtomicUsize, Ordering};
             let count = AtomicUsize::new(0);
             let mut builder = ignore::WalkBuilder::new(&root);
