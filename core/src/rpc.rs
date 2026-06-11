@@ -37,6 +37,9 @@ pub struct Server {
     /// Active relayed LSP servers, keyed by virtual lsp_id.
     lsps: DashMap<u32, Arc<LspEntry>>,
     next_lsp_id: std::sync::atomic::AtomicU32,
+    /// Bumped per search request; in-flight walks quit when superseded
+    /// (live grep types faster than a big NFS walk finishes).
+    search_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// One relayed language server: its child + a writer to its stdin. The reader
@@ -70,6 +73,7 @@ impl Server {
             next_watcher_id: std::sync::atomic::AtomicU32::new(1),
             lsps: DashMap::new(),
             next_lsp_id: std::sync::atomic::AtomicU32::new(1),
+            search_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -1153,10 +1157,19 @@ impl Server {
             .build()
             .map_err(|e| anyhow!("bad regex: {e}"))?;
 
-        // Walk + match in a blocking task (filesystem I/O + CPU bound).
+        // Parallel walk + match (rg-class, not a naive serial read of every
+        // file): multi-threaded walker, size cap + binary sniff so corpora /
+        // checkpoints don't get slurped over NFS, and an epoch counter so a
+        // NEW search (live grep keystroke) makes superseded walks quit early
+        // instead of piling up.
+        let my_epoch = self.search_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let epoch = self.search_epoch.clone();
         let root2 = root.clone();
         let matches = tokio::task::spawn_blocking(move || {
-            let mut out = Vec::new();
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            use std::sync::Mutex;
+            let out: Mutex<Vec<Json>> = Mutex::new(Vec::new());
+            let count = AtomicUsize::new(0);
             let mut builder = ignore::WalkBuilder::new(&root2);
             builder
                 .hidden(false)       // include dotfiles (match common ripgrep -uu)
@@ -1164,34 +1177,58 @@ impl Server {
                 .ignore(true)        // respect .ignore
                 .git_ignore(true)    // respect .gitignore
                 .git_global(false)
-                .git_exclude(true);
+                .git_exclude(true)
+                .threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8));
             if !excludes.is_empty() {
                 builder.filter_entry(move |e| {
                     e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
                 });
             }
-            let walker = builder.build();
-            for entry_result in walker {
-                if out.len() >= max { break; }
-                let entry = match entry_result { Ok(e) => e, Err(_) => continue };
-                if !entry.file_type().map_or(false, |t| t.is_file()) { continue; }
-                let path = entry.path().to_path_buf();
-                let content = match std::fs::read_to_string(&path) {
-                    Ok(c) => c, Err(_) => continue,
-                };
-                for (idx, line) in content.lines().enumerate() {
-                    if let Some(m) = regex.find(line) {
-                        out.push(json!({
-                            "path": path.to_string_lossy(),
-                            "line": idx + 1,
-                            "col": m.start() + 1,
-                            "text": line,
-                        }));
-                        if out.len() >= max { break; }
+            builder.build_parallel().run(|| {
+                let regex = regex.clone();
+                let out = &out;
+                let count = &count;
+                let epoch = &epoch;
+                Box::new(move |entry_result| {
+                    use ignore::WalkState;
+                    if epoch.load(Ordering::Relaxed) != my_epoch {
+                        return WalkState::Quit; // superseded by a newer search
                     }
-                }
-            }
-            out
+                    if count.load(Ordering::Relaxed) >= max {
+                        return WalkState::Quit;
+                    }
+                    let entry = match entry_result { Ok(e) => e, Err(_) => return WalkState::Continue };
+                    if !entry.file_type().map_or(false, |t| t.is_file()) {
+                        return WalkState::Continue;
+                    }
+                    if entry.metadata().map(|m| m.len()).unwrap_or(0) > 2_000_000 {
+                        return WalkState::Continue; // skip big files (data, checkpoints)
+                    }
+                    let bytes = match std::fs::read(entry.path()) {
+                        Ok(b) => b,
+                        Err(_) => return WalkState::Continue,
+                    };
+                    if bytes[..bytes.len().min(1024)].contains(&0) {
+                        return WalkState::Continue; // binary sniff
+                    }
+                    let content = String::from_utf8_lossy(&bytes);
+                    for (idx, line) in content.lines().enumerate() {
+                        if let Some(m) = regex.find(line) {
+                            if count.fetch_add(1, Ordering::Relaxed) >= max {
+                                return WalkState::Quit;
+                            }
+                            out.lock().unwrap().push(json!({
+                                "path": entry.path().to_string_lossy(),
+                                "line": idx + 1,
+                                "col": m.start() + 1,
+                                "text": line,
+                            }));
+                        }
+                    }
+                    WalkState::Continue
+                })
+            });
+            out.into_inner().unwrap_or_default()
         }).await.map_err(|e| anyhow!("search task: {e}"))?;
 
         let truncated = matches.len() >= max;
