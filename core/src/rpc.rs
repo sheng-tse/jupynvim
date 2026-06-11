@@ -416,6 +416,39 @@ impl Server {
             }
         };
 
+        // Synthesized env kernels (env listed without ipykernel): make sure
+        // ipykernel is importable, installing it into the env on first use.
+        // Zero-setup parity with VSCode's "install ipykernel?" flow, minus
+        // the prompt. One-time per env; a normal start after that.
+        if spec
+            .metadata
+            .pointer("/jupynvim/ensure_ipykernel")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            if let Some(py) = spec.argv.first().cloned() {
+                let probe = tokio::process::Command::new(&py)
+                    .args(["-c", "import ipykernel"])
+                    .output()
+                    .await;
+                let have = matches!(probe, Ok(ref o) if o.status.success());
+                if !have {
+                    tracing::info!("installing ipykernel into {}", py);
+                    let out = tokio::process::Command::new(&py)
+                        .args(["-m", "pip", "install", "ipykernel"])
+                        .output()
+                        .await
+                        .with_context(|| format!("running {py} -m pip install ipykernel"))?;
+                    if !out.status.success() {
+                        return Err(anyhow!(
+                            "auto-install of ipykernel into this env failed:\n{}",
+                            String::from_utf8_lossy(&out.stderr)
+                        ));
+                    }
+                }
+            }
+        }
+
         let cwd = session.path.parent().map(|p| p.to_path_buf());
         let kernel = Kernel::launch(spec, cwd).await?;
         let kernel_name = kernel.spec().name.clone();

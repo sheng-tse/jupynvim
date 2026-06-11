@@ -243,9 +243,17 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
         let kdir = prefix.join("share/jupyter/kernels");
         let entries = match std::fs::read_dir(&kdir) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(_) => {
+                // No registered kernels in this env (no ipykernel installed).
+                // Still list it if it has a python: picking it triggers an
+                // automatic `pip install ipykernel` into the env at start
+                // (VSCode-style), so every env is selectable with zero setup.
+                synthesize_env_kernel(found, prefix, &mut known_argv0);
+                continue;
+            }
         };
         let label = env_label(prefix);
+        let mut added_python = false;
         for ent in entries.flatten() {
             let path = ent.path();
             if !path.is_dir() {
@@ -286,13 +294,73 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
             if !spec.display_name.contains(&label) {
                 spec.display_name = format!("{} ({})", spec.display_name, label);
             }
+            if spec.language.eq_ignore_ascii_case("python") {
+                added_python = true;
+            }
             spec.name = key.clone();
             if let Some(a0) = spec.argv.first() {
                 known_argv0.insert(a0.clone());
             }
             found.insert(key, spec);
         }
+        // kernels dir existed but yielded no python kernel (e.g. only an R
+        // kernel registered): still offer the env's python via auto-install.
+        if !added_python {
+            synthesize_env_kernel(found, prefix, &mut known_argv0);
+        }
     }
+}
+
+/// Offer an env's python as a pickable kernel even though ipykernel isn't
+/// installed there. argv is the real launch command; metadata flags the env
+/// prefix so start_kernel can `pip install ipykernel` into it first.
+fn synthesize_env_kernel(
+    found: &mut HashMap<String, KernelSpec>,
+    prefix: &std::path::Path,
+    known_argv0: &mut std::collections::HashSet<String>,
+) {
+    let py = ["bin/python", "bin/python3"]
+        .iter()
+        .map(|c| prefix.join(c))
+        .find(|p| p.is_file());
+    let py = match py {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => return, // not a python env
+    };
+    if known_argv0.contains(&py) {
+        return;
+    }
+    let label = env_label(prefix);
+    let key = if found.contains_key("python3") {
+        format!("python3-{label}")
+    } else {
+        "python3".to_string()
+    };
+    if found.contains_key(&key) {
+        return;
+    }
+    known_argv0.insert(py.clone());
+    found.insert(
+        key.clone(),
+        KernelSpec {
+            name: key,
+            path: prefix.to_path_buf(),
+            argv: vec![
+                py,
+                "-m".to_string(),
+                "ipykernel_launcher".to_string(),
+                "-f".to_string(),
+                "{connection_file}".to_string(),
+            ],
+            display_name: format!("Python ({label}) [installs ipykernel]"),
+            language: "python".to_string(),
+            interrupt_mode: None,
+            env: HashMap::new(),
+            metadata: serde_json::json!({
+                "jupynvim": { "ensure_ipykernel": true, "prefix": prefix.to_string_lossy() }
+            }),
+        },
+    );
 }
 
 pub fn discover_all() -> Vec<KernelSpec> {
