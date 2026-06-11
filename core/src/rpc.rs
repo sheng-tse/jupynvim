@@ -1176,11 +1176,12 @@ impl Server {
             builder
                 .hidden(!include_hidden) // skip dotdirs by default (rg parity; .conda/.cache are huge)
                 .follow_links(true)  // symlinked dirs are common on HPC homes
-                .ignore(true)        // respect .ignore
+                .ignore(false)       // skip .ignore lookups (1 NFS stat per dir)
                 .git_ignore(true)    // respect .gitignore
                 .git_global(false)
-                .git_exclude(true)
-                .threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8));
+                .git_exclude(false)  // skip .git/info/exclude lookups per dir
+                // NFS walks are latency-bound, not CPU-bound: more threads = faster
+                .threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(32));
             if !excludes.is_empty() {
                 builder.filter_entry(move |e| {
                     e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
@@ -1275,11 +1276,11 @@ impl Server {
             builder
                 .hidden(!include_hidden)
                 .follow_links(true)
-                .ignore(true)
+                .ignore(false)       // skip .ignore lookups (1 NFS stat per dir)
                 .git_ignore(true)
                 .git_global(false)
-                .git_exclude(true)
-                .threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8));
+                .git_exclude(false)  // skip .git/info/exclude lookups per dir
+                .threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(32));
             if !excludes.is_empty() {
                 builder.filter_entry(move |e| {
                     e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
