@@ -111,27 +111,51 @@ fn conda_prefixes_from(home: Option<PathBuf>) -> Vec<PathBuf> {
     out
 }
 
-/// conda_prefixes_from + prefixes implied by the backend's own environment
-/// (CONDA_PREFIX / CONDA_EXE). Kept separate so tests stay hermetic.
+/// conda_prefixes_from + prefixes implied by the backend's own environment:
+/// CONDA_PREFIX / CONDA_EXE, and conda/python found on PATH. The PATH scan is
+/// what makes `module load anaconda3` work: modules typically ONLY prepend
+/// PATH (no CONDA_* vars), and a system install is never in the user's
+/// ~/.conda/environments.txt unless they've created envs with it.
+/// Kept separate from conda_prefixes_from so tests stay hermetic.
 fn conda_prefixes() -> Vec<PathBuf> {
     let mut out = conda_prefixes_from(dirs::home_dir());
     let mut seen: std::collections::HashSet<PathBuf> = out.iter().cloned().collect();
-    let mut add = |p: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+    fn add(p: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>) {
         if p.is_dir() && seen.insert(p.clone()) {
             out.push(p);
         }
-    };
+    }
+    fn add_root(root: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>) {
+        if let Ok(envs) = std::fs::read_dir(root.join("envs")) {
+            for e in envs.flatten() {
+                add(e.path(), out, seen);
+            }
+        }
+        add(root, out, seen);
+    }
     if let Ok(p) = std::env::var("CONDA_PREFIX") {
         add(PathBuf::from(p), &mut out, &mut seen);
     }
     if let Ok(exe) = std::env::var("CONDA_EXE") {
         // .../<root>/bin/conda -> <root>, plus its envs
         if let Some(root) = PathBuf::from(exe).parent().and_then(|b| b.parent()).map(|r| r.to_path_buf()) {
-            add(root.clone(), &mut out, &mut seen);
-            if let Ok(envs) = std::fs::read_dir(root.join("envs")) {
-                for e in envs.flatten() {
-                    add(e.path(), &mut out, &mut seen);
-                }
+            add_root(root, &mut out, &mut seen);
+        }
+    }
+    // PATH scan: any bin dir holding `conda` or a python whose prefix ships
+    // jupyter kernels is an env/install worth listing.
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let prefix = match dir.parent() {
+                Some(p) => p.to_path_buf(),
+                None => continue,
+            };
+            if dir.join("conda").is_file() {
+                add_root(prefix.clone(), &mut out, &mut seen);
+            } else if (dir.join("python3").is_file() || dir.join("python").is_file())
+                && prefix.join("share/jupyter/kernels").is_dir()
+            {
+                add(prefix, &mut out, &mut seen);
             }
         }
     }
@@ -237,9 +261,12 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
             };
             if let Some(a0) = spec.argv.first().cloned() {
                 if a0 == "python" || a0 == "python3" {
-                    let py = prefix.join("bin/python");
-                    if py.is_file() {
-                        spec.argv[0] = py.to_string_lossy().into_owned();
+                    for cand in ["bin/python", "bin/python3"] {
+                        let py = prefix.join(cand);
+                        if py.is_file() {
+                            spec.argv[0] = py.to_string_lossy().into_owned();
+                            break;
+                        }
                     }
                 }
             }

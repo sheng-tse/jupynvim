@@ -1692,6 +1692,11 @@ function M.run_cell(buf, opts)
       return
     end
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
+      -- "kernel not started" alone is unactionable; append the actual
+      -- start_kernel failure when we have one.
+      if err2 and tostring(err2):find("kernel not started") and nb.kernel_error then
+        err2 = tostring(err2) .. "\n  last start_kernel error: " .. nb.kernel_error
+      end
       if err2 then
         vim.notify("execute: " .. tostring(err2), vim.log.levels.ERROR)
       end
@@ -1950,9 +1955,11 @@ function M.start_kernel(buf, kernel_name)
     auto_venv = M.config.auto_venv ~= false,
   }, function(err, res)
     if err then
+      nb.kernel_error = tostring(err)  -- surfaced by later "kernel not started"
       vim.notify("start_kernel: " .. tostring(err), vim.log.levels.ERROR)
       return
     end
+    nb.kernel_error = nil
     nb.kernel_started = true
     vim.notify("jupynvim: kernel '" .. (res.kernel_name or "?") .. "' started", vim.log.levels.INFO)
     -- Auto-inject inline plotting magic for python kernels (silent — no output)
