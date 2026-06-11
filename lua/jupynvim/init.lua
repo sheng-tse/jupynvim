@@ -263,6 +263,14 @@ local function spawn_client(cmd_vec, alias)
     local p = args[1] or args
     Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
   end)
+  -- Backend-initiated user-facing messages (e.g. "installing ipykernel into
+  -- this env..." during a first-use kernel start).
+  client:on("user_message", function(args)
+    local p = args[1] or args
+    local lvl = ({ info = vim.log.levels.INFO, warn = vim.log.levels.WARN,
+                   error = vim.log.levels.ERROR })[p.level or "info"] or vim.log.levels.INFO
+    vim.notify("jupynvim: " .. tostring(p.text or ""), lvl)
+  end)
   M.clients[alias] = client
   return client
 end
@@ -1692,10 +1700,17 @@ function M.run_cell(buf, opts)
       return
     end
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
-      -- "kernel not started" alone is unactionable; append the actual
-      -- start_kernel failure when we have one.
-      if err2 and tostring(err2):find("kernel not started") and nb.kernel_error then
-        err2 = tostring(err2) .. "\n  last start_kernel error: " .. nb.kernel_error
+      -- "kernel not started" alone is unactionable. While a start is in
+      -- flight (first use may be pip-installing ipykernel into the env),
+      -- say so calmly; otherwise append the actual start failure.
+      if err2 and tostring(err2):find("kernel not started") then
+        if nb.kernel_starting then
+          vim.notify("jupynvim: kernel is still starting (first use of an env may install ipykernel; can take a minute). Run the cell again once \"kernel started\" appears.",
+            vim.log.levels.WARN)
+          return
+        elseif nb.kernel_error then
+          err2 = tostring(err2) .. "\n  last start_kernel error: " .. nb.kernel_error
+        end
       end
       if err2 then
         vim.notify("execute: " .. tostring(err2), vim.log.levels.ERROR)
@@ -1948,12 +1963,14 @@ function M.start_kernel(buf, kernel_name)
       end
     end
   end
+  nb.kernel_starting = true
   cl:call("start_kernel", {
     session_id = nb.session_id,
     kernel_name = kernel_name,
     python_path = python_path,
     auto_venv = M.config.auto_venv ~= false,
   }, function(err, res)
+    nb.kernel_starting = nil
     if err then
       nb.kernel_error = tostring(err)  -- surfaced by later "kernel not started"
       vim.notify("start_kernel: " .. tostring(err), vim.log.levels.ERROR)

@@ -434,6 +434,10 @@ impl Server {
                 let have = matches!(probe, Ok(ref o) if o.status.success());
                 if !have {
                     tracing::info!("installing ipykernel into {}", py);
+                    self.notify("user_message", json!({
+                        "level": "info",
+                        "text": format!("installing ipykernel into this env (one-time, can take a minute)...\n  {py}"),
+                    })).await;
                     let out = tokio::process::Command::new(&py)
                         .args(["-m", "pip", "install", "ipykernel"])
                         .output()
@@ -445,6 +449,10 @@ impl Server {
                             String::from_utf8_lossy(&out.stderr)
                         ));
                     }
+                    self.notify("user_message", json!({
+                        "level": "info",
+                        "text": "ipykernel installed; starting kernel...",
+                    })).await;
                 }
             }
         }

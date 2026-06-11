@@ -227,6 +227,44 @@ pub fn closest_project_python_kernel(start_dir: &std::path::Path) -> Option<Kern
     None
 }
 
+/// Unique (key, display label) for an env kernel. Plain `base` when free,
+/// else `base-<label>`; when two envs share a label (two "project" envs in
+/// different roots), the nearest meaningful ancestor dir is folded in
+/// ("shared-project"), with a numeric suffix as last resort. Without this the
+/// second same-named env was silently dropped from the picker.
+fn disambiguated(
+    found: &HashMap<String, KernelSpec>,
+    base: &str,
+    prefix: &std::path::Path,
+    label: &str,
+) -> (String, String) {
+    if !found.contains_key(base) {
+        return (base.to_string(), label.to_string());
+    }
+    let mut lab = label.to_string();
+    let mut key = format!("{base}-{lab}");
+    if found.contains_key(&key) {
+        let mut anc = prefix.parent();
+        while let Some(a) = anc {
+            if let Some(name) = a.file_name().map(|s| s.to_string_lossy().into_owned()) {
+                if name != "envs" && name != ".conda" {
+                    lab = format!("{name}-{label}");
+                    key = format!("{base}-{lab}");
+                    break;
+                }
+            }
+            anc = a.parent();
+        }
+    }
+    let mut n = 2;
+    while found.contains_key(&key) {
+        lab = format!("{label}-{n}");
+        key = format!("{base}-{lab}");
+        n += 1;
+    }
+    (key, lab)
+}
+
 /// Add per-conda-env kernels (VSCode style: every env with ipykernel shows up,
 /// no manual `ipykernel install` registration needed — conda's ipykernel ships
 /// `<prefix>/share/jupyter/kernels/python3`). Registered kernels found in the
@@ -283,16 +321,9 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
                     continue; // same interpreter already listed
                 }
             }
-            let key = if found.contains_key(&base) {
-                format!("{base}-{label}")
-            } else {
-                base.clone()
-            };
-            if found.contains_key(&key) {
-                continue;
-            }
-            if !spec.display_name.contains(&label) {
-                spec.display_name = format!("{} ({})", spec.display_name, label);
+            let (key, lab) = disambiguated(found, &base, prefix, &label);
+            if !spec.display_name.contains(&lab) {
+                spec.display_name = format!("{} ({})", spec.display_name, lab);
             }
             if spec.language.eq_ignore_ascii_case("python") {
                 added_python = true;
@@ -331,14 +362,7 @@ fn synthesize_env_kernel(
         return;
     }
     let label = env_label(prefix);
-    let key = if found.contains_key("python3") {
-        format!("python3-{label}")
-    } else {
-        "python3".to_string()
-    };
-    if found.contains_key(&key) {
-        return;
-    }
+    let (key, lab) = disambiguated(found, "python3", prefix, &label);
     known_argv0.insert(py.clone());
     found.insert(
         key.clone(),
@@ -352,7 +376,7 @@ fn synthesize_env_kernel(
                 "-f".to_string(),
                 "{connection_file}".to_string(),
             ],
-            display_name: format!("Python ({label}) [installs ipykernel]"),
+            display_name: format!("Python ({lab}) [installs ipykernel]"),
             language: "python".to_string(),
             interrupt_mode: None,
             env: HashMap::new(),
@@ -545,6 +569,39 @@ mod tests {
             "base env still added under a namespaced key");
 
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn same_named_envs_both_listed() {
+        // Mirrors the PSC case: ~/.conda/envs/project AND
+        // /ocean/.../shared/envs/project. The second must not be dropped.
+        let root = std::env::temp_dir().join(format!("jvtest-coll-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let a = root.join("home/.conda/envs/project");
+        let b = root.join("ocean/shared/envs/project");
+        // a has ipykernel-style registered kernel; b has only a python (so it
+        // goes through synthesize_env_kernel)
+        mk_env(&a, "Python 3 (ipykernel)");
+        fs::create_dir_all(b.join("bin")).unwrap();
+        fs::write(b.join("bin/python"), "").unwrap();
+
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        // a registered "python3" name is usually present already
+        found.insert("python3".into(), KernelSpec {
+            name: "python3".into(), path: root.clone(),
+            argv: vec!["/usr/bin/python3".into()],
+            display_name: "Python 3".into(), language: "python".into(),
+            interrupt_mode: None, env: HashMap::new(), metadata: serde_json::Value::Null,
+        });
+        add_conda_kernels(&mut found, &[a.clone(), b.clone()]);
+        assert!(found.contains_key("python3-project"), "first project listed: {:?}", found.keys().collect::<Vec<_>>());
+        let second = found.iter().find(|(k, _)| k.starts_with("python3-shared-project")
+            || k.starts_with("python3-project-2"));
+        assert!(second.is_some(), "second project disambiguated, not dropped: {:?}", found.keys().collect::<Vec<_>>());
+        let (_, spec) = second.unwrap();
+        assert!(spec.metadata.pointer("/jupynvim/ensure_ipykernel").is_some(),
+            "ipykernel-less env flagged for auto-install");
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
