@@ -344,6 +344,15 @@ local function build_ssh_cmd(spec)
   for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
   local remote_cmd = spec.core_path or "jupynvim-core"
+  -- Environment setup before the backend starts (runs INSIDE the slurm step
+  -- when one is active, i.e. on the compute node). A login bash sources the
+  -- cluster's profile so `module` exists; the backend then inherits the
+  -- prepared PATH/env, which kernels, LSP servers, and terminals all reuse.
+  --   remote = { psc = { setup_cmd = "module load anaconda3" } }
+  local setup = resolve(spec.setup_cmd, spec)
+  if type(setup) == "string" and setup ~= "" then
+    remote_cmd = "bash -lc " .. vim.fn.shellescape(setup .. " && exec " .. remote_cmd)
+  end
   -- Slurm wrapping: only honor (a) the :JupynvimUseJob cache or (b) a
   -- static `slurm = "..."` string in the profile. Function-valued slurm
   -- fields are intentionally IGNORED here — calling them from inside the

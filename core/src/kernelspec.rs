@@ -67,6 +67,164 @@ fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// All conda environment prefixes on this machine, whatever flavor of conda:
+/// - `~/.conda/environments.txt`: conda's own registry, maintained for every
+///   install kind. This is what makes `module load anaconda3` setups work:
+///   the system install lives at an arbitrary module path, but user envs are
+///   created under `~/.conda/envs` and BOTH end up registered here.
+/// - Conventional home roots (miniconda3/anaconda3/...) + their `envs/*`,
+///   plus `~/.conda/envs/*`, as fallback when environments.txt is absent.
+/// - `CONDA_PREFIX` / `CONDA_EXE` from the backend env, when present.
+/// Existing dirs only, deduped, registry order first.
+fn conda_prefixes_from(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut add = |p: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+        if p.is_dir() && seen.insert(p.clone()) {
+            out.push(p);
+        }
+    };
+    if let Some(home) = home {
+        if let Ok(txt) = std::fs::read_to_string(home.join(".conda/environments.txt")) {
+            for line in txt.lines() {
+                let line = line.trim();
+                if !line.is_empty() {
+                    add(PathBuf::from(line), &mut out, &mut seen);
+                }
+            }
+        }
+        for root in ["miniconda3", "anaconda3", "miniforge3", "mambaforge", "micromamba"] {
+            let r = home.join(root);
+            add(r.clone(), &mut out, &mut seen);
+            if let Ok(envs) = std::fs::read_dir(r.join("envs")) {
+                for e in envs.flatten() {
+                    add(e.path(), &mut out, &mut seen);
+                }
+            }
+        }
+        if let Ok(envs) = std::fs::read_dir(home.join(".conda/envs")) {
+            for e in envs.flatten() {
+                add(e.path(), &mut out, &mut seen);
+            }
+        }
+    }
+    out
+}
+
+/// conda_prefixes_from + prefixes implied by the backend's own environment
+/// (CONDA_PREFIX / CONDA_EXE). Kept separate so tests stay hermetic.
+fn conda_prefixes() -> Vec<PathBuf> {
+    let mut out = conda_prefixes_from(dirs::home_dir());
+    let mut seen: std::collections::HashSet<PathBuf> = out.iter().cloned().collect();
+    let mut add = |p: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+        if p.is_dir() && seen.insert(p.clone()) {
+            out.push(p);
+        }
+    };
+    if let Ok(p) = std::env::var("CONDA_PREFIX") {
+        add(PathBuf::from(p), &mut out, &mut seen);
+    }
+    if let Ok(exe) = std::env::var("CONDA_EXE") {
+        // .../<root>/bin/conda -> <root>, plus its envs
+        if let Some(root) = PathBuf::from(exe).parent().and_then(|b| b.parent()).map(|r| r.to_path_buf()) {
+            add(root.clone(), &mut out, &mut seen);
+            if let Ok(envs) = std::fs::read_dir(root.join("envs")) {
+                for e in envs.flatten() {
+                    add(e.path(), &mut out, &mut seen);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Human label for a conda prefix: its basename, or `parent-basename` when
+/// the basename is just a version (module installs like
+/// `/opt/packages/anaconda3/2024.10` would otherwise label as "2024.10").
+fn env_label(prefix: &std::path::Path) -> String {
+    let base = prefix
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "env".to_string());
+    if base.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if let Some(parent) = prefix.parent().and_then(|p| p.file_name()) {
+            let parent = parent.to_string_lossy();
+            // envs/<name> and .conda/<name> are user-chosen env names, not
+            // version dirs; only fold the parent in for module-style version
+            // paths like anaconda3/2024.10.
+            if parent != "envs" && parent != ".conda" {
+                return format!("{parent}-{base}");
+            }
+        }
+    }
+    base
+}
+
+/// Add per-conda-env kernels (VSCode style: every env with ipykernel shows up,
+/// no manual `ipykernel install` registration needed — conda's ipykernel ships
+/// `<prefix>/share/jupyter/kernels/python3`). Registered kernels found in the
+/// standard dirs keep priority; name collisions get namespaced `<name>-<env>`.
+/// Relative `python`/`python3` argv is rewritten to the env's own binary so
+/// the kernel spawns correctly even when the backend's PATH lacks the env
+/// (the `module load anaconda3` case).
+fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBuf]) {
+    // Dedupe against already-found kernels by resolved interpreter path, so a
+    // registered spec and its conda twin don't both show.
+    let mut known_argv0: std::collections::HashSet<String> =
+        found.values().filter_map(|s| s.argv.first().cloned()).collect();
+    for prefix in prefixes {
+        let kdir = prefix.join("share/jupyter/kernels");
+        let entries = match std::fs::read_dir(&kdir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let label = env_label(prefix);
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let base = match path.file_name().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let mut spec = match load_one(&base, &path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if let Some(a0) = spec.argv.first().cloned() {
+                if a0 == "python" || a0 == "python3" {
+                    let py = prefix.join("bin/python");
+                    if py.is_file() {
+                        spec.argv[0] = py.to_string_lossy().into_owned();
+                    }
+                }
+            }
+            if let Some(a0) = spec.argv.first() {
+                if known_argv0.contains(a0) {
+                    continue; // same interpreter already listed
+                }
+            }
+            let key = if found.contains_key(&base) {
+                format!("{base}-{label}")
+            } else {
+                base.clone()
+            };
+            if found.contains_key(&key) {
+                continue;
+            }
+            if !spec.display_name.contains(&label) {
+                spec.display_name = format!("{} ({})", spec.display_name, label);
+            }
+            spec.name = key.clone();
+            if let Some(a0) = spec.argv.first() {
+                known_argv0.insert(a0.clone());
+            }
+            found.insert(key, spec);
+        }
+    }
+}
+
 pub fn discover_all() -> Vec<KernelSpec> {
     let mut found: HashMap<String, KernelSpec> = HashMap::new();
     for dir in search_dirs() {
@@ -92,6 +250,8 @@ pub fn discover_all() -> Vec<KernelSpec> {
             }
         }
     }
+    // Conda envs (miniconda, anaconda, module-loaded system installs).
+    add_conda_kernels(&mut found, &conda_prefixes());
     let mut list: Vec<KernelSpec> = found.into_values().collect();
     list.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     list
@@ -151,9 +311,80 @@ fn load_one(name: &str, dir: &PathBuf) -> Result<KernelSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn discover_does_not_panic() {
         let _ = discover_all();
+    }
+
+    fn mk_env(prefix: &std::path::Path, display: &str) {
+        let kdir = prefix.join("share/jupyter/kernels/python3");
+        fs::create_dir_all(&kdir).unwrap();
+        fs::create_dir_all(prefix.join("bin")).unwrap();
+        fs::write(prefix.join("bin/python"), "").unwrap();
+        fs::write(
+            kdir.join("kernel.json"),
+            format!(
+                r#"{{"argv":["python","-m","ipykernel_launcher","-f","{{connection_file}}"],"display_name":"{display}","language":"python"}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn conda_envs_discovered_and_rewritten() {
+        let home = std::env::temp_dir().join(format!("jvtest-conda-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        // module-anaconda-style: system base + user env under ~/.conda/envs,
+        // both registered in environments.txt
+        let base = home.join("opt/anaconda3/2024.10");
+        let ml = home.join(".conda/envs/ml");
+        mk_env(&base, "Python 3 (ipykernel)");
+        mk_env(&ml, "Python 3 (ipykernel)");
+        fs::create_dir_all(home.join(".conda")).unwrap();
+        fs::write(
+            home.join(".conda/environments.txt"),
+            format!("{}\n{}\n", base.display(), ml.display()),
+        )
+        .unwrap();
+
+        let prefixes = conda_prefixes_from(Some(home.clone()));
+        assert!(prefixes.contains(&base), "base registered via environments.txt");
+        assert!(prefixes.contains(&ml), "user env registered via environments.txt");
+
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, &prefixes);
+        assert_eq!(found.len(), 2, "one kernel per env");
+        // first env keeps the plain name; second is namespaced
+        let plain = found.get("python3").expect("base keeps python3 name");
+        assert_eq!(plain.argv[0], base.join("bin/python").to_string_lossy());
+        let ns = found.get("python3-ml").expect("env namespaced as python3-ml");
+        assert_eq!(ns.argv[0], ml.join("bin/python").to_string_lossy());
+        assert!(ns.display_name.contains("(ml)"), "display labeled: {}", ns.display_name);
+        // version-basename label folds in the parent dir name
+        assert!(plain.display_name.contains("anaconda3-2024.10"), "label: {}", plain.display_name);
+
+        // dedupe: a registered kernel with the same interpreter suppresses the twin
+        let mut found2: HashMap<String, KernelSpec> = HashMap::new();
+        found2.insert(
+            "python3".into(),
+            KernelSpec {
+                name: "python3".into(),
+                path: ml.clone(),
+                argv: vec![ml.join("bin/python").to_string_lossy().into_owned(), "-m".into(), "ipykernel_launcher".into()],
+                display_name: "Registered".into(),
+                language: "python".into(),
+                interrupt_mode: None,
+                env: HashMap::new(),
+                metadata: serde_json::Value::Null,
+            },
+        );
+        add_conda_kernels(&mut found2, &prefixes);
+        assert_eq!(found2.len(), 2, "ml twin deduped by interpreter, base added");
+        assert!(found2.contains_key("python3-anaconda3-2024.10") || found2.values().any(|s| s.argv[0] == base.join("bin/python").to_string_lossy()),
+            "base env still added under a namespaced key");
+
+        let _ = fs::remove_dir_all(&home);
     }
 }
