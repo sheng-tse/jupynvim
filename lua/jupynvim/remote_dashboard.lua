@@ -39,9 +39,7 @@ local actions = {
   { key = "e", icon = ICON.folder, desc = "Explorer",        run = function(a) require("jupynvim").remote_browse(a) end },
   { key = "t", icon = ICON.term,   desc = "Remote terminal", run = function(a) require("jupynvim.remote_term").open(a) end },
   { key = "g", icon = ICON.search, desc = "Search remote",   run = function(a)
-      vim.ui.input({ prompt = "Grep " .. a .. ": " }, function(pat)
-        if pat and pat ~= "" then vim.cmd("JupynvimGrep " .. a .. " " .. pat) end
-      end)
+      require("jupynvim.remote_pick").grep(a)  -- live grep picker
     end },
   { key = "l", icon = ICON.home,   desc = "Local backend",   run = function()
       local J = require("jupynvim")

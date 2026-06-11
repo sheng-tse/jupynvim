@@ -213,59 +213,107 @@ end
 function M.grep(alias, root, pattern, opts)
   opts = opts or {}
   root = resolve_root(alias, root)
+  local ok, client = pcall(function() return require("jupynvim").client_for(alias) end)
+  if not ok then
+    vim.notify("jupynvim: " .. tostring(client), vim.log.levels.ERROR)
+    return
+  end
+
+  local prefix = root:gsub("/+$", "") .. "/"
+  local function build_items(matches)
+    local items = {}
+    for i, m in ipairs(matches) do
+      local rel = m.path
+      if rel:sub(1, #prefix) == prefix then rel = rel:sub(#prefix + 1) end
+      items[i] = {
+        text = rel .. ":" .. m.line .. ": " .. (m.text or ""),
+        rel = rel,
+        lnum = m.line,
+        line_text = (m.text or ""):gsub("^%s+", ""),
+        file = uri(alias, m.path),
+        pos = { tonumber(m.line) or 1, (tonumber(m.col) or 1) - 1 },
+      }
+    end
+    return items
+  end
+
+  if has_snacks() and not pattern then
+    -- LIVE grep, same UX as the local <leader>/ picker: results stream in as
+    -- you type. Each keystroke (debounced) runs the search RPC on the remote;
+    -- the finder serves cached items for the current pattern and re-finds
+    -- when fresh results land. Stale responses are dropped by token.
+    local state = { pattern = nil, items = {}, token = 0, timer = nil }
+    local function live_finder(_opts, ctx)
+      local pat = ctx.filter.search or ""
+      if pat == "" then state.pattern = ""; return {} end
+      if pat == state.pattern then return state.items end
+      -- debounce the RPC; serve previous items meanwhile (less flicker)
+      state.token = state.token + 1
+      local tok = state.token
+      if state.timer then state.timer:stop() end
+      state.timer = vim.defer_fn(function()
+        if tok ~= state.token then return end
+        client:call("search", { path = root, pattern = pat, max = 1000, excludes = excludes_for(alias) },
+          function(err, res)
+            if tok ~= state.token or ctx.picker.closed then return end
+            state.pattern = pat
+            state.items = (not err and res) and build_items(res.matches or {}) or {}
+            ctx.picker:find()
+          end)
+      end, 150)
+      return state.items
+    end
+    Snacks.picker.pick(vim.tbl_extend("force", {
+      finder = live_finder,
+      live = true,
+      supports_live = true,
+      show_empty = true,
+      format = format_item,
+      preview = M.preview,
+      title = " grep " .. alias .. ":" .. vim.fn.fnamemodify(root, ":t") .. " ",
+      confirm = function(picker, item)
+        picker:close()
+        if item and item.file then M.open_in_editor(item.file, item.pos) end
+      end,
+    }, opts.layout and { layout = opts.layout } or {}))
+    return
+  end
+
+  -- one-shot path (explicit pattern, or no snacks -> quickfix)
   local function run(pat)
     if not pat or pat == "" then return end
-    local ok, client = pcall(function() return require("jupynvim").client_for(alias) end)
-    if not ok then
-      vim.notify("jupynvim: " .. tostring(client), vim.log.levels.ERROR)
-      return
-    end
-    vim.notify("jupynvim: grepping " .. alias .. ":" .. root .. " ...", vim.log.levels.INFO)
-    client:call("search", { path = root, pattern = pat, max = 2000 }, function(err, res)
-      if err or not res then
-        vim.notify("jupynvim: search failed: " .. tostring(err), vim.log.levels.ERROR)
-        return
-      end
-      local matches = res.matches or {}
-      if #matches == 0 then
-        vim.notify("jupynvim: no matches for " .. pat, vim.log.levels.INFO)
-        return
-      end
-      local title = " grep '" .. pat .. "' (" .. alias .. ")" .. (res.truncated and " (truncated) " or " ")
-      if has_snacks() then
-        local items = {}
-        local prefix = root:gsub("/+$", "") .. "/"
-        for i, m in ipairs(matches) do
-          local rel = m.path
-          if rel:sub(1, #prefix) == prefix then rel = rel:sub(#prefix + 1) end
-          items[i] = {
-            text = rel .. ":" .. m.line .. ": " .. (m.text or ""),
-            rel = rel,
-            lnum = m.line,
-            line_text = (m.text or ""):gsub("^%s+", ""),
-            file = uri(alias, m.path),
-            pos = { tonumber(m.line) or 1, (tonumber(m.col) or 1) - 1 },
-          }
+    client:call("search", { path = root, pattern = pat, max = 2000, excludes = excludes_for(alias) },
+      function(err, res)
+        if err or not res then
+          vim.notify("jupynvim: search failed: " .. tostring(err), vim.log.levels.ERROR)
+          return
         end
-        Snacks.picker.pick(vim.tbl_extend("force", {
-          items = items,
-          format = format_item,
-          preview = M.preview,
-          title = title,
-          confirm = function(picker, item)
-            picker:close()
-            if item and item.file then M.open_in_editor(item.file, item.pos) end
-          end,
-        }, opts.layout and { layout = opts.layout } or {}))
-        return
-      end
-      local qf = {}
-      for _, m in ipairs(matches) do
-        qf[#qf + 1] = { filename = uri(alias, m.path), lnum = m.line, col = m.col, text = m.text }
-      end
-      vim.fn.setqflist({}, " ", { title = title, items = qf })
-      vim.cmd("copen")
-    end)
+        local matches = res.matches or {}
+        if #matches == 0 then
+          vim.notify("jupynvim: no matches for " .. pat, vim.log.levels.INFO)
+          return
+        end
+        local title = " grep '" .. pat .. "' (" .. alias .. ")" .. (res.truncated and " (truncated) " or " ")
+        if has_snacks() then
+          Snacks.picker.pick({
+            items = build_items(matches),
+            format = format_item,
+            preview = M.preview,
+            title = title,
+            confirm = function(picker, item)
+              picker:close()
+              if item and item.file then M.open_in_editor(item.file, item.pos) end
+            end,
+          })
+          return
+        end
+        local qf = {}
+        for _, m in ipairs(matches) do
+          qf[#qf + 1] = { filename = uri(alias, m.path), lnum = m.line, col = m.col, text = m.text }
+        end
+        vim.fn.setqflist({}, " ", { title = title, items = qf })
+        vim.cmd("copen")
+      end)
   end
 
   if pattern then run(pattern)

@@ -1141,6 +1141,10 @@ impl Server {
         let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
         let case_sensitive = p.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
         let fixed_string = p.get("fixed_string").and_then(|v| v.as_bool()).unwrap_or(false);
+        let excludes: std::collections::HashSet<String> = p.get("excludes")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
 
         // Build regex (escape if fixed_string mode)
         let raw = if fixed_string { regex::escape(&pattern) } else { pattern.clone() };
@@ -1150,16 +1154,23 @@ impl Server {
             .map_err(|e| anyhow!("bad regex: {e}"))?;
 
         // Walk + match in a blocking task (filesystem I/O + CPU bound).
+        let root2 = root.clone();
         let matches = tokio::task::spawn_blocking(move || {
             let mut out = Vec::new();
-            let walker = ignore::WalkBuilder::new(&root)
+            let mut builder = ignore::WalkBuilder::new(&root2);
+            builder
                 .hidden(false)       // include dotfiles (match common ripgrep -uu)
                 .follow_links(true)  // symlinked dirs are common on HPC homes
                 .ignore(true)        // respect .ignore
                 .git_ignore(true)    // respect .gitignore
                 .git_global(false)
-                .git_exclude(true)
-                .build();
+                .git_exclude(true);
+            if !excludes.is_empty() {
+                builder.filter_entry(move |e| {
+                    e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
+                });
+            }
+            let walker = builder.build();
             for entry_result in walker {
                 if out.len() >= max { break; }
                 let entry = match entry_result { Ok(e) => e, Err(_) => continue };
