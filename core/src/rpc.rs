@@ -276,6 +276,7 @@ impl Server {
             "proc_resize" => self.proc_resize(p).await,
             "proc_kill" => self.proc_kill(p).await,
             "search" => self.search(p).await,
+            "search_stream" => self.search_stream(p).await,
             "find_files" => self.find_files(p).await,
             "fs_watch" => self.fs_watch(p).await,
             "fs_unwatch" => self.fs_unwatch(p).await,
@@ -1233,6 +1234,131 @@ impl Server {
 
         let truncated = matches.len() >= max;
         Ok(json!({ "matches": matches, "truncated": truncated }))
+    }
+
+    // Streaming variant of `search` for live grep: matches are pushed to the
+    // frontend as `search_event` notifications ({sid, matches:[..]} batches,
+    // then {sid, done:true}) while the walk runs, so results appear within
+    // milliseconds even when the full walk of a big NFS tree takes much
+    // longer. The RPC returns immediately. Each call bumps the search epoch,
+    // so a new keystroke's search makes superseded walks quit early.
+    async fn search_stream(self: Arc<Self>, p: Json) -> Result<Json> {
+        let root = arg_path(&p, "path")?;
+        let sid = p.get("sid").and_then(|v| v.as_u64()).unwrap_or(0);
+        let pattern = p.get("pattern").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("pattern required"))?
+            .to_string();
+        let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
+        let case_sensitive = p.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
+        let fixed_string = p.get("fixed_string").and_then(|v| v.as_bool()).unwrap_or(false);
+        let excludes: std::collections::HashSet<String> = p.get("excludes")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let raw = if fixed_string { regex::escape(&pattern) } else { pattern.clone() };
+        let regex = regex::RegexBuilder::new(&raw)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| anyhow!("bad regex: {e}"))?;
+
+        let my_epoch = self.search_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let epoch = self.search_epoch.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Json>(512);
+
+        // Walker (blocking, parallel). Drops tx when done -> channel closes.
+        tokio::task::spawn_blocking(move || {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            let count = AtomicUsize::new(0);
+            let mut builder = ignore::WalkBuilder::new(&root);
+            builder
+                .hidden(false)
+                .follow_links(true)
+                .ignore(true)
+                .git_ignore(true)
+                .git_global(false)
+                .git_exclude(true)
+                .threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8));
+            if !excludes.is_empty() {
+                builder.filter_entry(move |e| {
+                    e.file_name().to_str().map_or(true, |n| !excludes.contains(n))
+                });
+            }
+            builder.build_parallel().run(|| {
+                let regex = regex.clone();
+                let tx = tx.clone();
+                let count = &count;
+                let epoch = &epoch;
+                Box::new(move |entry_result| {
+                    use ignore::WalkState;
+                    if epoch.load(Ordering::Relaxed) != my_epoch {
+                        return WalkState::Quit;
+                    }
+                    if count.load(Ordering::Relaxed) >= max {
+                        return WalkState::Quit;
+                    }
+                    let entry = match entry_result { Ok(e) => e, Err(_) => return WalkState::Continue };
+                    if !entry.file_type().map_or(false, |t| t.is_file()) {
+                        return WalkState::Continue;
+                    }
+                    if entry.metadata().map(|m| m.len()).unwrap_or(0) > 2_000_000 {
+                        return WalkState::Continue;
+                    }
+                    let bytes = match std::fs::read(entry.path()) {
+                        Ok(b) => b,
+                        Err(_) => return WalkState::Continue,
+                    };
+                    if bytes[..bytes.len().min(1024)].contains(&0) {
+                        return WalkState::Continue;
+                    }
+                    let content = String::from_utf8_lossy(&bytes);
+                    for (idx, line) in content.lines().enumerate() {
+                        if let Some(m) = regex.find(line) {
+                            if count.fetch_add(1, Ordering::Relaxed) >= max {
+                                return WalkState::Quit;
+                            }
+                            let _ = tx.blocking_send(json!({
+                                "path": entry.path().to_string_lossy(),
+                                "line": idx + 1,
+                                "col": m.start() + 1,
+                                "text": line,
+                            }));
+                        }
+                    }
+                    WalkState::Continue
+                })
+            });
+        });
+
+        // Drainer: batch matches -> search_event notifications, then done.
+        let server = self.clone();
+        tokio::spawn(async move {
+            let mut batch: Vec<Json> = Vec::new();
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_millis(60), rx.recv()).await {
+                    Ok(Some(v)) => {
+                        batch.push(v);
+                        if batch.len() >= 100 {
+                            let b = std::mem::take(&mut batch);
+                            server.notify("search_event", json!({ "sid": sid, "matches": b })).await;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        if !batch.is_empty() {
+                            let b = std::mem::take(&mut batch);
+                            server.notify("search_event", json!({ "sid": sid, "matches": b })).await;
+                        }
+                    }
+                }
+            }
+            if !batch.is_empty() {
+                let b = std::mem::take(&mut batch);
+                server.notify("search_event", json!({ "sid": sid, "matches": b })).await;
+            }
+            server.notify("search_event", json!({ "sid": sid, "done": true })).await;
+        });
+
+        Ok(json!({ "started": true, "sid": sid }))
     }
 
     // List files under `path` (recursive, respecting .gitignore) for a remote

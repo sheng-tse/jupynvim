@@ -237,31 +237,69 @@ function M.grep(alias, root, pattern, opts)
     return items
   end
 
+  local function build_one(m)
+    local rel = m.path
+    if rel:sub(1, #prefix) == prefix then rel = rel:sub(#prefix + 1) end
+    return {
+      text = rel .. ":" .. m.line .. ": " .. (m.text or ""),
+      rel = rel,
+      lnum = m.line,
+      line_text = (m.text or ""):gsub("^%s+", ""),
+      file = uri(alias, m.path),
+      pos = { tonumber(m.line) or 1, (tonumber(m.col) or 1) - 1 },
+    }
+  end
+
   if has_snacks() and not pattern then
-    -- LIVE grep, same UX as the local <leader>/ picker: results stream in as
-    -- you type. Each keystroke (debounced) runs the search RPC on the remote;
-    -- the finder serves cached items for the current pattern and re-finds
-    -- when fresh results land. Stale responses are dropped by token.
-    local state = { pattern = nil, items = {}, token = 0, timer = nil }
+    -- LIVE grep with STREAMING results (parity with local <leader>/): each
+    -- keystroke starts a search_stream on the remote; matches arrive as
+    -- search_event batches and are fed to the picker as they land, so hits in
+    -- nearby dirs show within milliseconds even when the full walk of a big
+    -- NFS tree takes much longer (snacks' busy spinner shows meanwhile). A
+    -- new keystroke supersedes the previous search (backend epoch + sid).
+    local seq = math.floor((vim.uv or vim.loop).hrtime() % 1e9)
+    local current = { sid = nil, push = nil }
+    if not client._search_event_hooked then
+      client._search_event_hooked = true
+      client:on("search_event", function(args)
+        local e = args[1] or args
+        if current.push and e.sid == current.sid then current.push(e) end
+      end)
+    end
     local function live_finder(_opts, ctx)
       local pat = ctx.filter.search or ""
-      if pat == "" then state.pattern = ""; return {} end
-      if pat == state.pattern then return state.items end
-      -- debounce the RPC; serve previous items meanwhile (less flicker)
-      state.token = state.token + 1
-      local tok = state.token
-      if state.timer then state.timer:stop() end
-      state.timer = vim.defer_fn(function()
-        if tok ~= state.token then return end
-        client:call("search", { path = root, pattern = pat, max = 1000, excludes = excludes_for(alias) },
-          function(err, res)
-            if tok ~= state.token or ctx.picker.closed then return end
-            state.pattern = pat
-            state.items = (not err and res) and build_items(res.matches or {}) or {}
-            ctx.picker:find()
-          end)
-      end, 150)
-      return state.items
+      if pat == "" then return {} end
+      return function(cb)
+        local Async = require("snacks.picker.util.async")
+        local task = Async.running()
+        seq = seq + 1
+        local sid = seq
+        local queue, done = {}, false
+        current.sid = sid
+        current.push = function(e)
+          for _, m in ipairs(e.matches or {}) do queue[#queue + 1] = m end
+          if e.done then done = true end
+          if task then pcall(function() task:resume() end) end
+        end
+        client:call("search_stream", {
+          path = root, pattern = pat, max = 1000,
+          excludes = excludes_for(alias), sid = sid,
+        }, function(err)
+          if err then
+            done = true
+            vim.notify("jupynvim: search failed: " .. tostring(err), vim.log.levels.ERROR)
+            if task then pcall(function() task:resume() end) end
+          end
+        end)
+        while true do
+          while #queue > 0 do
+            cb(build_one(table.remove(queue, 1)))
+          end
+          if done then break end
+          task:suspend()
+        end
+        if current.sid == sid then current.push = nil end
+      end
     end
     Snacks.picker.pick(vim.tbl_extend("force", {
       finder = live_finder,
