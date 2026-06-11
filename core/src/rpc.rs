@@ -1146,6 +1146,7 @@ impl Server {
         let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
         let case_sensitive = p.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
         let fixed_string = p.get("fixed_string").and_then(|v| v.as_bool()).unwrap_or(false);
+        let include_hidden = p.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
         let excludes: std::collections::HashSet<String> = p.get("excludes")
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
@@ -1173,7 +1174,7 @@ impl Server {
             let count = AtomicUsize::new(0);
             let mut builder = ignore::WalkBuilder::new(&root2);
             builder
-                .hidden(false)       // include dotfiles (match common ripgrep -uu)
+                .hidden(!include_hidden) // skip dotdirs by default (rg parity; .conda/.cache are huge)
                 .follow_links(true)  // symlinked dirs are common on HPC homes
                 .ignore(true)        // respect .ignore
                 .git_ignore(true)    // respect .gitignore
@@ -1251,6 +1252,7 @@ impl Server {
         let max = p.get("max").and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
         let case_sensitive = p.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
         let fixed_string = p.get("fixed_string").and_then(|v| v.as_bool()).unwrap_or(false);
+        let include_hidden = p.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
         let excludes: std::collections::HashSet<String> = p.get("excludes")
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
@@ -1271,7 +1273,7 @@ impl Server {
             let count = AtomicUsize::new(0);
             let mut builder = ignore::WalkBuilder::new(&root);
             builder
-                .hidden(false)
+                .hidden(!include_hidden)
                 .follow_links(true)
                 .ignore(true)
                 .git_ignore(true)
