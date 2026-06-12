@@ -168,7 +168,9 @@ function Notebook:apply_cell_event(cell_id, ev)
   if kind == "execute_input" then
     c.execution_count = ev.execution_count
     c.outputs = {}
-    self.cell_state[cell_id] = { exec_state = "busy" }
+    -- start the execution stopwatch (drives the VSCode-style "[1] ✓ 0.1s"
+    -- bar; live elapsed while busy, frozen duration once idle)
+    self.cell_state[cell_id] = { exec_state = "busy", started_ns = vim.uv.hrtime() }
   elseif kind == "stream" then
     -- coalesce
     local last = c.outputs[#c.outputs]
@@ -196,8 +198,16 @@ function Notebook:apply_cell_event(cell_id, ev)
       output_type = "error",
       ename = ev.ename, evalue = ev.evalue, traceback = ev.traceback,
     })
+    local st = self.cell_state[cell_id]
+    if st then st.failed = true end
   elseif kind == "status" then
-    self.cell_state[cell_id] = { exec_state = ev.state }
+    -- preserve the stopwatch fields; stamp the duration when leaving busy
+    local st = self.cell_state[cell_id] or {}
+    if st.exec_state == "busy" and ev.state ~= "busy" and st.started_ns and not st.duration_ns then
+      st.duration_ns = vim.uv.hrtime() - st.started_ns
+    end
+    st.exec_state = ev.state
+    self.cell_state[cell_id] = st
   elseif kind == "execute_reply" then
     -- nothing to mutate
   elseif kind == "clear_output" then

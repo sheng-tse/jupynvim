@@ -1139,6 +1139,7 @@ function M.open(path, opts)
   end)
   M._attach_autocmds(buf)
   Keymaps.attach(buf, M)
+  require("jupynvim.cellmode").attach(buf, M)
 
   -- Display the buffer FIRST so we have a real window for the synchronous
   -- option-setting that follows. Without this, win_findbuf is empty and
@@ -1449,6 +1450,11 @@ function M._populate_buffer(nb)
   vim.api.nvim_buf_set_option(nb.buf, "modifiable", true)
   vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(nb.buf, "modified", false)
+  -- cell command mode keeps the buffer non-modifiable; restore the lock
+  -- after this (possibly async) repopulation
+  if require("jupynvim.cellmode").is_command(nb.buf) then
+    vim.api.nvim_buf_set_option(nb.buf, "modifiable", false)
+  end
   -- Pre-conceal cell separator marker lines synchronously, before the
   -- debounced Render.refresh runs. Without this, the literal
   -- "# %%[jupynvim:cell-sep]" text flashes visible on screen for one or
@@ -1468,7 +1474,9 @@ function M._populate_buffer(nb)
   -- continuation row. Right border on continuation rows is a known gap.
   for _, win in ipairs(vim.fn.win_findbuf(nb.buf)) do
     vim.api.nvim_win_call(win, function()
-      vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+      vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual nonumber norelativenumber")
+      -- per-cell line numbers + selection bar (VSCode-style gutter)
+      vim.opt_local.statuscolumn = "%!v:lua.require'jupynvim.cellmode'.statuscol()"
       vim.cmd([[setlocal showbreak=\ ]])
     end)
   end
@@ -1542,7 +1550,9 @@ function M._attach_autocmds(buf)
         local wins = vim.fn.win_findbuf(buf)
         for _, win in ipairs(wins) do
           vim.api.nvim_win_call(win, function()
-            vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+            vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual nonumber norelativenumber")
+      -- per-cell line numbers + selection bar (VSCode-style gutter)
+      vim.opt_local.statuscolumn = "%!v:lua.require'jupynvim.cellmode'.statuscol()"
             vim.cmd([[setlocal showbreak=\ ]])
           end)
         end
@@ -2262,7 +2272,7 @@ function M.kernel_picker(buf)
 end
 
 -- Internal helper: open the given cell's output as a scratch split.
-local function _open_output_split(buf, cell, origin_line)
+local function _open_output_inline(buf, cell, range, origin_line)
   local function as_str(v)
     if type(v) == "table" then return table.concat(v, "") end
     if type(v) == "string" then return v end
@@ -2341,14 +2351,44 @@ local function _open_output_split(buf, cell, origin_line)
   vim.api.nvim_buf_set_name(scratch,
     string.format("jupynvim://Out[%s]", tostring(cell.execution_count or "?")))
 
-  local height = math.min(math.max(#lines, 4), math.floor(vim.o.lines * 0.4))
-  vim.cmd("belowright " .. height .. "split")
-  vim.api.nvim_set_current_buf(scratch)
+  -- INLINE focus: a borderless float laid exactly over the cell's output
+  -- region, so the cursor visually "enters" the rendered output. It scrolls
+  -- (full text, not the clamped preview) and yanks like any buffer.
+  local win = vim.fn.bufwinid(buf)
+  if win == -1 then win = vim.api.nvim_get_current_win() end
+  local info = vim.fn.getwininfo(win)[1] or {}
+  local textoff = info.textoff or 0
+  local win_h = vim.api.nvim_win_get_height(win)
+  local win_w = vim.api.nvim_win_get_width(win)
+
+  -- screen row of the first output line: cell's last source line
+  -- + 1 (footer box edge) + 1 (execution bar) + 1 (next row)
+  local last_lnum = range and math.min(range.stop, vim.api.nvim_buf_line_count(buf)) or origin_line
+  local float_row = 1
+  local pos = vim.fn.screenpos(win, last_lnum, 1)
+  local wpos = vim.api.nvim_win_get_position(win)
+  if pos and pos.row and pos.row > 0 then
+    float_row = (pos.row - 1 - wpos[1]) + 3
+  end
+  if float_row >= win_h - 2 then float_row = math.max(win_h - 6, 1) end
+  local max_h = (M.config.output_max_lines or 15)
+  local height = math.max(math.min(#lines, max_h, win_h - float_row - 1), 3)
+  local width = math.max(win_w - textoff - 4, 20)
+
+  local fwin = vim.api.nvim_open_win(scratch, true, {
+    relative = "win", win = win,
+    row = float_row, col = textoff + 2,
+    width = width, height = height,
+    style = "minimal", border = "none",
+  })
+  vim.wo[fwin].winhighlight = "Normal:Normal,CursorLine:Visual"
+  vim.wo[fwin].cursorline = true
+  vim.wo[fwin].wrap = true
 
   local close_map = function()
     local origin_buf = vim.b.jupynvim_origin_buf
     local origin_l = vim.b.jupynvim_origin_line
-    vim.cmd("close")
+    pcall(vim.api.nvim_win_close, 0, true)
     for _, w in ipairs(vim.fn.win_findbuf(origin_buf)) do
       vim.api.nvim_set_current_win(w)
       if origin_l then
@@ -2357,9 +2397,9 @@ local function _open_output_split(buf, cell, origin_line)
       return
     end
   end
-  vim.keymap.set("n", "<C-j>", close_map, { buffer = scratch, silent = true, desc = "Leave output" })
-  vim.keymap.set("n", "<C-k>", close_map, { buffer = scratch, silent = true, desc = "Leave output" })
-  vim.keymap.set("n", "q",     close_map, { buffer = scratch, silent = true, desc = "Leave output" })
+  for _, lhs in ipairs({ "<C-j>", "<C-k>", "q", "<Esc>" }) do
+    vim.keymap.set("n", lhs, close_map, { buffer = scratch, silent = true, desc = "Leave output" })
+  end
 end
 
 local function _has_output(cell)
@@ -2371,12 +2411,12 @@ end
 -- so when the cursor is below an output region, this key enters that
 -- region. From inside the scratch split, either key (or q) returns.
 function M.enter_output(buf, direction)
-  -- Already inside a jupynvim output scratch? Close and return.
+  -- Already inside a jupynvim output float? Close and return.
   local ok, _ = pcall(vim.api.nvim_buf_get_var, buf, "jupynvim_origin_buf")
   if ok then
     local origin_buf = vim.b[buf].jupynvim_origin_buf
     local origin_line = vim.b[buf].jupynvim_origin_line
-    vim.cmd("close")
+    pcall(vim.api.nvim_win_close, 0, true)
     if origin_buf then
       for _, w in ipairs(vim.fn.win_findbuf(origin_buf)) do
         vim.api.nvim_set_current_win(w)
@@ -2391,6 +2431,14 @@ function M.enter_output(buf, direction)
 
   local nb = Notebook.get(buf)
   if not nb then return end
+  -- VSCode model: output interaction belongs to the focused (edit-mode)
+  -- cell. In command mode, Enter first.
+  local CellMode = require("jupynvim.cellmode")
+  if CellMode.is_command(buf) then
+    vim.notify("jupynvim: press Enter on the cell first, then <C-j> opens its output",
+      vim.log.levels.INFO)
+    return
+  end
   nb:sync_from_buffer()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
@@ -2414,7 +2462,8 @@ function M.enter_output(buf, direction)
     return
   end
 
-  _open_output_split(buf, nb.cells[target_idx], lnum)
+  local _, ranges = nb:to_lines()
+  _open_output_inline(buf, nb.cells[target_idx], ranges[target_idx], lnum)
 end
 
 -- Save the current cell's image (markdown embedded or code-cell output)
