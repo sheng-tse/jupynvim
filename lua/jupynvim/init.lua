@@ -448,15 +448,20 @@ end
 -- Hosts declared in ~/.ssh/config (incl. Include files): the natural home of
 -- AWS/GCP boxes (`gcloud compute config-ssh`, ProxyCommand/IAP entries, EC2
 -- aliases). Wildcard patterns are skipped. Best-effort parse.
-local function ssh_config_hosts()
-  local hosts, seen = {}, {}
+-- Parse ~/.ssh/config (incl. Include files) into { {name, hostname}, ... }.
+-- hostname is the block's HostName when present (used for deduping aliases
+-- that point at the same machine).
+local function ssh_config_hosts_full()
+  local entries, seen = {}, {}
   local function parse(path, depth)
     if depth > 3 then return end
     local f = io.open(path, "r")
     if not f then return end
+    local block = {}  -- entries from the current Host line, awaiting HostName
     for line in f:lines() do
       local inc = line:match("^%s*[Ii]nclude%s+(.+)$")
       local hs = not inc and line:match("^%s*[Hh]ost%s+(.+)$") or nil
+      local hn = not inc and not hs and line:match("^%s*[Hh]ost[Nn]ame%s+(%S+)") or nil
       if inc then
         for _, pat in ipairs(vim.split(inc, "%s+", { trimempty = true })) do
           if not pat:match("^[/~]") then pat = "~/.ssh/" .. pat end
@@ -465,44 +470,79 @@ local function ssh_config_hosts()
           end
         end
       elseif hs then
+        block = {}
         for _, h in ipairs(vim.split(hs, "%s+", { trimempty = true })) do
           if not h:match("[%*%?!]") and not seen[h] then
             seen[h] = true
-            table.insert(hosts, h)
+            local e = { name = h, hostname = h }
+            table.insert(entries, e)
+            table.insert(block, e)
           end
         end
+      elseif hn then
+        for _, e in ipairs(block) do e.hostname = hn end
       end
     end
     f:close()
   end
   parse(vim.fn.expand("~/.ssh/config"), 0)
-  table.sort(hosts)
-  return hosts
+  table.sort(entries, function(a, b)
+    if #a.name ~= #b.name then return #a.name < #b.name end  -- shortest alias first
+    return a.name < b.name
+  end)
+  return entries
+end
+
+local function ssh_config_hosts()
+  local names = {}
+  for _, e in ipairs(ssh_config_hosts_full()) do table.insert(names, e.name) end
+  table.sort(names)
+  return names
 end
 M._ssh_config_hosts = ssh_config_hosts  -- exposed for the :JupynvimConnect completion
+
+-- Hosts nobody means as a jupynvim target (git hosting etc) — hidden from the
+-- chooser, still accepted if typed explicitly.
+local SSH_HOST_NOISE = {
+  ["github.com"] = true, ["ssh.github.com"] = true, ["gitlab.com"] = true,
+  ["bitbucket.org"] = true, ["codeberg.org"] = true, ["aur.archlinux.org"] = true,
+}
 
 -- Interactive connection chooser: configured jupynvim profiles, then hosts
 -- from ~/.ssh/config, then "new connection". So AWS + GCP + PSC (and any mix
 -- of accounts) coexist: each is one entry; pick or type one on the fly.
-function M.connect_choose()
+-- Build the chooser entries. Profiles first, then ssh-config hosts with the
+-- noise removed: git-hosting hosts hidden, aliases pointing at a machine a
+-- profile already covers hidden, and multiple aliases for the SAME machine
+-- (e.g. `gcp` + gcloud's generated `instance-...` entry) collapsed to the
+-- shortest one. Keeps the list to one entry per real target.
+function M._connect_items()
   local items = {}
-  local profile_hosts = {}
+  local profile_hostnames = {}
+  local function strip_user(h) return (tostring(h):gsub("^[^@]+@", "")) end
   local names = {}
   for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
   table.sort(names)
   for _, name in ipairs(names) do
     local prof = M.config.remote[name]
-    profile_hosts[prof.host or ""] = true
+    profile_hostnames[strip_user(prof.host or "")] = true
     table.insert(items, {
       label = name .. "  (" .. (prof.host or "?") .. ")",
       run = function() M.connect(name) end,
     })
   end
-  for _, h in ipairs(ssh_config_hosts()) do
-    if not (M.config.remote or {})[h] and not profile_hosts[h] then
+  local seen_machine = {}
+  for _, e in ipairs(ssh_config_hosts_full()) do  -- shortest-alias-first order
+    local machine = e.hostname or e.name
+    if not SSH_HOST_NOISE[e.name]
+       and not (M.config.remote or {})[e.name]
+       and not profile_hostnames[e.name]
+       and not profile_hostnames[machine]
+       and not seen_machine[machine] then
+      seen_machine[machine] = true
       table.insert(items, {
-        label = "ssh: " .. h .. "  (~/.ssh/config)",
-        run = function() M.connect_adhoc(h) end,
+        label = "ssh: " .. e.name .. "  (~/.ssh/config)",
+        run = function() M.connect_adhoc(e.name) end,
       })
     end
   end
@@ -514,6 +554,11 @@ function M.connect_choose()
       end)
     end,
   })
+  return items
+end
+
+function M.connect_choose()
+  local items = M._connect_items()
   vim.ui.select(items, {
     prompt = "jupynvim: connect to",
     format_item = function(it) return it.label end,
