@@ -49,15 +49,18 @@ assert(not sc(4, 2):find("%d"), "wrap rows carry no number")
 assert(sc(4, 2):find("│", 1, true), "wrap rows keep the left border")
 print("B. gutter: per-cell numbers, md/sep/virt blanks, wrap border ok")
 
--- C. j/k moves cell selection
+-- C. j/k moves cell selection (cell3 sits after cell2's output region)
+local R = CellMode.ranges(buf)
 feed("j")
-assert(vim.api.nvim_win_get_cursor(win)[1] == 4, "j did not select cell2")
+assert(vim.api.nvim_win_get_cursor(win)[1] == R[2].start + 1, "j did not select cell2")
 feed("j")
-assert(vim.api.nvim_win_get_cursor(win)[1] == 7, "j did not select cell3")
+assert(vim.api.nvim_win_get_cursor(win)[1] == R[3].start + 1, "j did not select cell3")
 feed("j")
-assert(vim.api.nvim_win_get_cursor(win)[1] == 7, "selection should clamp at last cell")
+assert(vim.api.nvim_win_get_cursor(win)[1] == R[3].start + 1, "selection should clamp at last cell")
 feed("k")
-assert(vim.api.nvim_win_get_cursor(win)[1] == 4, "k did not select cell2")
+assert(vim.api.nvim_win_get_cursor(win)[1] == R[2].start + 1, "k did not select cell2")
+-- output-region rows have a blank gutter
+assert(not sc(R[2].out_sep + 2):find("%d"), "output rows must not be numbered")
 print("C. j/k cell selection ok")
 
 -- D. Enter -> edit; motions confined to the cell; Esc -> command;
@@ -99,14 +102,13 @@ for _, m in ipairs(marks) do
   end
 end
 local blob = table.concat(all_text, "\n")
-assert(blob:find("┏━ Python", 1, true), "selected cell must have a heavy header")
-assert(blob:find("╭─ Python", 1, true), "unselected cell keeps the thin header")
+assert(blob:find("╭─ Python", 1, true), "cell header missing")
+assert(not blob:find("┏", 1, true), "frames must stay uniform (no heavy variant)")
 assert(blob:find("#2", 1, true), "cell number badge missing")
 assert(blob:find("✓", 1, true), "exec check missing")
-assert(blob:find("more lines", 1, true), "output clamp marker missing")
 local xcount = 0
 for _, row in ipairs(all_text) do if row:find("x%s*$") then xcount = xcount + 1 end end
-assert(xcount <= 30, "clamp failed: " .. xcount .. " output rows")
+assert(xcount == 0, "text outputs must be REAL lines, not virtual rows")
 assert(not blob:find("Markdown", 1, true), "markdown cell should be frameless when not edited")
 local has_bg = false
 for _, m in ipairs(marks) do
@@ -159,38 +161,46 @@ for _, c in ipairs(chunks) do s = s .. c[1] end
 assert(s:find("✗"), "error bar should show cross: " .. s)
 print("F. execution timing ok: " .. s)
 
--- G. inline output float, gated to edit mode
-nb.cells[2].outputs = { { output_type = "stream", name = "stdout", text = string.rep("y\n", 30) } }
+-- G. outputs are REAL buffer lines: C-j enters them, motions/yank work
+local CMr = CellMode.ranges(buf)
+assert(CMr[2].out_sep, "cell2 must have an output region")
+local sep_text = vim.api.nvim_buf_get_lines(buf, CMr[2].out_sep, CMr[2].out_sep + 1, false)[1]
+assert(sep_text == Notebook.OUT_SEP, "OUT_SEP marker missing")
+local first_out = vim.api.nvim_buf_get_lines(buf, CMr[2].out_sep + 1, CMr[2].out_sep + 2, false)[1]
+assert(first_out == "  x", "output text not in buffer: " .. tostring(first_out))
+-- sync_from_buffer must NOT absorb output lines into the source
+nb:sync_from_buffer()
+assert(nb.cells[2].source == "print(1)\nprint(2)", "outputs leaked into source: " .. nb.cells[2].source)
+-- command mode: C-j is window navigation (no-op in a single window)
 assert(CellMode.is_command(buf), "expected command mode")
 J.enter_output(buf, "down")
-vim.wait(100)
-for _, w in ipairs(vim.api.nvim_list_wins()) do
-  assert(vim.api.nvim_win_get_config(w).relative == "", "output must NOT open in command mode")
-end
+assert(vim.api.nvim_get_current_buf() == buf, "command-mode C-j must stay put")
+-- edit mode: C-j focuses the output region, C-k returns to the source
 vim.api.nvim_win_set_cursor(win, { 4, 0 })
 feed("<CR>")
 J.enter_output(buf, "down")
-vim.wait(100)
-local fwin
-for _, w in ipairs(vim.api.nvim_list_wins()) do
-  if vim.api.nvim_win_get_config(w).relative == "win" then fwin = w end
-end
-assert(fwin, "inline output float did not open")
-local fcfg = vim.api.nvim_win_get_config(fwin)
-assert(fcfg.col == 0 and fcfg.width == vim.api.nvim_win_get_width(win),
-  "float must span the full window width from col 0")
-local fbuf = vim.api.nvim_win_get_buf(fwin)
-assert(vim.api.nvim_buf_line_count(fbuf) == 30, "float should hold the FULL output")
-assert(vim.api.nvim_buf_get_lines(fbuf, 0, 1, false)[1]:match("^%s+y"),
-  "float lines must carry the render's leading blanks for alignment")
-assert(vim.wo[fwin].cursorline == false, "no popup chrome inside the output")
+local l = vim.api.nvim_win_get_cursor(win)[1]
+assert(l - 1 > CMr[2].out_sep and l - 1 < CMr[2].out_stop, "C-j did not land in the output region: " .. l)
 feed("yy")
-assert(vim.fn.getreg('"'):find("y"), "yank inside output failed")
-feed("q")
-vim.wait(50)
-assert(not vim.api.nvim_win_is_valid(fwin), "q did not close the output float")
-assert(vim.api.nvim_get_current_buf() == buf, "focus did not return to notebook")
-print("G. inline output focus ok")
+assert(vim.fn.getreg('"'):find("x"), "yank in output region failed")
+feed("j")  -- moves within the region
+assert(vim.api.nvim_win_get_cursor(win)[1] == l + 1, "j inside output should move")
+J.enter_output(buf, "up")
+assert(vim.api.nvim_win_get_cursor(win)[1] == 5, "C-k did not return to the source")
+feed("<Esc>")
+-- kernel events rewrite the region in place
+nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 9 })
+nb:apply_cell_event("c3", { kind = "stream", name = "stdout", text = "fresh\n" })
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+J._queue_output_sync(buf, nb, "c3")
+vim.wait(400)
+local found = false
+for _, bl in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+  if bl == "  fresh" then found = true end
+end
+assert(found, "output sync did not write the new region")
+assert(vim.bo[buf].modifiable == false, "command mode lock lost after sync")
+print("G. real output regions ok")
 
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")

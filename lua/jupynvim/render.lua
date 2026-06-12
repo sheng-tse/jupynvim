@@ -46,11 +46,9 @@ local function dw(s) return vim.fn.strdisplaywidth(s) end
 -- Input-box edges. The box's LEFT side lives in the statuscolumn (drawn by
 -- cellmode.statuscol); header/footer are full-window virt lines
 -- (virt_lines_leftcol) prefixed so the corners line up with that gutter
--- border column. The selected cell gets HEAVY box glyphs.
-local function box_chars(sel)
-  if sel then
-    return { tl = "┏", tr = "┓", bl = "┗", br = "┛", h = "━", v = "┃" }
-  end
+-- border column. Selection is shown by the far-left gutter bar, NOT the
+-- frame: every box stays the same calm thin style.
+local function box_chars(_)
   return { tl = "╭", tr = "╮", bl = "╰", br = "╯", h = "─", v = "│" }
 end
 
@@ -207,133 +205,48 @@ end
 -- under the input editor (VSCode's output gutter).
 local OUT_INDENT = "  "
 
--- Build the (frameless) virt_lines for a cell's outputs, clamped to
--- config.output_max_lines like VSCode's max output height. Images bypass
--- the clamp (their row count is fixed and bounded). `lead` prefixes every
--- row (gutter blanks: these rows render with virt_lines_leftcol).
-local function build_output_virt_lines(cell, width, nb, lead)
+-- Output IMAGES as virt rows. Text outputs are REAL buffer lines now (the
+-- OUT_SEP region emitted by Notebook:to_lines), so only kitty/ascii image
+-- rows remain virtual. `lead` prefixes every row (these rows render with
+-- virt_lines_leftcol).
+local function build_image_virt_lines(cell, width, nb, lead)
   lead = (lead or "") .. OUT_INDENT
   local rows = {}
-  local clamp = (require("jupynvim").config or {}).output_max_lines or 30
-  local truncated = 0
-  local function push(text, hl)
-    if #rows < clamp then
-      table.insert(rows, { { lead .. text, hl } })
-    else
-      truncated = truncated + 1
-    end
-  end
-  local inner_w = width - dw(OUT_INDENT)
-
+  local b64
   for _, o in ipairs(cell.outputs or {}) do
-    if o.output_type == "stream" then
-      -- stderr renders subdued gray (tqdm/wandb noise), stdout green-ish
-      local hl = (o.name == "stderr") and HL_OUTPUT or HL_STREAM
-      local text = expand_tabs(strip_ansi(process_cr(as_str(o.text))))
-      for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-        line = compact_tqdm(line)
-        if line:find("data:image/%w+;base64,") then
-          -- a printed data-URI is thousands of useless characters; the
-          -- image itself renders separately
-          push("[embedded image data]", HL_MORE)
-        else
-          for _, w in ipairs(wrap(line, inner_w)) do
-            push(w, hl)
-          end
-        end
-      end
-    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
+    if o.output_type == "execute_result" or o.output_type == "display_data" then
       local data = o.data or {}
-      local has_img = (data["image/png"] ~= nil) or (data["image/gif"] ~= nil) or (data["image/jpeg"] ~= nil)
-      local text = as_str(data["text/plain"])
-      -- Hide the boring repr when the actual image is rendered alongside.
-      if has_img and (text == ""
-          or text:match("^<[Ff]igure ")
-          or text:match("^<[%w._]+ object>$")
-          or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
-        text = ""
-      end
-      -- If text/plain is just the boring object repr, try extracting visible
-      -- text from text/html (used by wandb, tqdm widgets, etc.)
-      if text == "" or text:match("^<[A-Za-z._]+ object>$") then
-        local html = as_str(data["text/html"])
-        if html ~= "" then
-          local plain = html
-            :gsub("<a[^>]*href=\"([^\"]*)\"[^>]*>(.-)</a>", "%2 (%1)")
-            :gsub("<br%s*/?>", "\n")
-            :gsub("</p>", "\n")
-            :gsub("<[^>]+>", "")
-            :gsub("&nbsp;", " ")
-            :gsub("&amp;", "&")
-            :gsub("&lt;", "<")
-            :gsub("&gt;", ">")
-            :gsub("&#x?%w+;", "")
-            :gsub("\n\n+", "\n")
-          text = plain:gsub("^%s+", ""):gsub("%s+$", "")
-        end
-      end
-      if text ~= "" then
-        text = expand_tabs(text)
-        for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-          if line:find("data:image/%w+;base64,") then
-            push("[embedded image data]", HL_MORE)
-          else
-            for _, w in ipairs(wrap(line, inner_w)) do
-              push(w, HL_RESULT)
-            end
-          end
-        end
-      end
-      local b64
       for _, m in ipairs({ "image/gif", "image/png", "image/jpeg" }) do
         local v = data[m]
         if type(v) == "table" then v = table.concat(v, "") end
         if type(v) == "string" and v ~= "" then b64 = v; break end
       end
-      if b64 then
-        local ph = image.placeholder_virt_lines(cell.id)
-        if ph then
-          for _, line in ipairs(ph) do
-            table.insert(rows, { { lead, "Normal" }, { line[1][1], line[1][2] } })
-          end
-        else
-          local ascii = image.ascii_lines_for(cell.id)
-          if ascii then
-            for _, line in ipairs(ascii) do
-              table.insert(rows, { { lead .. line, "Normal" } })
-            end
-          elseif image.supported() then
-            for _ = 1, 14 do
-              table.insert(rows, { { lead, HL_OUTPUT } })
-            end
-          end
+      if b64 then break end
+    end
+  end
+  if b64 then
+    local ph = image.placeholder_virt_lines(cell.id)
+    if ph then
+      for _, line in ipairs(ph) do
+        table.insert(rows, { { lead, "Normal" }, { line[1][1], line[1][2] } })
+      end
+    else
+      local ascii = image.ascii_lines_for(cell.id)
+      if ascii then
+        for _, line in ipairs(ascii) do
+          table.insert(rows, { { lead .. line, "Normal" } })
         end
-      end
-    elseif o.output_type == "error" then
-      local msg = as_str(o.ename) .. ": " .. as_str(o.evalue)
-      if msg == ": " then msg = "Error" end
-      for _, w in ipairs(wrap(msg, inner_w)) do
-        push(w, HL_ERROR)
-      end
-      for _, tb in ipairs(o.traceback or {}) do
-        local plain = expand_tabs(as_str(tb):gsub("\27%[[%d;]*m", ""))
-        for _, line in ipairs(vim.split(plain, "\n", { plain = true })) do
-          for _, w in ipairs(wrap(line, inner_w)) do
-            push(w, HL_ERROR)
-          end
+      elseif image.supported() then
+        local rrows = (require("jupynvim").config or {}).image_rows or 16
+        for _ = 1, rrows do
+          table.insert(rows, { { lead, HL_OUTPUT } })
         end
       end
     end
   end
-  if truncated > 0 then
-    table.insert(rows, { {
-      lead .. "⋯ " .. truncated .. " more lines · <C-j> to read",
-      HL_MORE,
-    } })
-  end
   return rows
 end
-M._build_output_virt_lines = build_output_virt_lines
+M._build_image_virt_lines = build_image_virt_lines
 
 -- VSCode's execution bar: "[1] ✓ 0.1s" under the input box. Live elapsed
 -- time with a spinner glyph while running; ✗ on error.
@@ -444,7 +357,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
 
   -- ── boxed editor: code cells always; markdown while being edited ──
   local bc = box_chars(selected)
-  local border_hl = selected and HL_BORDER_SEL or HL_BORDER
+  local border_hl = HL_BORDER
   local label = cell.cell_type == "code" and "Python" or "Markdown"
   local hdr = header_line(total_w, gut, label, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
@@ -460,13 +373,23 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
     vim.list_extend(ex, exec_status_chunks(cell, st))
     table.insert(lines_below, ex)
     if #(cell.outputs or {}) > 0 then
-      for _, l in ipairs(build_output_virt_lines(cell, width, nb, lead)) do
+      for _, l in ipairs(build_image_virt_lines(cell, width, nb, lead)) do
         table.insert(lines_below, l)
       end
     end
   end
-  -- spacer so the next cell's top border doesn't glue to our outputs
-  table.insert(lines_below, { { " ", "Normal" } })
+  -- spacer so the next cell's top border doesn't glue to our outputs;
+  -- when the cell has a real output region it goes after THOSE lines
+  if range.out_sep and range.out_stop then
+    local last_out = math.min(range.out_stop, total) - 1
+    if last_out >= 0 then
+      pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, last_out, 0, {
+        virt_lines = { { { " ", "Normal" } } },
+      })
+    end
+  else
+    table.insert(lines_below, { { " ", "Normal" } })
+  end
 
   local last = math.max(range.stop - 1, range.start)
   if last >= total then last = total - 1 end
@@ -554,11 +477,22 @@ local function clear_separators(nb, ranges)
   local buf = nb.buf
   local total = vim.api.nvim_buf_line_count(buf)
   for i = 1, #ranges - 1 do
-    local sep_line = ranges[i].stop
+    local sep_line = ranges[i].out_stop or ranges[i].stop
     if sep_line < total then
       local line_text = vim.api.nvim_buf_get_lines(buf, sep_line, sep_line + 1, false)[1] or ""
       vim.api.nvim_buf_set_extmark(buf, nb.border_ns, sep_line, 0, {
         end_col = #line_text,
+        conceal = "",
+        priority = 200,
+      })
+    end
+  end
+  -- conceal every OUT_SEP marker line as well
+  for _, r in ipairs(ranges) do
+    if r.out_sep and r.out_sep < total then
+      local t = vim.api.nvim_buf_get_lines(buf, r.out_sep, r.out_sep + 1, false)[1] or ""
+      pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, r.out_sep, 0, {
+        end_col = #t,
         conceal = "",
         priority = 200,
       })
@@ -604,20 +538,9 @@ function M.refresh(nb, win)
 
     vim.api.nvim_buf_clear_namespace(buf, nb.border_ns, 0, -1)
 
-    -- Compute cell ranges DIRECTLY from buffer text — so newly typed lines
-    -- are picked up immediately without waiting for sync_from_buffer.
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local ranges = {}
-    local cur_start = 0
-    local cell_idx = 1
-    for i, line in ipairs(lines) do
-      if line == Notebook.CELL_SEP then
-        table.insert(ranges, { start = cur_start, stop = i - 1, idx = cell_idx })
-        cell_idx = cell_idx + 1
-        cur_start = i
-      end
-    end
-    table.insert(ranges, { start = cur_start, stop = #lines, idx = cell_idx })
+    -- Cell ranges (source + output regions) straight from the buffer text.
+    local CellMode = require("jupynvim.cellmode")
+    local ranges = CellMode.ranges(buf)
 
     if not win or not vim.api.nvim_win_is_valid(win) then
       local wins = vim.fn.win_findbuf(buf)
@@ -625,7 +548,6 @@ function M.refresh(nb, win)
     end
     -- Geometry straight from the window: textoff = the statuscolumn gutter
     -- (which carries the cells' left borders), width = text area.
-    local CellMode = require("jupynvim.cellmode")
     local geom = { gut = CellMode.GUTTER, width = 80, total_w = 87 }
     if win and vim.api.nvim_win_is_valid(win) then
       local info = vim.fn.getwininfo(win)[1]
@@ -667,7 +589,7 @@ function M.setup_highlights()
   hl(0, HL_RESULT,     { fg = "#bb9af7" })
   hl(0, HL_OK,         { fg = "#9ece6a" })
   hl(0, HL_MORE,       { fg = "#565f89", italic = true })
-  hl(0, "JupynvimCellBg", { bg = "#16161e" })
+  hl(0, "JupynvimCellBg", { bg = "#1f2335" })
   hl(0, "JupynvimSeparator", { fg = "#414868" })
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
   require("jupynvim.markdown").setup_hl()

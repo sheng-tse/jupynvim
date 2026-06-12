@@ -14,6 +14,74 @@ local M = {}
 -- Cell separator: a string very unlikely to appear in real source code.
 -- (Plain `# %%` collides with jupytext-formatted notebooks.)
 M.CELL_SEP = "# %%[jupynvim:cell-sep]"
+-- Output-region marker: lines between OUT_SEP and the next CELL_SEP are
+-- the cell's rendered output as REAL buffer text (navigable/yankable with
+-- plain vim motions), excluded from the cell source on sync/save.
+M.OUT_SEP = "# %%[jupynvim:out]"
+
+-- Plain-text lines for a cell's outputs (the buffer representation).
+local function _as_str(v)
+  if type(v) == "table" then return table.concat(v, "") end
+  if type(v) == "string" then return v end
+  return ""
+end
+
+local function _strip_ansi(s)
+  s = s:gsub("\27%[[?]?[%d;]*[a-zA-Z]", "")
+  s = s:gsub("\27%][^\27]*\27\\", "")
+  s = s:gsub("\27.", "")
+  return s
+end
+
+local function _process_cr(s)
+  s = s:gsub("\r\n", "\n")
+  local out = {}
+  for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
+    local segments = {}
+    for seg in (chunk .. "\r"):gmatch("([^\r]*)\r") do
+      table.insert(segments, seg)
+    end
+    table.insert(out, segments[#segments] or "")
+  end
+  if out[#out] == "" then table.remove(out) end
+  return table.concat(out, "\n")
+end
+
+function M.output_lines(cell)
+  local lines = {}
+  local function add_text(text)
+    for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
+      if l:find("data:image/%w+;base64,") then
+        table.insert(lines, "  [embedded image data]")
+      else
+        table.insert(lines, "  " .. l)
+      end
+    end
+  end
+  for _, o in ipairs(cell.outputs or {}) do
+    if o.output_type == "stream" then
+      add_text(_strip_ansi(_process_cr(_as_str(o.text))))
+    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
+      local data = o.data or {}
+      local has_img = data["image/png"] or data["image/gif"] or data["image/jpeg"]
+      local text = _as_str(data["text/plain"])
+      if has_img and (text == "" or text:match("^<[Ff]igure ")
+          or text:match("^<[%w._]+ object>$")
+          or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
+        text = ""
+      end
+      if text ~= "" then add_text(text) end
+    elseif o.output_type == "error" then
+      local msg = _as_str(o.ename) .. ": " .. _as_str(o.evalue)
+      if msg ~= ": " then add_text(msg) end
+      for _, tb in ipairs(o.traceback or {}) do
+        add_text(_strip_ansi(_as_str(tb)))
+      end
+    end
+  end
+  while lines[#lines] == "  " or lines[#lines] == "" do table.remove(lines) end
+  return lines
+end
 
 local notebooks = {}   -- buf -> Notebook
 
@@ -83,6 +151,14 @@ function Notebook:to_lines()
     end
     local stop = #out
     table.insert(ranges, { id = c.id, start = start, stop = stop, type = c.cell_type })
+    -- outputs ride along as real (sync-excluded) text under the source
+    if c.cell_type == "code" and #(c.outputs or {}) > 0 then
+      local out_lines = M.output_lines(c)
+      if #out_lines > 0 then
+        table.insert(out, M.OUT_SEP)
+        for _, l in ipairs(out_lines) do table.insert(out, l) end
+      end
+    end
     if i < #self.cells then
       table.insert(out, M.CELL_SEP)
     end
@@ -96,10 +172,14 @@ end
 function Notebook:sync_from_buffer()
   local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
   local sources = { {} }
+  local in_out = false
   for _, l in ipairs(lines) do
     if l == M.CELL_SEP then
       table.insert(sources, {})
-    else
+      in_out = false
+    elseif l == M.OUT_SEP then
+      in_out = true  -- output region: not part of the source
+    elseif not in_out then
       table.insert(sources[#sources], l)
     end
   end

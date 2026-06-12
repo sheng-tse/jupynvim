@@ -28,8 +28,8 @@ M.config = {
   -- works for typical matplotlib plots; bump if your terminal is large and
   -- you want sharper output, or shrink for compact display. Affects the
   -- Kitty Unicode placeholder rendering. Reported as #7 by medwatt.
-  image_rows = 32,
-  image_cols = 96,
+  image_rows = 16,
+  image_cols = 48,
   -- Per-action keymap overrides. Each value is either a string (replace lhs)
   -- or `false` (disable). See lua/jupynvim/keymaps.lua for the full default
   -- list. nil/missing leaves the default in place.
@@ -929,6 +929,52 @@ function M._parse_remote_spec(s)
   return { host = prefix, path = path, label = prefix }
 end
 
+-- Debounced rewrite of cells' output REGIONS (real buffer lines) after
+-- kernel events. Bottom-up so line numbers stay valid across edits.
+local _out_sync = {}  -- buf -> { timer, ids }
+function M._queue_output_sync(buf, nb, cell_id)
+  local q = _out_sync[buf]
+  if not q then q = { ids = {} }; _out_sync[buf] = q end
+  q.ids[cell_id] = true
+  if q.timer then return end
+  q.timer = vim.uv.new_timer()
+  q.timer:start(150, 0, vim.schedule_wrap(function()
+    if q.timer then q.timer:stop(); q.timer:close(); q.timer = nil end
+    local ids = q.ids
+    q.ids = {}
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    M._apply_output_sync(nb, ids)
+  end))
+end
+
+function M._apply_output_sync(nb, ids)
+  local buf = nb.buf
+  local CellMode = require("jupynvim.cellmode")
+  local was_modifiable = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
+  local ranges = CellMode.ranges(buf)
+  for i = #nb.cells, 1, -1 do
+    local cell = nb.cells[i]
+    if cell and ids[cell.id] and ranges[i] then
+      local r = ranges[i]
+      local rep = {}
+      if cell.cell_type == "code" then
+        local out_lines = Notebook.output_lines(cell)
+        if #out_lines > 0 then
+          rep = { Notebook.OUT_SEP }
+          vim.list_extend(rep, out_lines)
+        end
+      end
+      local s0 = r.out_sep or r.stop
+      local e0 = r.out_stop or s0
+      pcall(vim.api.nvim_buf_set_lines, buf, s0, e0, false, rep)
+    end
+  end
+  vim.bo[buf].modifiable = not CellMode.is_command(buf) and was_modifiable or false
+  if not CellMode.is_command(buf) then vim.bo[buf].modifiable = true end
+  Render.refresh(nb, vim.fn.bufwinid(buf))
+end
+
 function M._handle_cell_event(p)
   if not p or not p.session_id then
     Log.warn("cell_event missing session_id: " .. vim.inspect(p):sub(1, 200))
@@ -950,6 +996,7 @@ function M._handle_cell_event(p)
             vim.bo[buf].modified = true
           end
         end)
+        M._queue_output_sync(buf, nb, p.cell_id)
       end
       -- EAGER image transmission — must use the SAME renderer as the active
       -- config so the cache entry matches what render_cell expects.
@@ -1460,8 +1507,9 @@ function M._populate_buffer(nb)
   -- "# %%[jupynvim:cell-sep]" text flashes visible on screen for one or
   -- two redraw frames between buffer population and the first render.
   local sep = require("jupynvim.notebook").CELL_SEP
+  local osep = require("jupynvim.notebook").OUT_SEP
   for i, line in ipairs(lines) do
-    if line == sep then
+    if line == sep or line == osep then
       pcall(vim.api.nvim_buf_set_extmark, nb.buf, nb.border_ns, i - 1, 0, {
         end_col = #line,
         conceal = "",
@@ -2280,156 +2328,6 @@ function M.kernel_picker(buf)
 end
 
 -- Internal helper: open the given cell's output as a scratch split.
-local function _open_output_inline(buf, cell, range, origin_line)
-  local function as_str(v)
-    if type(v) == "table" then return table.concat(v, "") end
-    if type(v) == "string" then return v end
-    return ""
-  end
-  local function strip_ansi(s)
-    s = s:gsub("\27%[[?]?[%d;]*[a-zA-Z]", "")
-    s = s:gsub("\27%][^\27]*\27\\", "")
-    s = s:gsub("\27.", "")
-    return s
-  end
-  -- Apply tqdm/progress-bar carriage-return semantics: \r overwrites the
-  -- current line, so only the LAST \r-terminated chunk per logical line
-  -- survives. Without this, the scratch split shows every intermediate
-  -- progress-bar tick as its own line (the inline view already applies
-  -- this in render.lua's process_cr).
-  local function process_cr(s)
-    -- Normalize CRLF → LF first. Shell output (IPython `!cmd`) ends lines
-    -- with \r\n; without this the bare-\r overwrite path below eats the
-    -- whole line and the scratch split shows "no text content".
-    s = s:gsub("\r\n", "\n")
-    local out = {}
-    for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
-      local segments = {}
-      for seg in (chunk .. "\r"):gmatch("([^\r]*)\r") do
-        table.insert(segments, seg)
-      end
-      table.insert(out, segments[#segments] or "")
-    end
-    if out[#out] == "" then table.remove(out) end
-    return table.concat(out, "\n")
-  end
-
-  local lines = {}
-  for _, o in ipairs(cell.outputs) do
-    if o.output_type == "stream" then
-      local txt = strip_ansi(process_cr(as_str(o.text)))
-      for line in (txt .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(lines, line)
-      end
-    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
-      local data = o.data or {}
-      local txt = as_str(data["text/plain"])
-      if txt ~= "" then
-        for line in (txt .. "\n"):gmatch("([^\n]*)\n") do
-          table.insert(lines, line)
-        end
-      end
-      if data["image/png"] then
-        table.insert(lines, "[image/png — view in main notebook]")
-      end
-    elseif o.output_type == "error" then
-      table.insert(lines, as_str(o.ename) .. ": " .. as_str(o.evalue))
-      for _, tb in ipairs(o.traceback or {}) do
-        local txt = strip_ansi(process_cr(as_str(tb)))
-        for line in (txt .. "\n"):gmatch("([^\n]*)\n") do
-          table.insert(lines, line)
-        end
-      end
-    end
-  end
-  if lines[#lines] == "" then table.remove(lines) end
-  if #lines == 0 then
-    vim.notify("jupynvim: output has no text content", vim.log.levels.INFO)
-    return
-  end
-
-  -- INLINE focus: a borderless, FULL-WIDTH float over the cell's output
-  -- region. Its lines carry the exact same leading blanks as the rendered
-  -- output rows, so the overlay is aligned by construction and the cursor
-  -- just appears "inside" the output text. Scrolls the full output (not
-  -- the clamped preview) and yanks like any buffer.
-  local win = vim.fn.bufwinid(buf)
-  if win == -1 then win = vim.api.nvim_get_current_win() end
-  local info = vim.fn.getwininfo(win)[1] or {}
-  local textoff = info.textoff or 0
-  local win_h = vim.api.nvim_win_get_height(win)
-  local win_w = vim.api.nvim_win_get_width(win)
-  local pad = string.rep(" ", textoff + 2)
-
-  local scratch = vim.api.nvim_create_buf(false, true)
-  local padded = {}
-  for i, l in ipairs(lines) do padded[i] = pad .. l end
-  vim.api.nvim_buf_set_lines(scratch, 0, -1, false, padded)
-  vim.api.nvim_set_option_value("modifiable", false, { buf = scratch })
-  vim.api.nvim_set_option_value("buftype", "nofile", { buf = scratch })
-  vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = scratch })
-  vim.api.nvim_set_option_value("filetype", "jupynvim_output", { buf = scratch })
-  vim.b[scratch].jupynvim_origin_buf = buf
-  vim.b[scratch].jupynvim_origin_line = origin_line
-  vim.api.nvim_buf_set_name(scratch,
-    string.format("jupynvim://Out[%s]", tostring(cell.execution_count or "?")))
-
-  -- screen row of the first output line: cell's last source line
-  -- + 1 (footer box edge) + 1 (execution bar) + 1 (next row)
-  local last_lnum = range and math.min(range.stop, vim.api.nvim_buf_line_count(buf)) or origin_line
-  local float_row = 1
-  local pos = vim.fn.screenpos(win, last_lnum, 1)
-  local wpos = vim.api.nvim_win_get_position(win)
-  if pos and pos.row and pos.row > 0 then
-    float_row = (pos.row - 1 - wpos[1]) + 3
-  end
-  if float_row >= win_h - 2 then float_row = math.max(win_h - 6, 1) end
-  local max_h = (M.config.output_max_lines or 30)
-  local height = math.max(math.min(#lines, max_h, win_h - float_row - 1), 3)
-
-  local fwin = vim.api.nvim_open_win(scratch, true, {
-    relative = "win", win = win,
-    row = float_row, col = 0,
-    width = win_w, height = height,
-    style = "minimal", border = "none",
-  })
-  vim.wo[fwin].winhighlight = "Normal:Normal,EndOfBuffer:Normal,SignColumn:Normal"
-  vim.wo[fwin].cursorline = false
-  vim.wo[fwin].wrap = true
-  pcall(vim.api.nvim_win_set_cursor, fwin, { 1, #pad })
-
-  local close_map = function()
-    local origin_buf = vim.b.jupynvim_origin_buf
-    local origin_l = vim.b.jupynvim_origin_line
-    pcall(vim.api.nvim_win_close, 0, true)
-    for _, w in ipairs(vim.fn.win_findbuf(origin_buf)) do
-      vim.api.nvim_set_current_win(w)
-      if origin_l then
-        pcall(vim.api.nvim_win_set_cursor, w, { origin_l, 0 })
-      end
-      break
-    end
-    -- borders/images under the float can be left stale: full repaint
-    vim.schedule(function() pcall(vim.cmd, "redraw!") end)
-  end
-  for _, lhs in ipairs({ "<C-j>", "<C-k>", "q", "<Esc>" }) do
-    vim.keymap.set("n", lhs, close_map, { buffer = scratch, silent = true, desc = "Leave output" })
-  end
-  -- a float pinned to window coords must never outlive its context:
-  -- close it the moment focus leaves it (scrolling the notebook, jumping
-  -- to another window), or it becomes a ghost overlay
-  vim.api.nvim_create_autocmd("WinLeave", {
-    buffer = scratch,
-    once = true,
-    callback = function()
-      if vim.api.nvim_win_is_valid(fwin) then
-        pcall(vim.api.nvim_win_close, fwin, true)
-        vim.schedule(function() pcall(vim.cmd, "redraw!") end)
-      end
-    end,
-  })
-end
-
 local function _has_output(cell)
   return cell and cell.cell_type == "code" and cell.outputs and #cell.outputs > 0
 end
@@ -2439,59 +2337,21 @@ end
 -- so when the cursor is below an output region, this key enters that
 -- region. From inside the scratch split, either key (or q) returns.
 function M.enter_output(buf, direction)
-  -- Already inside a jupynvim output float? Close and return.
-  local ok, _ = pcall(vim.api.nvim_buf_get_var, buf, "jupynvim_origin_buf")
-  if ok then
-    local origin_buf = vim.b[buf].jupynvim_origin_buf
-    local origin_line = vim.b[buf].jupynvim_origin_line
-    pcall(vim.api.nvim_win_close, 0, true)
-    if origin_buf then
-      for _, w in ipairs(vim.fn.win_findbuf(origin_buf)) do
-        vim.api.nvim_set_current_win(w)
-        if origin_line then
-          pcall(vim.api.nvim_win_set_cursor, w, { origin_line, 0 })
-        end
-        return
-      end
-    end
-    return
-  end
-
   local nb = Notebook.get(buf)
   if not nb then return end
-  -- VSCode model: output interaction belongs to the focused (edit-mode)
-  -- cell. In command mode, C-j/C-k act as plain window navigation so the
-  -- terminal/explorer round-trip keeps working.
   local CellMode = require("jupynvim.cellmode")
+  -- command mode: C-j/C-k are plain window navigation (terminal/explorer
+  -- round-trips). Inside a cell: hop between the source editor and its
+  -- output region, which is REAL buffer text (motions/visual/yank native).
   if CellMode.is_command(buf) then
     vim.cmd("wincmd " .. (direction == "up" and "k" or "j"))
     return
   end
-  nb:sync_from_buffer()
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local cur_id = nb:cell_at_line(lnum)
-  local cur_idx = 1
-  for i, c in ipairs(nb.cells) do if c.id == cur_id then cur_idx = i; break end end
-
-  local target_idx
   if direction == "up" then
-    -- look at current cell, then walk backwards
-    for i = cur_idx, 1, -1 do
-      if _has_output(nb.cells[i]) then target_idx = i; break end
-    end
+    CellMode.focus_source(buf)
   else
-    -- down: current cell first, then walk forwards
-    for i = cur_idx, #nb.cells do
-      if _has_output(nb.cells[i]) then target_idx = i; break end
-    end
+    CellMode.focus_output(buf)
   end
-  if not target_idx then
-    vim.notify("jupynvim: no " .. direction .. " cell with output", vim.log.levels.INFO)
-    return
-  end
-
-  local _, ranges = nb:to_lines()
-  _open_output_inline(buf, nb.cells[target_idx], ranges[target_idx], lnum)
 end
 
 -- gx on a rendered markdown link: the URL part is concealed, so resolve

@@ -44,14 +44,26 @@ function M.ranges(buf)
   if c and c.tick == tick then return c.ranges end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local ranges = {}
-  local cur = 0
+  local cur, out_sep = 0, nil
   for i, line in ipairs(lines) do
     if line == Notebook.CELL_SEP then
-      table.insert(ranges, { start = cur, stop = i - 1 })
-      cur = i
+      table.insert(ranges, {
+        start = cur,
+        stop = out_sep or (i - 1),          -- SOURCE end (exclusive)
+        out_sep = out_sep,                   -- 0-based OUT_SEP line, if any
+        out_stop = out_sep and (i - 1) or nil, -- output end (exclusive)
+      })
+      cur, out_sep = i, nil
+    elseif line == Notebook.OUT_SEP and not out_sep then
+      out_sep = i - 1
     end
   end
-  table.insert(ranges, { start = cur, stop = #lines })
+  table.insert(ranges, {
+    start = cur,
+    stop = out_sep or #lines,
+    out_sep = out_sep,
+    out_stop = out_sep and #lines or nil,
+  })
   _range_cache[buf] = { tick = tick, ranges = ranges }
   return ranges
 end
@@ -109,26 +121,26 @@ function M._statuscol_for(buf, lnum, virtnum, _relnum)
   local cell = nb.cells[idx]
   local editing = (not M.is_command(buf)) and idx == sel
   local boxed = (cell and cell.cell_type == "code") or editing
-  local hl = "JupynvimBorder"
-  local ch = "│"
-  if idx == sel then
-    ch = "┃"
-    hl = "JupynvimBorderSel"
-  end
+  -- selection indicator: far-left bar (VSCode), same for every cell type;
+  -- frames themselves stay calm and identical
+  local bar = (idx == sel) and "%#JupynvimBarSel#▌%*" or " "
   if not boxed then
-    -- rendered markdown: selection bar at the FAR LEFT (VSCode), no
-    -- numbers, no box edge
-    if idx == sel then
-      return "%#JupynvimBorderSel#▌%*" .. string.rep(" ", M.GUTTER - 1)
-    end
-    return string.rep(" ", M.GUTTER)
+    -- rendered markdown: bar only, no numbers, no box edge
+    return bar .. string.rep(" ", M.GUTTER - 1)
   end
-  local edge = "%#" .. hl .. "#" .. ch .. "%* "
+  local edge = "%#JupynvimBorder#│%* "
   if virtnum > 0 then
-    return "     " .. edge  -- wrap continuation rows carry no number
+    return bar .. "    " .. edge  -- wrap continuation rows carry no number
   end
-  -- per-cell ABSOLUTE numbering, both modes
-  return " %#LineNr#" .. string.format("%3d", line0 - r.start + 1) .. "%* " .. edge
+  -- hybrid numbering like VSCode/vim: relative distances, with the line
+  -- the cursor last sat on showing its in-cell absolute number highlighted
+  local n, num_hl
+  if relnum and relnum ~= 0 then
+    n, num_hl = relnum, "LineNr"
+  else
+    n, num_hl = line0 - r.start + 1, "CursorLineNr"
+  end
+  return bar .. "%#" .. num_hl .. "#" .. string.format("%3d", n) .. "%* " .. edge
 end
 
 -- ── selection / cursor visibility ──────────────────────────────────────────
@@ -293,11 +305,38 @@ local function clamp_to_cell(buf)
   if not r then return end
   local cur = vim.api.nvim_win_get_cursor(win)
   local lnum = cur[1]
+  local in_out = r.out_sep and lnum - 1 > r.out_sep and r.out_stop and lnum - 1 < r.out_stop
+  if in_out then return end  -- inside this cell's output region: free
   if lnum - 1 < r.start then
     pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, cur[2] })
   elseif lnum - 1 >= r.stop then
     pcall(vim.api.nvim_win_set_cursor, win, { math.max(r.stop, r.start + 1), cur[2] })
   end
+end
+M.clamp_to_cell = clamp_to_cell
+
+-- C-j/C-k inside a cell: hop between the source editor and its output
+-- region (both are real buffer lines).
+function M.focus_output(buf)
+  local st = state[buf]
+  local idx = (st and st.edit_idx) or M.selected_idx(buf)
+  local r = M.ranges(buf)[idx]
+  local win = vim.fn.bufwinid(buf)
+  if not (r and r.out_sep and win ~= -1) then
+    vim.notify("jupynvim: this cell has no output", vim.log.levels.INFO)
+    return
+  end
+  -- mark the output region as temporarily allowed for the clamp
+  pcall(vim.api.nvim_win_set_cursor, win, { math.min(r.out_sep + 2, r.out_stop), 2 })
+end
+
+function M.focus_source(buf)
+  local st = state[buf]
+  local idx = (st and st.edit_idx) or M.selected_idx(buf)
+  local r = M.ranges(buf)[idx]
+  local win = vim.fn.bufwinid(buf)
+  if not (r and win ~= -1) then return end
+  pcall(vim.api.nvim_win_set_cursor, win, { math.max(r.stop, r.start + 1), 0 })
 end
 
 -- ── attach ─────────────────────────────────────────────────────────────────
@@ -332,15 +371,21 @@ function M.attach(buf, api)
   -- into the next cell)
   local function edit_down()
     local r = edit_cell_range()
+    if not r then return end
     local l = vim.api.nvim_win_get_cursor(0)[1]
-    if r and l < r.stop then
+    local in_out = r.out_sep and l - 1 > r.out_sep
+    local limit = in_out and (r.out_stop or r.stop) or r.stop
+    if l < limit then
       vim.api.nvim_feedkeys("j", "n", false)
     end
   end
   local function edit_up()
     local r = edit_cell_range()
+    if not r then return end
     local l = vim.api.nvim_win_get_cursor(0)[1]
-    if r and l - 1 > r.start then
+    local in_out = r.out_sep and l - 1 > r.out_sep
+    local floor = in_out and (r.out_sep + 2) or (r.start + 1)
+    if l > floor then
       vim.api.nvim_feedkeys("k", "n", false)
     end
   end
@@ -431,11 +476,17 @@ function M.attach(buf, api)
       _range_cache[buf] = nil
     end,
   })
-  -- frames span the window width: re-render when it changes (explorer or
-  -- terminal toggles, window resizes)
+  -- frames span the window width: re-render when it changes. WinResized
+  -- is a GLOBAL event (a buffer-local autocmd never fires), so register it
+  -- globally and filter.
+  local resize_group = vim.api.nvim_create_augroup("jupynvim_resize_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
-    buffer = buf,
-    callback = function() refresh_render(buf) end,
+    group = resize_group,
+    callback = function()
+      if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
+        refresh_render(buf)
+      end
+    end,
   })
 
   M.enter_command(buf)
@@ -453,7 +504,7 @@ end
 
 function M.setup_hl()
   local hl = vim.api.nvim_set_hl
-  hl(0, "JupynvimBorderEdit", { fg = "#9ece6a", bold = true })
+  hl(0, "JupynvimBarSel", { fg = "#7aa2f7", bold = true })
   hl(0, "JupynvimHiddenCursor", { blend = 100, nocombine = true })
 end
 

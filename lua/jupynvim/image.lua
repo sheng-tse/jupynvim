@@ -371,7 +371,7 @@ end
 -- Larger = higher resolution = clearer image; bounded by typical terminal size.
 -- Mutable so init.lua's setup can override from user config without a
 -- circular require. See `require("jupynvim").setup({ image_rows, image_cols })`.
-local PLACEHOLDER_ROWS, PLACEHOLDER_COLS = 32, 96
+local PLACEHOLDER_ROWS, PLACEHOLDER_COLS = 16, 48
 
 function M.set_size(opts)
   opts = opts or {}
