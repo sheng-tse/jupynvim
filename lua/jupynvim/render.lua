@@ -293,11 +293,15 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   if range.start >= total then return end
 
   local gut, width, total_w = geom.gut, geom.width, geom.total_w
-  local lead = repeat_char(" ", gut)
   local boxed = cell.cell_type == "code" or editing
 
   -- ── markdown / raw, not being edited: frameless document flow ──
   if not boxed then
+    -- image rows embed the selection bar as their first column (these
+    -- rows bypass the statuscolumn via virt_lines_leftcol); the trailing
+    -- spacer row stays bar-less so the bar stops at the cell
+    local md_bar = selected and { "▌", "JupynvimBarSel" } or { " ", "Normal" }
+    local md_lead = repeat_char(" ", math.max(gut - 1, 0))
     local lines_below = {}
     if cell.cell_type == "markdown" then
       local Embedded = require("jupynvim.embedded")
@@ -308,13 +312,13 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
           local ph = image.placeholder_virt_lines(key)
           if ph then
             for _, line in ipairs(ph) do
-              table.insert(lines_below, { { lead, "Normal" }, { line[1][1], line[1][2] } })
+              table.insert(lines_below, { md_bar, { md_lead, "Normal" }, { line[1][1], line[1][2] } })
             end
           else
             local ascii = image.ascii_lines_for(key)
             if ascii then
               for _, line in ipairs(ascii) do
-                table.insert(lines_below, { { lead .. line, "Normal" } })
+                table.insert(lines_below, { md_bar, { md_lead .. line, "Normal" } })
               end
             end
           end
@@ -359,22 +363,37 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   local bc = box_chars(selected)
   local border_hl = HL_BORDER
   local label = cell.cell_type == "code" and "Python" or "Markdown"
+  -- header/footer bypass the statuscolumn (virt_lines_leftcol), so the
+  -- far-left selection bar is embedded as their first column
+  local bar_chunk = selected and { "▌", "JupynvimBarSel" } or { " ", "Normal" }
+  local function drop_first_col(s)
+    return s:sub(1, 1) == " " and s:sub(2) or s
+  end
   local hdr = header_line(total_w, gut, label, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
-    virt_lines = { { { hdr, busy and HL_BUSY or border_hl } } },
+    virt_lines = { { bar_chunk, { drop_first_col(hdr), busy and HL_BUSY or border_hl } } },
     virt_lines_above = true,
     virt_lines_leftcol = true,
   })
 
+  -- one leftcol extmark for everything under the source: row order inside
+  -- a single extmark is guaranteed (footer, exec bar, images, spacer).
+  -- Each row embeds the selection bar as its first column so the bar runs
+  -- the cell's full height; the spacer row stays bar-less (gap between
+  -- cells, like VSCode).
   local lines_below = {}
-  table.insert(lines_below, { { footer_line(total_w, gut, bc), border_hl } })
+  table.insert(lines_below,
+    { bar_chunk, { drop_first_col(footer_line(total_w, gut, bc)), border_hl } })
+  local sub_lead = repeat_char(" ", math.max(gut - 1, 0))
   if cell.cell_type == "code" then
-    local ex = { { lead, "Normal" } }
+    local ex = { bar_chunk, { sub_lead, "Normal" } }
     vim.list_extend(ex, exec_status_chunks(cell, st))
     table.insert(lines_below, ex)
     if #(cell.outputs or {}) > 0 then
-      for _, l in ipairs(build_image_virt_lines(cell, width, nb, lead)) do
-        table.insert(lines_below, l)
+      for _, l in ipairs(build_image_virt_lines(cell, width, nb, sub_lead)) do
+        local row = { bar_chunk }
+        vim.list_extend(row, l)
+        table.insert(lines_below, row)
       end
     end
   end
@@ -385,6 +404,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
     if last_out >= 0 then
       pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, last_out, 0, {
         virt_lines = { { { " ", "Normal" } } },
+        virt_lines_leftcol = true,
       })
     end
   else
@@ -415,6 +435,23 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
       line_hl_group = "JupynvimCellBg",
       priority = 1,
     })
+  end
+
+  -- Output regions are real buffer lines in a python-filetype buffer, so
+  -- treesitter/semantic tokens would paint them like code. Mask the whole
+  -- region with a high-priority plain foreground: outputs read as TEXT.
+  if range.out_sep and range.out_stop then
+    local out_last = math.min(range.out_stop, total) - 1
+    if out_last > range.out_sep then
+      local ltxt = vim.api.nvim_buf_get_lines(buf, out_last, out_last + 1, false)[1] or ""
+      pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, range.out_sep, 0, {
+        end_row = out_last,
+        end_col = #ltxt,
+        hl_group = "JupynvimOutputText",
+        hl_mode = "combine",
+        priority = 250,
+      })
+    end
   end
 
   -- Schedule image placements for image outputs
@@ -591,6 +628,9 @@ function M.setup_highlights()
   hl(0, HL_MORE,       { fg = "#565f89", italic = true })
   hl(0, "JupynvimCellBg", { bg = "#1f2335" })
   hl(0, "JupynvimSeparator", { fg = "#414868" })
+  -- plain foreground for output regions (masks treesitter's code colors)
+  local norm_ok, norm = pcall(vim.api.nvim_get_hl, 0, { name = "Normal", link = false })
+  hl(0, "JupynvimOutputText", { fg = (norm_ok and norm.fg) or 0xc0caf5 })
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
   require("jupynvim.markdown").setup_hl()
   require("jupynvim.cellmode").setup_hl()

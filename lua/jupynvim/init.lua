@@ -1524,9 +1524,12 @@ function M._populate_buffer(nb)
     vim.api.nvim_win_call(win, function()
       vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
       -- The statuscolumn IS the cell gutter: per-cell line numbers,
-      -- selection bar, and the cell's left border ('relativenumber' is on
-      -- only to feed v:relnum; the gutter draws its own numbers).
-      vim.opt_local.statuscolumn = "%!v:lua.require'jupynvim.cellmode'.statuscol()"
+      -- selection bar, and the cell's left border. The buffer number is
+      -- baked in because the expression can evaluate while ANOTHER window
+      -- is current. 'relativenumber' stays on only so cursor movement
+      -- triggers gutter redraws; the gutter computes its own numbers.
+      vim.opt_local.statuscolumn =
+        string.format("%%!v:lua.require'jupynvim.cellmode'.statuscol(%d)", nb.buf)
       -- hanging indents for wrapped markdown list items
       vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
       vim.cmd([[setlocal showbreak=\ ]])
@@ -1603,12 +1606,12 @@ function M._attach_autocmds(buf)
         for _, win in ipairs(wins) do
           vim.api.nvim_win_call(win, function()
             vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
-      -- The statuscolumn IS the cell gutter: per-cell line numbers,
-      -- selection bar, and the cell's left border ('relativenumber' is on
-      -- only to feed v:relnum; the gutter draws its own numbers).
-      vim.opt_local.statuscolumn = "%!v:lua.require'jupynvim.cellmode'.statuscol()"
-      -- hanging indents for wrapped markdown list items
-      vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
+            -- buffer number baked in: the expression can evaluate while
+            -- ANOTHER window is current (see _populate_buffer)
+            vim.opt_local.statuscolumn =
+              string.format("%%!v:lua.require'jupynvim.cellmode'.statuscol(%d)", buf)
+            -- hanging indents for wrapped markdown list items
+            vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
             vim.cmd([[setlocal showbreak=\ ]])
           end)
         end
@@ -2372,6 +2375,31 @@ function M.open_link(buf)
   end
   local cf = vim.fn.expand("<cfile>")
   if cf and cf ~= "" then pcall(vim.ui.open, cf) end
+end
+
+-- Open the markdown link under the MOUSE pointer. Used by the
+-- <LeftRelease> mapping in command mode, where rendered markdown isn't
+-- cursor-addressable (j/k jump whole cells), so a click is how links get
+-- followed, like VSCode's rendered view. Returns true when a link was
+-- opened so the mapping swallows that click.
+function M.click_link(buf)
+  local ok, mp = pcall(vim.fn.getmousepos)
+  if not ok or not mp or not mp.line or mp.line == 0 then return false end
+  if not mp.winid or mp.winid == 0 then return false end
+  local wok, wbuf = pcall(vim.api.nvim_win_get_buf, mp.winid)
+  if not wok or wbuf ~= buf then return false end
+  local line = (vim.api.nvim_buf_get_lines(buf, mp.line - 1, mp.line, false))[1]
+  if not line or line == "" then return false end
+  -- link_at falls back to the line's first link, which absorbs the
+  -- column drift that concealed URLs introduce under the mouse position
+  local l = require("jupynvim.markdown").link_at(line, math.max(mp.column or 1, 1))
+  if not (l and l.url and l.url ~= "") or l.url:match("^jupynvim%-img:") then
+    return false
+  end
+  pcall(vim.ui.open, l.url)
+  local shown = #l.url > 70 and (l.url:sub(1, 70) .. "…") or l.url
+  vim.notify("jupynvim: opening " .. shown, vim.log.levels.INFO)
+  return true
 end
 
 -- Save the current cell's image (markdown embedded or code-cell output)

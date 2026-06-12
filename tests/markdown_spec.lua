@@ -56,19 +56,44 @@ assert(any(1, function(d)
 end), "link arrow missing")
 print("3a. link rendering ok")
 
--- table: top border above header, sep overlay, pipes -> │, header bold group
+-- table: top border above header, boxed overlays over concealed raw rows
 assert(any(2, function(d)
   return d.virt_lines and d.virt_lines[1][1][1]:find("┌") and d.virt_lines[1][1][1]:find("┬")
 end), "table top border missing")
 assert(any(3, function(d)
   return d.virt_text and d.virt_text[1][1]:find("├") and d.virt_text[1][1]:find("┼")
 end), "table separator overlay missing")
-assert(any(4, function(d) return d.conceal == "│" end), "pipes not turned into │")
-assert(any(2, function(d) return d.hl_group == "JupynvimMdTableHead" end), "table header style missing")
+assert(any(2, function(d)
+  return d.virt_text and d.virt_text[1][1]:find("│", 1, true)
+    and d.virt_text[1][2] == "JupynvimMdTableHead"
+end), "table header overlay missing")
+assert(any(4, function(d)
+  return d.virt_text and d.virt_text[1][1]:find("│", 1, true)
+end), "table body overlay missing")
+assert(any(4, function(d) return d.conceal == "" end), "raw table row not concealed")
 assert(any(5, function(d)
-  return d.virt_lines and d.virt_lines[1][1][1]:find("└")
+  if not d.virt_lines then return false end
+  for _, vl in ipairs(d.virt_lines) do
+    if vl[1][1]:find("└") then return true end
+  end
+  return false
 end), "table bottom border missing")
 print("3b. table rendering ok")
+
+-- wide tables: columns shrink and long cells wrap INSIDE, no overflow
+local layout = MD._layout_table({
+  { "Frame", "Context Vectors" },
+  { "0", string.rep("[0, 0, 0] (Padding), ", 12) },
+}, 60)
+assert(layout, "wide-table layout failed")
+local function w(s) return vim.fn.strdisplaywidth(s) end
+assert(w(layout.top) <= 60, "top border too wide: " .. w(layout.top))
+assert(#layout.body[1] > 1, "long cell did not wrap to multiple lines")
+for _, ln in ipairs(layout.body[1]) do
+  assert(w(ln) <= 60, "body line too wide: " .. w(ln))
+end
+assert(w(layout.header[1]) == w(layout.top), "header width != border width")
+print("3b2. wide-table wrapping ok")
 
 -- emphasis: __bold__, ~~strike~~, _em_, snake_case untouched
 assert(any(6, function(d) return d.hl_group == "JupynvimMdBold" end), "__bold__ missing")

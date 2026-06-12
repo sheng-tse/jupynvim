@@ -433,70 +433,195 @@ end
 
 -- ---------- tables ----------
 
+local function dw(s) return vim.fn.strdisplaywidth(s) end
+
 -- A pipe-table separator row: only |, -, :, spaces, with at least one dash.
 local function is_table_sep(line)
   if not (line:find("|") and line:find("%-")) then return false end
   return line:match("^[|: %-%s]+$") ~= nil
 end
 
--- Map a table row's text to a border string: every pipe becomes a joint,
--- everything else a horizontal rule. Used for the top/bottom virt borders
--- and the separator-row overlay (assumes the common monospace-aligned
--- source; ragged tables still get the │ glyph treatment).
-local function map_border(text, l, m, r)
-  local first_pipe, last_pipe
-  for i = 1, #text do
-    if text:sub(i, i) == "|" then last_pipe = i; first_pipe = first_pipe or i end
+local function split_row(raw)
+  local inner = raw:gsub("^%s*|", ""):gsub("|%s*$", "")
+  local cells = {}
+  for cell in (inner .. "|"):gmatch("([^|]*)|") do
+    table.insert(cells, vim.trim(cell))
   end
-  local out = {}
-  for i = 1, #text do
-    if text:sub(i, i) == "|" then
-      out[i] = (i == first_pipe and l) or (i == last_pipe and r) or m
-    else
-      out[i] = "─"
-    end
-  end
-  return table.concat(out)
+  return cells
 end
 
-local function render_table(buf, ns, base, lines, first, last)
+-- Word-wrap one cell's text to `width` display columns (hard-breaking
+-- words longer than the column, multi-byte safe).
+local function wrap_cell(text, width)
+  if dw(text) <= width then return { text } end
+  local out, cur = {}, ""
+  for word in text:gmatch("%S+") do
+    while dw(word) > width do
+      if cur ~= "" then table.insert(out, cur); cur = "" end
+      local taken, rest, w = "", "", 0
+      for ch in word:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        local cw = dw(ch)
+        if rest ~= "" or w + cw > width then
+          rest = rest .. ch
+        else
+          taken = taken .. ch
+          w = w + cw
+        end
+      end
+      if taken == "" then break end
+      table.insert(out, taken)
+      word = rest
+    end
+    if word ~= "" then
+      local cand = cur == "" and word or (cur .. " " .. word)
+      if dw(cand) > width and cur ~= "" then
+        table.insert(out, cur)
+        cur = word
+      else
+        cur = cand
+      end
+    end
+  end
+  if cur ~= "" then table.insert(out, cur) end
+  if #out == 0 then out = { "" } end
+  return out
+end
+
+-- Pure layout (testable): logical rows -> boxed physical lines that fit
+-- max_w display columns. Wide columns shrink and their text wraps INSIDE
+-- the cell (VSCode behavior for dataframe-style tables), so the box never
+-- overflows the window. rows[1] is the header.
+function M._layout_table(rows, max_w)
+  local ncols = 0
+  for _, cells in ipairs(rows) do ncols = math.max(ncols, #cells) end
+  if ncols == 0 then return nil end
+  local wid = {}
+  for c = 1, ncols do
+    local w = 3
+    for _, cells in ipairs(rows) do w = math.max(w, dw(cells[c] or "")) end
+    wid[c] = w
+  end
+  local MIN = 8
+  local function total()
+    local t = ncols + 1
+    for c = 1, ncols do t = t + wid[c] + 2 end
+    return t
+  end
+  for _ = 1, 256 do
+    if total() <= max_w then break end
+    local bi, bw = nil, MIN
+    for c = 1, ncols do
+      if wid[c] > bw then bi, bw = c, wid[c] end
+    end
+    if not bi then break end  -- every column already at MIN: give up
+    wid[bi] = math.max(MIN, wid[bi] - math.max(1, total() - max_w))
+  end
+  local function border(l, m, r)
+    local parts = {}
+    for c = 1, ncols do parts[c] = string.rep("─", wid[c] + 2) end
+    return l .. table.concat(parts, m) .. r
+  end
+  local function fmt_row(cells)
+    local wrapped, height = {}, 1
+    for c = 1, ncols do
+      wrapped[c] = wrap_cell(cells[c] or "", wid[c])
+      height = math.max(height, #wrapped[c])
+    end
+    local phys = {}
+    for i = 1, height do
+      local parts = {}
+      for c = 1, ncols do
+        local t = wrapped[c][i] or ""
+        parts[c] = " " .. t .. string.rep(" ", math.max(wid[c] - dw(t), 0)) .. " "
+      end
+      phys[i] = "│" .. table.concat(parts, "│") .. "│"
+    end
+    return phys
+  end
+  local body = {}
+  for ri = 2, #rows do body[ri - 1] = fmt_row(rows[ri]) end
+  return {
+    header = fmt_row(rows[1]),
+    top = border("┌", "┬", "┐"),
+    mid = border("├", "┼", "┤"),
+    bot = border("└", "┴", "┘"),
+    body = body,
+  }
+end
+
+-- Render a pipe table as a proper box: raw rows are fully concealed and a
+-- laid-out version is drawn in their place. Robust to ragged sources and
+-- rows wider than the window (the old renderer assumed monospace-aligned
+-- pipes and overflowed past the border).
+--
+-- Two placements, because conceal hides TEXT but does not collapse a long
+-- line's WRAP ROWS (they stay as blank screen rows):
+--   • every raw row fits the width  -> overlay each row 1:1 (no gaps)
+--   • some raw row would wrap       -> the whole boxed table renders as
+--     one contiguous virt-line block above the concealed source rows;
+--     the leftover blank rows fall BELOW the box as plain spacing
+local function render_table(buf, ns, base, lines, first, last, max_w)
+  max_w = math.max(max_w or 80, 24)
+  local rows = { split_row(lines[first]) }
+  for i = first + 2, last do
+    table.insert(rows, split_row(lines[i]))
+  end
+  local layout = M._layout_table(rows, max_w)
+  if not layout then return end
+
+  local function conceal_row(lnum)
+    local raw = lines[lnum - base + 1] or ""
+    set_mark(buf, ns, lnum, 0, { end_col = #raw, conceal = "", priority = 150 })
+  end
+
+  local fits = true
+  for i = first, last do
+    if dw(lines[i]) > max_w then fits = false; break end
+  end
+
+  if not fits then
+    local vls = { { { layout.top, HL.TableBorder } } }
+    for _, h in ipairs(layout.header) do table.insert(vls, { { h, HL.TableHead } }) end
+    table.insert(vls, { { layout.mid, HL.TableBorder } })
+    for _, phys in ipairs(layout.body) do
+      for _, p in ipairs(phys) do table.insert(vls, { { p, "Normal" } }) end
+    end
+    table.insert(vls, { { layout.bot, HL.TableBorder } })
+    set_mark(buf, ns, base + first - 1, 0, {
+      virt_lines = vls,
+      virt_lines_above = true,
+    })
+    for i = first, last do conceal_row(base + i - 1) end
+    return
+  end
+
+  local function put(lnum, phys, hl, extra_below)
+    conceal_row(lnum)
+    set_mark(buf, ns, lnum, 0, {
+      virt_text = { { phys[1], hl } },
+      virt_text_pos = "overlay",
+      hl_mode = "combine",
+      priority = 160,
+    })
+    local below = {}
+    for i = 2, #phys do table.insert(below, { { phys[i], hl } }) end
+    for _, b in ipairs(extra_below or {}) do table.insert(below, b) end
+    if #below > 0 then
+      set_mark(buf, ns, lnum, 0, { virt_lines = below })
+    end
+  end
+
   set_mark(buf, ns, base + first - 1, 0, {
-    virt_lines = { { { map_border(lines[first], "┌", "┬", "┐"), HL.TableBorder } } },
+    virt_lines = { { { layout.top, HL.TableBorder } } },
     virt_lines_above = true,
   })
-  set_mark(buf, ns, base + last - 1, 0, {
-    virt_lines = { { { map_border(lines[last], "└", "┴", "┘"), HL.TableBorder } } },
-  })
-  for i = first, last do
-    local lnum = base + i - 1
-    local raw = lines[i]
-    if i == first + 1 then
-      set_mark(buf, ns, lnum, 0, {
-        end_col = #raw,
-        virt_text = { { map_border(raw, "├", "┼", "┤"), HL.TableBorder } },
-        virt_text_pos = "overlay",
-        hl_mode = "combine",
-        priority = 110,
-      })
-    else
-      local p = 1
-      while true do
-        local a = raw:find("|", p, true)
-        if not a then break end
-        set_mark(buf, ns, lnum, a - 1, {
-          end_col = a,
-          conceal = "│",
-          hl_group = HL.TableBorder,
-          hl_mode = "combine",
-          priority = 110,
-        })
-        p = a + 1
-      end
-      if i == first then
-        set_mark(buf, ns, lnum, 0, { end_col = #raw, hl_group = HL.TableHead, hl_mode = "combine", priority = 90 })
-      end
-      inline_styling(buf, ns, lnum, raw)
-    end
+  local bot_row = { { { layout.bot, HL.TableBorder } } }
+  put(base + first - 1, layout.header, HL.TableHead)
+  put(base + first, { layout.mid }, HL.TableBorder,
+    #layout.body == 0 and bot_row or nil)
+  for bi, phys in ipairs(layout.body) do
+    put(base + first + 1 + bi - 1, phys, "Normal",
+      bi == #layout.body and bot_row or nil)
   end
 end
 
@@ -530,7 +655,7 @@ function M.render(buf, ns, start_line, end_line, render_width)
           last = j
           j = j + 1
         end
-        render_table(buf, ns, start_line, lines, first, last)
+        render_table(buf, ns, start_line, lines, first, last, render_width)
         for r = first, last do claimed[r] = true end
         i = last + 1
       else

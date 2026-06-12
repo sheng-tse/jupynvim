@@ -16,11 +16,12 @@
 --                      to COMMAND.
 --
 -- The statuscolumn IS the left side of each cell's frame: per-cell line
--- numbers (absolute in command mode, relative-to-cursor inside the edited
--- cell), the selection bar, and the box's left border. Virtual rows
--- (headers, outputs, execution bars) and markdown cells get a blank
--- gutter, exactly like VSCode. Keeping the border out of the text area
--- also means the insert cursor aligns correctly on empty lines.
+-- numbers (relative distances anchored on the line the cursor last sat
+-- on; the anchor line keeps its in-cell absolute number, highlighted),
+-- the selection bar, and the box's left border. Markdown cells and
+-- output rows get bar-only gutters, exactly like VSCode. Keeping the
+-- border out of the text area also means the insert cursor aligns
+-- correctly on empty lines.
 
 local M = {}
 
@@ -93,52 +94,76 @@ end
 
 -- ── statuscolumn ───────────────────────────────────────────────────────────
 -- Per-cell gutter. Every branch renders exactly M.GUTTER display cells so
--- the text area never shifts between lines. The cell's left border IS the
--- selection indicator: heavy + colored on the current cell (blue in
--- command mode, green while editing), like VSCode's bar; no second bar.
-function M.statuscol()
-  return M._statuscol_for(vim.api.nvim_get_current_buf(), vim.v.lnum, vim.v.virtnum, vim.v.relnum)
+-- the text area never shifts between lines.
+--
+-- `buf` is baked into each window's option string: the expression can be
+-- evaluated while a DIFFERENT window is current (file explorer focused,
+-- for example), so resolving "the current buffer" here used to blank the
+-- whole gutter and visually break every frame's left side.
+function M.statuscol(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    buf = vim.api.nvim_get_current_buf()
+  end
+  return M._statuscol_for(buf, vim.v.lnum, vim.v.virtnum)
 end
 
--- Pure form (testable): gutter content for (buf, lnum, virtnum, relnum).
-function M._statuscol_for(buf, lnum, virtnum, _relnum)
+-- Pure form (testable): gutter content for (buf, lnum, virtnum).
+function M._statuscol_for(buf, lnum, virtnum)
   local nb = Notebook.get(buf)
   if not nb then return "" end
-  if virtnum < 0 then
-    return ""  -- virtual rows (header/outputs/exec bar): blank gutter
-  end
   local ranges = M.ranges(buf)
   local line0 = lnum - 1
   local r, idx
   for i, range in ipairs(ranges) do
-    if line0 >= range.start and line0 < range.stop then
+    if line0 >= range.start and line0 < (range.out_stop or range.stop) then
       r, idx = range, i
       break
     end
   end
   if not r then return string.rep(" ", M.GUTTER) end  -- separator line
   local sel = M.selected_idx(buf)
+  local st = state[buf]
   local cell = nb.cells[idx]
-  local editing = (not M.is_command(buf)) and idx == sel
+  local command = M.is_command(buf)
+  local editing = (not command) and idx == ((st and st.edit_idx) or sel)
   local boxed = (cell and cell.cell_type == "code") or editing
   -- selection indicator: far-left bar (VSCode), same for every cell type;
-  -- frames themselves stay calm and identical
+  -- frames themselves stay calm and identical. Virtual rows (images,
+  -- spacers, table borders) and output rows keep the bar so it runs the
+  -- cell's full height without gaps.
   local bar = (idx == sel) and "%#JupynvimBarSel#▌%*" or " "
-  if not boxed then
-    -- rendered markdown: bar only, no numbers, no box edge
+  local in_src = line0 < r.stop
+  if virtnum < 0 or not in_src or not boxed then
     return bar .. string.rep(" ", M.GUTTER - 1)
   end
   local edge = "%#JupynvimBorder#│%* "
   if virtnum > 0 then
     return bar .. "    " .. edge  -- wrap continuation rows carry no number
   end
-  -- hybrid numbering like VSCode/vim: relative distances, with the line
-  -- the cursor last sat on showing its in-cell absolute number highlighted
-  local n, num_hl
-  if relnum and relnum ~= 0 then
-    n, num_hl = relnum, "LineNr"
-  else
-    n, num_hl = line0 - r.start + 1, "CursorLineNr"
+  -- VSCode-hybrid numbering: in the ACTIVE cell, lines show their distance
+  -- to the anchor (the line the cursor sits on while editing, or last sat
+  -- on after Esc) and the anchor line keeps its in-cell absolute number,
+  -- highlighted. Inactive cells show plain per-cell absolute numbers.
+  local n, num_hl = line0 - r.start + 1, "LineNr"
+  local active = editing or (command and idx == sel)
+  if active then
+    local anchor = r.start + 1
+    local saved = st and st.pos and st.pos[idx]
+    if saved and saved[1] - 1 >= r.start and saved[1] - 1 < r.stop then
+      anchor = saved[1]
+    end
+    if editing then
+      local win = vim.fn.bufwinid(buf)
+      if win ~= -1 then
+        local cl = vim.api.nvim_win_get_cursor(win)[1]
+        if cl - 1 >= r.start and cl - 1 < r.stop then anchor = cl end
+      end
+    end
+    if lnum == anchor then
+      num_hl = "CursorLineNr"            -- in-cell absolute, highlighted
+    else
+      n = math.abs(lnum - anchor)        -- distance to the anchor line
+    end
   end
   return bar .. "%#" .. num_hl .. "#" .. string.format("%3d", n) .. "%* " .. edge
 end
@@ -182,9 +207,14 @@ function M.enter_command(buf)
   state[buf] = state[buf] or { pos = {} }
   local win = vim.fn.bufwinid(buf)
   if state[buf].mode ~= "command" then
-    -- remember where the cursor was inside the cell we're leaving
+    -- remember where the cursor was inside the cell we're leaving (source
+    -- positions only: the anchor and Enter-restore both live in the source)
     if win ~= -1 and state[buf].edit_idx then
-      state[buf].pos[state[buf].edit_idx] = vim.api.nvim_win_get_cursor(win)
+      local cur = vim.api.nvim_win_get_cursor(win)
+      local r = M.ranges(buf)[state[buf].edit_idx]
+      if r and cur[1] - 1 >= r.start and cur[1] - 1 < r.stop then
+        state[buf].pos[state[buf].edit_idx] = cur
+      end
     end
   end
   state[buf].mode = "command"
@@ -206,6 +236,7 @@ function M.enter_edit(buf, keys)
   local win = vim.fn.bufwinid(buf)
   local idx = M.selected_idx(buf)
   state[buf].edit_idx = idx
+  state[buf].region = "src"
   -- restore the cursor to where it last was in THIS cell
   local saved = state[buf].pos[idx]
   local r = M.ranges(buf)[idx]
@@ -295,7 +326,9 @@ end
 -- ── edit-mode confinement ──────────────────────────────────────────────────
 -- VSCode can't move focus out of a cell editor with plain motions: clamp
 -- the cursor back into the edited cell whenever it strays (covers G, gg,
--- }, searches, everything).
+-- }, searches, everything). The clamp is REGION-aware: while the cursor
+-- is in the cell's output region, motions clamp to the OUTPUT's bounds
+-- (G goes to the output's last line, not back into the source).
 local function clamp_to_cell(buf)
   local st = state[buf]
   if not st or st.mode ~= "edit" or not st.edit_idx then return end
@@ -305,12 +338,26 @@ local function clamp_to_cell(buf)
   if not r then return end
   local cur = vim.api.nvim_win_get_cursor(win)
   local lnum = cur[1]
+  local in_src = lnum - 1 >= r.start and lnum - 1 < r.stop
   local in_out = r.out_sep and lnum - 1 > r.out_sep and r.out_stop and lnum - 1 < r.out_stop
-  if in_out then return end  -- inside this cell's output region: free
-  if lnum - 1 < r.start then
-    pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, cur[2] })
-  elseif lnum - 1 >= r.stop then
-    pcall(vim.api.nvim_win_set_cursor, win, { math.max(r.stop, r.start + 1), cur[2] })
+  if in_src then
+    st.region = "src"
+  elseif in_out then
+    st.region = "out"
+  else
+    local lo, hi
+    if st.region == "out" and r.out_sep and r.out_stop then
+      lo, hi = r.out_sep + 2, math.max(r.out_stop, r.out_sep + 2)
+    else
+      lo, hi = r.start + 1, math.max(r.stop, r.start + 1)
+    end
+    pcall(vim.api.nvim_win_set_cursor, win, { lnum < lo and lo or hi, cur[2] })
+  end
+  -- live anchor for the gutter's hybrid numbers + Enter's cursor memory
+  -- (source positions only; output hops shouldn't move the anchor)
+  local now = vim.api.nvim_win_get_cursor(win)
+  if now[1] - 1 >= r.start and now[1] - 1 < r.stop then
+    st.pos[st.edit_idx] = now
   end
 end
 M.clamp_to_cell = clamp_to_cell
@@ -326,7 +373,7 @@ function M.focus_output(buf)
     vim.notify("jupynvim: this cell has no output", vim.log.levels.INFO)
     return
   end
-  -- mark the output region as temporarily allowed for the clamp
+  if st then st.region = "out" end
   pcall(vim.api.nvim_win_set_cursor, win, { math.min(r.out_sep + 2, r.out_stop), 2 })
 end
 
@@ -336,12 +383,13 @@ function M.focus_source(buf)
   local r = M.ranges(buf)[idx]
   local win = vim.fn.bufwinid(buf)
   if not (r and win ~= -1) then return end
+  if st then st.region = "src" end
   pcall(vim.api.nvim_win_set_cursor, win, { math.max(r.stop, r.start + 1), 0 })
 end
 
 -- ── attach ─────────────────────────────────────────────────────────────────
 function M.attach(buf, api)
-  state[buf] = { mode = "edit", pos = {} }
+  state[buf] = { mode = "edit", pos = {}, region = "src" }
 
   local function map(mode, lhs, fn, desc)
     vim.keymap.set(mode, lhs, fn, { buffer = buf, silent = true, nowait = true, desc = desc })
@@ -393,15 +441,27 @@ function M.attach(buf, api)
   cmdmap("k", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", edit_up)
   cmdmap("<Down>", function() M.move_selection(buf, 1) end, "jupynvim: next cell", edit_down)
   cmdmap("<Up>", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", edit_up)
-  -- gg/G: first/last cell in command mode, first/last line OF THE CELL in
-  -- edit mode (motions never leave the cell editor)
+  -- gg/G: first/last cell in command mode, first/last line OF THE REGION
+  -- the cursor is in while editing (source editor or output region)
   cmdmap("gg", function() M.select_first(buf) end, "jupynvim: first cell", function()
     local r = edit_cell_range()
-    if r then pcall(vim.api.nvim_win_set_cursor, 0, { r.start + 1, 0 }) end
+    if not r then return end
+    local st = state[buf]
+    if st and st.region == "out" and r.out_sep and r.out_stop then
+      pcall(vim.api.nvim_win_set_cursor, 0, { r.out_sep + 2, 0 })
+    else
+      pcall(vim.api.nvim_win_set_cursor, 0, { r.start + 1, 0 })
+    end
   end)
   cmdmap("G", function() M.select_last(buf) end, "jupynvim: last cell", function()
     local r = edit_cell_range()
-    if r then pcall(vim.api.nvim_win_set_cursor, 0, { math.max(r.stop, r.start + 1), 0 }) end
+    if not r then return end
+    local st = state[buf]
+    if st and st.region == "out" and r.out_sep and r.out_stop then
+      pcall(vim.api.nvim_win_set_cursor, 0, { math.max(r.out_stop, r.out_sep + 2), 0 })
+    else
+      pcall(vim.api.nvim_win_set_cursor, 0, { math.max(r.stop, r.start + 1), 0 })
+    end
   end)
   cmdmap("dd", function()
     with_modifiable(buf, function() api.delete_cell(buf) end)
@@ -428,6 +488,17 @@ function M.attach(buf, api)
   cmdmap("A", function() M.enter_edit(buf, "A") end, "jupynvim: edit cell")
   cmdmap("o", function() M.enter_edit(buf, "o") end, "jupynvim: edit cell")
   cmdmap("O", function() M.enter_edit(buf, "O") end, "jupynvim: edit cell")
+
+  -- Mouse: a single click on a rendered markdown link opens it. Rendered
+  -- markdown isn't cursor-addressable in command mode (j/k jump whole
+  -- cells), so the mouse is how links get followed, like VSCode's
+  -- rendered view. Falls through to the normal click everywhere else.
+  vim.keymap.set("n", "<LeftRelease>", function()
+    if M.is_command(buf) and api.click_link and api.click_link(buf) then
+      return "<Ignore>"
+    end
+    return "<LeftRelease>"
+  end, { buffer = buf, expr = true, silent = true, desc = "jupynvim: open link under mouse" })
 
   -- Esc: edit -> command (VSCode). In command mode it clears search
   -- highlight so the global Esc habit still works.

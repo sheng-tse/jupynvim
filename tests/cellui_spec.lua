@@ -27,16 +27,19 @@ end
 
 -- Buffer layout: 1:# Title 2:Some.. 3:SEP 4:print(1) 5:print(2) 6:SEP 7:1+1
 
--- A. command mode by default, buffer locked, gutter installed
+-- A. command mode by default, buffer locked, gutter installed with the
+--    buffer number BAKED IN (the expression can evaluate while another
+--    window is current, e.g. the file explorer has focus)
 assert(CellMode.is_command(buf), "not in command mode after attach")
 assert(vim.bo[buf].modifiable == false, "buffer modifiable in command mode")
-assert(vim.wo[win].statuscolumn:find("cellmode", 1, true), "statuscolumn not installed")
-print("A. command mode + lock + statuscolumn ok")
+assert(vim.wo[win].statuscolumn:find("statuscol(" .. buf .. ")", 1, true),
+  "statuscolumn must bake in the bufnr: " .. vim.wo[win].statuscolumn)
+print("A. command mode + lock + statuscolumn(buf) ok")
 
 -- B. gutter semantics
 vim.api.nvim_win_set_cursor(win, { 1, 0 })  -- select markdown cell 1
-local function sc(lnum, virtnum, relnum)
-  return CellMode._statuscol_for(buf, lnum, virtnum or 0, relnum or 0)
+local function sc(lnum, virtnum)
+  return CellMode._statuscol_for(buf, lnum, virtnum or 0)
 end
 assert(sc(4):find("  1", 1, true) and sc(4):find("│", 1, true),
   "code line 1 should number 1 with border: " .. sc(4))
@@ -44,10 +47,13 @@ assert(sc(5):find("  2", 1, true), "code line 2 should number 2: " .. sc(5))
 assert(not sc(3):find("%d"), "separator must have blank gutter")
 assert(not sc(1):find("%d"), "markdown lines must have NO numbers: " .. sc(1))
 assert(sc(1):find("▌", 1, true), "selected markdown cell must show the bar")
-assert(sc(4, -1) == "", "virtual rows (outputs/exec) must have a blank gutter")
+assert(sc(4, -1) == string.rep(" ", 7),
+  "virt rows of UNselected cells: blank gutter: [" .. sc(4, -1) .. "]")
+assert(sc(1, -1):find("▌", 1, true),
+  "virt rows of the SELECTED cell carry the bar (continuous bar)")
 assert(not sc(4, 2):find("%d"), "wrap rows carry no number")
 assert(sc(4, 2):find("│", 1, true), "wrap rows keep the left border")
-print("B. gutter: per-cell numbers, md/sep/virt blanks, wrap border ok")
+print("B. gutter: per-cell numbers, md/sep blanks, bar continuity ok")
 
 -- C. j/k moves cell selection (cell3 sits after cell2's output region)
 local R = CellMode.ranges(buf)
@@ -75,16 +81,32 @@ assert(vim.api.nvim_win_get_cursor(win)[1] == 4, "gg must go to the CELL's first
 feed("j"); feed("j")  -- would leave the cell; clamp must hold it
 assert(vim.api.nvim_win_get_cursor(win)[1] == 5, "motion escaped the cell: line "
   .. vim.api.nvim_win_get_cursor(win)[1])
--- per-cell ABSOLUTE numbers in edit mode too (relnum must not leak in)
-assert(sc(4, 0, 1):find("  1", 1, true), "edit mode must keep per-cell absolute numbers")
-assert(sc(5, 0, 0):find("  2", 1, true), "edit mode must keep per-cell absolute numbers")
+-- hybrid numbers: cursor on line 5 (cell line 2): the anchor shows its
+-- in-cell ABSOLUTE number highlighted, neighbours show DISTANCES
+assert(sc(5):find("CursorLineNr", 1, true) and sc(5):find("  2", 1, true),
+  "anchor line must show highlighted in-cell absolute: " .. sc(5))
+assert(sc(4):find("  1", 1, true) and not sc(4):find("CursorLineNr"),
+  "neighbour must show distance: " .. sc(4))
+feed("k")  -- cursor to line 4: line 5 must now read 1 (distance), not 2
+assert(sc(4):find("CursorLineNr", 1, true), "anchor must follow the cursor: " .. sc(4))
+assert(sc(5):find("  1", 1, true) and not sc(5):find("  2", 1, true),
+  "numbers must be RELATIVE to the cursor line: " .. sc(5))
+feed("j")  -- back to line 5
 feed("<Esc>")
 assert(CellMode.is_command(buf), "Esc did not return to command mode")
 assert(vim.bo[buf].modifiable == false, "command mode should re-lock")
+-- after Esc the numbers KEEP the last cursor line as their anchor
+assert(sc(5):find("CursorLineNr", 1, true) and sc(5):find("  2", 1, true),
+  "after Esc the anchor must stay on the last cursor line: " .. sc(5))
+assert(sc(4):find("  1", 1, true), "after Esc distances stay relative: " .. sc(4))
+-- inactive cells show plain per-cell absolute numbers
+local R3 = CellMode.ranges(buf)[3]
+assert(sc(R3.start + 1):find("  1", 1, true) and not sc(R3.start + 1):find("CursorLineNr"),
+  "inactive cells use plain absolute numbers: " .. sc(R3.start + 1))
 feed("<CR>")  -- re-enter: cursor restored to line 5
 assert(vim.api.nvim_win_get_cursor(win)[1] == 5, "cursor position not remembered")
 feed("<Esc>")
-print("D. edit confinement + relative numbers + cursor memory ok")
+print("D. edit confinement + hybrid numbers + cursor memory ok")
 
 -- E. render: leftcol frames, heavy selected border, exec bar, clamp,
 --    frameless markdown
@@ -121,7 +143,13 @@ for _, m in ipairs(marks) do
     error("markdown cell has a right border while not edited")
   end
 end
-print("E. render: heavy selection, frames, exec, clamp, frameless md ok")
+-- output regions are masked to plain text (no treesitter code colors)
+local plain = false
+for _, m in ipairs(marks) do
+  if m[4].hl_group == "JupynvimOutputText" then plain = true end
+end
+assert(plain, "output regions must be masked to plain text")
+print("E. render: frames, exec, frameless md, plain outputs ok")
 
 -- E2. editing a markdown cell draws the source editor box
 vim.api.nvim_win_set_cursor(win, { 1, 0 })
@@ -185,8 +213,21 @@ feed("yy")
 assert(vim.fn.getreg('"'):find("x"), "yank in output region failed")
 feed("j")  -- moves within the region
 assert(vim.api.nvim_win_get_cursor(win)[1] == l + 1, "j inside output should move")
+-- region-aware G/gg: inside the output they go to the OUTPUT's bounds,
+-- not back to the source editor
+feed("G")
+assert(vim.api.nvim_win_get_cursor(win)[1] == CMr[2].out_stop,
+  "G inside the output must land on the output's LAST line, got "
+  .. vim.api.nvim_win_get_cursor(win)[1])
+feed("gg")
+assert(vim.api.nvim_win_get_cursor(win)[1] == CMr[2].out_sep + 2,
+  "gg inside the output must land on the output's FIRST line, got "
+  .. vim.api.nvim_win_get_cursor(win)[1])
 J.enter_output(buf, "up")
 assert(vim.api.nvim_win_get_cursor(win)[1] == 5, "C-k did not return to the source")
+feed("G")
+assert(vim.api.nvim_win_get_cursor(win)[1] == 5,
+  "G back in the source must clamp to the SOURCE's last line")
 feed("<Esc>")
 -- kernel events rewrite the region in place
 nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 9 })
@@ -201,6 +242,18 @@ end
 assert(found, "output sync did not write the new region")
 assert(vim.bo[buf].modifiable == false, "command mode lock lost after sync")
 print("G. real output regions ok")
+
+-- H. the gutter renders no matter which window/buffer is CURRENT: a
+--    focused file explorer must not blank the notebook's numbers/borders
+local scratch = vim.api.nvim_create_buf(false, true)
+vim.cmd("vsplit")
+vim.api.nvim_set_current_buf(scratch)
+assert(vim.api.nvim_get_current_buf() ~= buf, "setup: scratch not current")
+local g = CellMode._statuscol_for(buf, 4, 0)
+assert(g:find("│", 1, true) and g:find("%d"),
+  "gutter must render with another buffer current: [" .. g .. "]")
+vim.cmd("close")
+print("H. gutter independent of focused window ok")
 
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")
