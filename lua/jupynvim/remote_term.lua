@@ -144,18 +144,41 @@ local function bind_resize_keys(buf, slot)
   end
   for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end
   for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end
-  -- Terminal scrollback is read-only (true of every terminal, incl. stock
-  -- :terminal): edit operators would only raise E21, so they're inert in
-  -- BOTH normal and visual mode. Movement, search, visual selection, and
-  -- y (copying scrollback) still work; i/a enter terminal-insert as usual.
-  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "S", "C", "D", "r" }) do
+  -- Terminal SCROLLBACK is read-only (true of every terminal, incl. stock
+  -- :terminal) — that text mirrors what the remote program drew, so generic
+  -- d/c/x on it are inert instead of raising E21. But the COMMAND LINE is
+  -- editable through the shell itself, so the line-wise vim idioms translate
+  -- to readline control codes:
+  --   dd      kill the whole command line            (^U^K)
+  --   cc / S  kill the line and start typing         (^U^K + insert)
+  --   D       kill from the shell cursor to the end  (^K)
+  --   C       same, then start typing
+  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "r" }) do
     pcall(vim.keymap.set, { "n", "x" }, lhs, function() end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in scrollback" })
   end
   for _, lhs in ipairs({ "o", "O", "u", "<C-r>" }) do
     pcall(vim.keymap.set, "n", lhs, function() end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in scrollback" })
   end
+  local function shell_edit(codes, insert)
+    return function()
+      send_text(buf, codes)
+      if insert then
+        vim.cmd("startinsert")
+      end
+    end
+  end
+  pcall(vim.keymap.set, "n", "dd", shell_edit("\21\11", false),
+    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: kill command line" })
+  pcall(vim.keymap.set, "n", "cc", shell_edit("\21\11", true),
+    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: change command line" })
+  pcall(vim.keymap.set, "n", "S", shell_edit("\21\11", true),
+    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: change command line" })
+  pcall(vim.keymap.set, "n", "D", shell_edit("\11", false),
+    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: kill to end of command line" })
+  pcall(vim.keymap.set, "n", "C", shell_edit("\11", true),
+    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: change to end of command line" })
   -- p/P in normal mode: paste the register into the SHELL (what paste means
   -- in a terminal). With clipboard=unnamedplus this is the system clipboard.
   for _, lhs in ipairs({ "p", "P" }) do

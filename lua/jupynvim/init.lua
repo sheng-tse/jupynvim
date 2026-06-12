@@ -761,9 +761,12 @@ end
 -- :JupynvimOpenRemote to re-authenticate.
 function M.disconnect(alias)
   local profile = M.config.remote and M.config.remote[alias]
+  -- ssh-config aliases (ad-hoc connects) have no declared profile, and the
+  -- control master survives nvim restarts (ControlPersist), so disconnect
+  -- must work without having connected THIS session: the alias itself is a
+  -- valid ssh destination.
   if not profile then
-    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
-    return
+    profile = { host = alias }
   end
   local cp = control_path(alias)
   if not cp then return end
@@ -3191,12 +3194,14 @@ function M.setup(opts)
     end,
   })
 
-  -- :JupynvimDisconnect <alias>  — close the ControlMaster socket.
+  -- :JupynvimDisconnect <alias>  — close the ControlMaster socket. Completes
+  -- with the same target list as Connect (profiles + ssh-config hosts), with
+  -- live-socket targets first.
   vim.api.nvim_create_user_command("JupynvimDisconnect", function(o) M.disconnect(o.args) end, {
     nargs = 1,
     complete = function()
       local names = {}
-      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      for _, t in ipairs(M._connect_targets()) do table.insert(names, t.name) end
       return names
     end,
   })
