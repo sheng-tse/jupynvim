@@ -286,10 +286,20 @@ function M.open(alias, opts)
       table.insert(args, "-o"); table.insert(args, editing)
     end
   end
-  local err, res = client:call_sync("proc_spawn", {
-    cmd = shell, args = args, cwd = cwd,
-    env = { TERM = "xterm-256color", COLORTERM = "truecolor" }, cols = cols, rows = rows,
-  }, 10000)
+  local function spawn(c)
+    return client:call_sync("proc_spawn", {
+      cmd = c, args = args, cwd = cwd,
+      env = { TERM = "xterm-256color", COLORTERM = "truecolor" }, cols = cols, rows = rows,
+    }, 10000)
+  end
+  local err, res = spawn(shell)
+  if err and shell ~= "bash" then
+    -- configured shell missing on this remote: never lock the user out
+    vim.notify("jupynvim: shell '" .. shell .. "' unavailable on " .. alias ..
+               " (" .. tostring(err) .. "); using bash", vim.log.levels.WARN)
+    shell = "bash"
+    err, res = spawn(shell)
+  end
   if err then
     vim.notify("jupynvim: proc_spawn failed: " .. tostring(err), vim.log.levels.ERROR)
     vim.api.nvim_chan_send(chan, "\r\n[spawn failed: " .. tostring(err) .. "]\r\n")

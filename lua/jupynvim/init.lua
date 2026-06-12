@@ -178,7 +178,10 @@ local function ensure_remote_binary(alias, profile)
                vim.log.levels.WARN)
     return
   end
-  local core_path = profile.core_path or "jupynvim-core"
+  -- Same default as ad-hoc connects: a fixed home path, NOT a bare name
+  -- (non-interactive ssh exec doesn't source .profile, so ~/.local/bin is
+  -- not on PATH and a bare name fails with exit 127).
+  local core_path = profile.core_path or "~/.local/bin/jupynvim-core"
   local local_sha = (vim.fn.system({ "shasum", "-a", "256", local_bin }) or ""):match("^(%x+)")
   if not local_sha then return end
   -- Make a remote-shell-expandable, quoted path: "~/.x" -> "$HOME/.x", wrapped
@@ -332,7 +335,8 @@ end
 
 -- Build an SSH command vector that spawns jupynvim-core on a remote host.
 -- spec.host: "user@host" passed to ssh (or an alias from ~/.ssh/config).
--- spec.core_path: remote path to jupynvim-core (default "jupynvim-core").
+-- spec.core_path: remote path to jupynvim-core
+--   (default "~/.local/bin/jupynvim-core", where auto-upload deploys it).
 -- spec.ssh_args: extra args appended after `ssh` (e.g. ProxyJump). Optional.
 --   Can be a function returning the array.
 -- spec.slurm: if set, prepended to the remote command. Typical:
@@ -351,7 +355,7 @@ local function build_ssh_cmd(spec)
   local ssh_args = resolve(spec.ssh_args, spec) or {}
   for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
   table.insert(cmd, spec.host)
-  local remote_cmd = spec.core_path or "jupynvim-core"
+  local remote_cmd = spec.core_path or "~/.local/bin/jupynvim-core"
   -- Environment setup before the backend starts (runs INSIDE the slurm step
   -- when one is active, i.e. on the compute node). A login bash sources the
   -- cluster's profile so `module` exists; the backend then inherits the
