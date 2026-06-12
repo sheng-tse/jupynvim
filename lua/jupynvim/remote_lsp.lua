@@ -45,11 +45,27 @@ local DEFAULT_SERVERS = {
 }
 -- Built-in install recipes (argv run on the remote). Users extend via
 -- remote.<alias>.lsp_install[<server-bin>] = "pip install --user X".
+-- pip recipe that finds a WORKING python first. Bare `pip` fails on minimal
+-- images (Debian ships python3 without pip), and conda pythons are often
+-- invisible to non-interactive shells (Debian's .bashrc returns early before
+-- conda init runs), so we check conda install locations directly, then the
+-- PATH python3, then an ensurepip bootstrap as last resort. --user installs
+-- land in ~/.local/bin, which the provisioning probe already checks.
+local function pip_recipe(pkg)
+  return table.concat({
+    'for P in "$HOME"/miniconda3/bin/python "$HOME"/anaconda3/bin/python',
+    ' "$HOME"/miniforge3/bin/python "$HOME"/mambaforge/bin/python; do',
+    ' [ -x "$P" ] && exec "$P" -m pip install --user ' .. pkg .. '; done;',
+    ' python3 -m pip install --user ' .. pkg,
+    ' || { python3 -m ensurepip --user && python3 -m pip install --user ' .. pkg .. '; }',
+  }, "")
+end
+
 local DEFAULT_INSTALL = {
-  ["basedpyright-langserver"] = { "pip", "install", "--user", "basedpyright" },
-  ["pyright-langserver"]      = { "pip", "install", "--user", "pyright" },
-  ["ruff"]                    = { "pip", "install", "--user", "ruff" },
-  ["pylsp"]                   = { "pip", "install", "--user", "python-lsp-server" },
+  ["basedpyright-langserver"] = pip_recipe("basedpyright"),
+  ["pyright-langserver"]      = pip_recipe("pyright"),
+  ["ruff"]                    = pip_recipe("ruff"),
+  ["pylsp"]                   = pip_recipe("python-lsp-server"),
   -- clangd is a prebuilt binary (not pip): download the LLVM release, extract
   -- into ~/.local/share/jupynvim, symlink onto ~/.local/bin (its lib/clang
   -- resource dir must stay beside the binary, so we symlink the bin not copy).
@@ -178,12 +194,14 @@ local function ensure_provisioned(alias, cmd, cb)
     return cb(c)
   end
   local function resolve(after_install)
-    -- command -v under a login shell, with an explicit ~/.local/bin fallback:
-    -- pip --user installs land there, and on some clusters the login-shell
-    -- PATH only picks it up on a fresh login (basedpyright was "installed but
-    -- not found" without this).
+    -- command -v under a login shell, with explicit fallbacks for places the
+    -- non-interactive PATH often misses: ~/.local/bin (pip --user installs;
+    -- some clusters only add it on a fresh login) and conda install bins
+    -- (Debian's .bashrc returns early non-interactively, before conda init).
     local q = vim.fn.shellescape(bin)
-    local probe = ("command -v %s || { [ -x \"$HOME/.local/bin\"/%s ] && echo \"$HOME/.local/bin\"/%s; }")
+    local probe = ("command -v %s || { for D in \"$HOME/.local/bin\" \"$HOME\"/miniconda3/bin"
+      .. " \"$HOME\"/anaconda3/bin \"$HOME\"/miniforge3/bin \"$HOME\"/mambaforge/bin; do"
+      .. " [ -x \"$D\"/%s ] && { echo \"$D\"/%s; exit 0; }; done; exit 1; }")
       :format(q, q, q)
     client:call("run", { argv = { "sh", "-lc", probe } }, function(err, res)
       if err then

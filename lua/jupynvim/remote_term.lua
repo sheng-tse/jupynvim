@@ -144,50 +144,61 @@ local function bind_resize_keys(buf, slot)
   end
   for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end
   for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end
-  -- Terminal SCROLLBACK is read-only (true of every terminal, incl. stock
-  -- :terminal) — that text mirrors what the remote program drew, so generic
-  -- d/c/x on it are inert instead of raising E21. But the COMMAND LINE is
-  -- editable through the shell itself, so the line-wise vim idioms translate
-  -- to readline control codes:
-  --   dd      kill the whole command line            (^U^K)
-  --   cc / S  kill the line and start typing         (^U^K + insert)
-  --   D       kill from the shell cursor to the end  (^K)
-  --   C       same, then start typing
-  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "r" }) do
-    pcall(vim.keymap.set, { "n", "x" }, lhs, function() end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in scrollback" })
-  end
-  for _, lhs in ipairs({ "o", "O", "u", "<C-r>" }) do
-    pcall(vim.keymap.set, "n", lhs, function() end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in scrollback" })
-  end
-  local function shell_edit(codes, insert)
-    return function()
-      send_text(buf, codes)
-      if insert then
-        vim.cmd("startinsert")
-      end
+  -- FULL vim editing on terminal text, via an instant SNAPSHOT: the live
+  -- grid is owned by the remote program (no terminal can edit it in place),
+  -- so the first edit key transparently swaps the window to a normal,
+  -- modifiable copy of the terminal text — cursor preserved, the pressed key
+  -- replayed natively. dd deletes the line, p pastes after the cursor, dw,
+  -- ciw, u, everything — it IS a regular buffer. `q` (or Ctrl-^) returns to
+  -- the live terminal. Edits affect only the copy (yank from it freely).
+  -- For the SHELL's command line, use the shell's own editing in insert
+  -- mode (Ctrl-U kills the line; works in emacs AND vi readline modes).
+  local function open_snapshot(key, vis)
+    local win = win_of(buf)
+    if not win then return end
+    local cur = vim.api.nvim_win_get_cursor(win)
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local sb = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(sb, 0, -1, false, lines)
+    vim.bo[sb].buftype = "nofile"
+    vim.bo[sb].swapfile = false
+    vim.bo[sb].bufhidden = "wipe"
+    vim.bo[sb].buflisted = false
+    vim.bo[sb].filetype = "jupynvim-scrollback"
+    pcall(vim.api.nvim_buf_set_name, sb, "scrollback://" .. tostring(vim.b[buf].jupynvim_term_alias)
+      .. "/" .. tostring(vim.b[buf].jupynvim_term_pid or 0))
+    vim.api.nvim_win_set_buf(win, sb)
+    pcall(vim.api.nvim_win_set_cursor, win, { math.min(cur[1], #lines), cur[2] })
+    vim.wo[win].winbar = "scrollback copy (edits stay here) - q returns to terminal"
+    pcall(vim.keymap.set, "n", "q", function()
+      vim.wo[win].winbar = ""
+      if vim.api.nvim_buf_is_valid(buf) then pcall(vim.api.nvim_win_set_buf, win, buf) end
+    end, { buffer = sb, silent = true, nowait = true, desc = "jupynvim: back to live terminal" })
+    if vis then
+      -- recreate the visual selection that triggered the edit
+      pcall(vim.api.nvim_win_set_cursor, win, { math.min(vis.s[1], #lines), vis.s[2] })
+      vim.cmd("normal! " .. vis.mode)
+      pcall(vim.api.nvim_win_set_cursor, win, { math.min(vis.e[1], #lines), vis.e[2] })
+    end
+    if key then
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "n", false)
     end
   end
-  pcall(vim.keymap.set, "n", "dd", shell_edit("\21\11", false),
-    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: kill command line" })
-  pcall(vim.keymap.set, "n", "cc", shell_edit("\21\11", true),
-    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: change command line" })
-  pcall(vim.keymap.set, "n", "S", shell_edit("\21\11", true),
-    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: change command line" })
-  pcall(vim.keymap.set, "n", "D", shell_edit("\11", false),
-    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: kill to end of command line" })
-  pcall(vim.keymap.set, "n", "C", shell_edit("\11", true),
-    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: change to end of command line" })
-  -- p/P in normal mode: paste the register into the SHELL (what paste means
-  -- in a terminal). With clipboard=unnamedplus this is the system clipboard.
-  for _, lhs in ipairs({ "p", "P" }) do
-    pcall(vim.keymap.set, "n", lhs, function()
-      local lines = vim.fn.getreg('"', 1, true)
-      local text = table.concat(lines, "\r")
-      if vim.fn.getregtype('"') == "V" then text = text .. "\r" end
-      send_text(buf, text)
-    end, { buffer = buf, silent = true, nowait = true, desc = "jupynvim: paste register to shell" })
+  local EDIT_KEYS = { "d", "c", "x", "X", "s", "S", "C", "D", "p", "P", "o", "O", "r", "u" }
+  for _, lhs in ipairs(EDIT_KEYS) do
+    pcall(vim.keymap.set, "n", lhs, function() open_snapshot(lhs) end,
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: edit scrollback copy (" .. lhs .. ")" })
+  end
+  pcall(vim.keymap.set, "n", "<C-r>", function() open_snapshot("<C-r>") end,
+    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: edit scrollback copy" })
+  for _, lhs in ipairs({ "d", "c", "x", "s", "p", "r" }) do
+    pcall(vim.keymap.set, "x", lhs, function()
+      local mode = vim.fn.mode()
+      local s = vim.fn.getpos("v")
+      local e = vim.fn.getpos(".")
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+      open_snapshot(lhs, { mode = mode, s = { s[2], s[3] - 1 }, e = { e[2], e[3] - 1 } })
+    end, { buffer = buf, silent = true, nowait = true, desc = "jupynvim: edit scrollback copy (visual " .. lhs .. ")" })
   end
 end
 
