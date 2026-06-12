@@ -1474,9 +1474,13 @@ function M._populate_buffer(nb)
   -- continuation row. Right border on continuation rows is a known gap.
   for _, win in ipairs(vim.fn.win_findbuf(nb.buf)) do
     vim.api.nvim_win_call(win, function()
-      vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual nonumber norelativenumber")
-      -- per-cell line numbers + selection bar (VSCode-style gutter)
+      vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
+      -- The statuscolumn IS the cell gutter: per-cell line numbers,
+      -- selection bar, and the cell's left border ('relativenumber' is on
+      -- only to feed v:relnum; the gutter draws its own numbers).
       vim.opt_local.statuscolumn = "%!v:lua.require'jupynvim.cellmode'.statuscol()"
+      -- hanging indents for wrapped markdown list items
+      vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
       vim.cmd([[setlocal showbreak=\ ]])
     end)
   end
@@ -1550,9 +1554,13 @@ function M._attach_autocmds(buf)
         local wins = vim.fn.win_findbuf(buf)
         for _, win in ipairs(wins) do
           vim.api.nvim_win_call(win, function()
-            vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual nonumber norelativenumber")
-      -- per-cell line numbers + selection bar (VSCode-style gutter)
+            vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
+      -- The statuscolumn IS the cell gutter: per-cell line numbers,
+      -- selection bar, and the cell's left border ('relativenumber' is on
+      -- only to feed v:relnum; the gutter draws its own numbers).
       vim.opt_local.statuscolumn = "%!v:lua.require'jupynvim.cellmode'.statuscol()"
+      -- hanging indents for wrapped markdown list items
+      vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
             vim.cmd([[setlocal showbreak=\ ]])
           end)
         end
@@ -2371,7 +2379,7 @@ local function _open_output_inline(buf, cell, range, origin_line)
     float_row = (pos.row - 1 - wpos[1]) + 3
   end
   if float_row >= win_h - 2 then float_row = math.max(win_h - 6, 1) end
-  local max_h = (M.config.output_max_lines or 15)
+  local max_h = (M.config.output_max_lines or 30)
   local height = math.max(math.min(#lines, max_h, win_h - float_row - 1), 3)
   local width = math.max(win_w - textoff - 4, 20)
 
@@ -2381,8 +2389,10 @@ local function _open_output_inline(buf, cell, range, origin_line)
     width = width, height = height,
     style = "minimal", border = "none",
   })
-  vim.wo[fwin].winhighlight = "Normal:Normal,CursorLine:Visual"
-  vim.wo[fwin].cursorline = true
+  -- indistinguishable from the rendered output rows: same background, no
+  -- chrome; the cursor just appears "inside" the output text
+  vim.wo[fwin].winhighlight = "Normal:Normal,EndOfBuffer:Normal,SignColumn:Normal"
+  vim.wo[fwin].cursorline = false
   vim.wo[fwin].wrap = true
 
   local close_map = function()

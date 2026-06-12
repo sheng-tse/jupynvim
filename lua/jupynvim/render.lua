@@ -43,18 +43,28 @@ end
 
 local function dw(s) return vim.fn.strdisplaywidth(s) end
 
--- Rounded input-box edges. The cell number rides in the top border, right
--- side, so "where am I" is always one glance away.
-local function header_line(width, label, cellno, busy)
-  local main = "╭─ " .. label .. " "
-  if busy then main = "╭─ " .. label .. " (running) " end
-  local tail = "─ #" .. cellno .. " ─╮"
-  local pad = width - dw(main) - dw(tail)
-  return main .. repeat_char("─", math.max(pad, 0)) .. tail
+-- Input-box edges. The box's LEFT side lives in the statuscolumn (drawn by
+-- cellmode.statuscol); header/footer are full-window virt lines
+-- (virt_lines_leftcol) prefixed so the corners line up with that gutter
+-- border column. The selected cell gets HEAVY box glyphs.
+local function box_chars(sel)
+  if sel then
+    return { tl = "┏", tr = "┓", bl = "┗", br = "┛", h = "━", v = "┃" }
+  end
+  return { tl = "╭", tr = "╮", bl = "╰", br = "╯", h = "─", v = "│" }
 end
 
-local function footer_line(width)
-  return "╰" .. repeat_char("─", math.max(width - 2, 0)) .. "╯"
+local function header_line(total_w, gut, label, cellno, busy, bc)
+  local prefix = repeat_char(" ", math.max(gut - 2, 0))
+  local main = prefix .. bc.tl .. bc.h .. " " .. label .. (busy and " (running) " or " ")
+  local tail = bc.h .. " #" .. cellno .. " " .. bc.h .. bc.tr
+  local pad = total_w - dw(main) - dw(tail)
+  return main .. repeat_char(bc.h, math.max(pad, 0)) .. tail
+end
+
+local function footer_line(total_w, gut, bc)
+  local prefix = repeat_char(" ", math.max(gut - 2, 0))
+  return prefix .. bc.bl .. repeat_char(bc.h, math.max(total_w - dw(prefix) - 2, 0)) .. bc.br
 end
 
 -- Wrap a single line to `width` DISPLAY COLUMNS, breaking at space
@@ -199,14 +209,16 @@ local OUT_INDENT = "  "
 
 -- Build the (frameless) virt_lines for a cell's outputs, clamped to
 -- config.output_max_lines like VSCode's max output height. Images bypass
--- the clamp (their row count is fixed and bounded).
-local function build_output_virt_lines(cell, width, nb)
+-- the clamp (their row count is fixed and bounded). `lead` prefixes every
+-- row (gutter blanks: these rows render with virt_lines_leftcol).
+local function build_output_virt_lines(cell, width, nb, lead)
+  lead = (lead or "") .. OUT_INDENT
   local rows = {}
-  local clamp = (require("jupynvim").config or {}).output_max_lines or 15
+  local clamp = (require("jupynvim").config or {}).output_max_lines or 30
   local truncated = 0
   local function push(text, hl)
     if #rows < clamp then
-      table.insert(rows, { { OUT_INDENT .. text, hl } })
+      table.insert(rows, { { lead .. text, hl } })
     else
       truncated = truncated + 1
     end
@@ -272,17 +284,17 @@ local function build_output_virt_lines(cell, width, nb)
         local ph = image.placeholder_virt_lines(cell.id)
         if ph then
           for _, line in ipairs(ph) do
-            table.insert(rows, { { OUT_INDENT, "Normal" }, { line[1][1], line[1][2] } })
+            table.insert(rows, { { lead, "Normal" }, { line[1][1], line[1][2] } })
           end
         else
           local ascii = image.ascii_lines_for(cell.id)
           if ascii then
             for _, line in ipairs(ascii) do
-              table.insert(rows, { { OUT_INDENT .. line, "Normal" } })
+              table.insert(rows, { { lead .. line, "Normal" } })
             end
           elseif image.supported() then
             for _ = 1, 14 do
-              table.insert(rows, { { OUT_INDENT, HL_OUTPUT } })
+              table.insert(rows, { { lead, HL_OUTPUT } })
             end
           end
         end
@@ -305,7 +317,7 @@ local function build_output_virt_lines(cell, width, nb)
   end
   if truncated > 0 then
     table.insert(rows, { {
-      OUT_INDENT .. "⋯ " .. truncated .. " more lines · <C-j> inside the cell to open",
+      lead .. "⋯ " .. truncated .. " more lines · <C-j> to read",
       HL_MORE,
     } })
   end
@@ -346,18 +358,23 @@ local function exec_status_chunks(cell, st)
 end
 M._exec_status_chunks = exec_status_chunks
 
--- Render a single cell.
-local function render_cell(nb, cell, range, width, win, cellno, selected)
+-- Render a single cell. `geom` = { gut, width, total_w }: statuscolumn
+-- width, text-area width, full window width. `editing` = this cell is the
+-- one being edited (markdown cells get a source-editor box while edited,
+-- like VSCode's markdown edit view).
+local function render_cell(nb, cell, range, geom, win, cellno, selected, editing)
   local buf = nb.buf
   local st = nb.cell_state[cell.id]
   local busy = st and st.exec_state == "busy"
-  local border_hl = selected and HL_BORDER_SEL or HL_BORDER
-
   local total = vim.api.nvim_buf_line_count(buf)
   if range.start >= total then return end
 
-  -- ── markdown / raw: frameless, document-style ──
-  if cell.cell_type ~= "code" then
+  local gut, width, total_w = geom.gut, geom.width, geom.total_w
+  local lead = repeat_char(" ", gut)
+  local boxed = cell.cell_type == "code" or editing
+
+  -- ── markdown / raw, not being edited: frameless document flow ──
+  if not boxed then
     local lines_below = {}
     if cell.cell_type == "markdown" then
       local Embedded = require("jupynvim.embedded")
@@ -368,13 +385,13 @@ local function render_cell(nb, cell, range, width, win, cellno, selected)
           local ph = image.placeholder_virt_lines(key)
           if ph then
             for _, line in ipairs(ph) do
-              table.insert(lines_below, { { line[1][1], line[1][2] } })
+              table.insert(lines_below, { { lead, "Normal" }, { line[1][1], line[1][2] } })
             end
           else
             local ascii = image.ascii_lines_for(key)
             if ascii then
               for _, line in ipairs(ascii) do
-                table.insert(lines_below, { { line, "Normal" } })
+                table.insert(lines_below, { { lead .. line, "Normal" } })
               end
             end
           end
@@ -388,6 +405,7 @@ local function render_cell(nb, cell, range, width, win, cellno, selected)
     if last >= 0 then
       vim.api.nvim_buf_set_extmark(buf, nb.border_ns, last, 0, {
         virt_lines = lines_below,
+        virt_lines_leftcol = true,
       })
     end
     if cell.cell_type == "markdown" then
@@ -414,19 +432,27 @@ local function render_cell(nb, cell, range, width, win, cellno, selected)
     return
   end
 
-  -- ── code cell: boxed input + exec bar + frameless outputs ──
-  local hdr = header_line(width, "Python", cellno, busy)
+  -- ── boxed editor: code cells always; markdown while being edited ──
+  local bc = box_chars(selected)
+  local border_hl = selected and HL_BORDER_SEL or HL_BORDER
+  local label = cell.cell_type == "code" and "Python" or "Markdown"
+  local hdr = header_line(total_w, gut, label, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
     virt_lines = { { { hdr, busy and HL_BUSY or border_hl } } },
     virt_lines_above = true,
+    virt_lines_leftcol = true,
   })
 
   local lines_below = {}
-  table.insert(lines_below, { { footer_line(width), border_hl } })
-  table.insert(lines_below, exec_status_chunks(cell, st))
-  if #(cell.outputs or {}) > 0 then
-    for _, l in ipairs(build_output_virt_lines(cell, width, nb)) do
-      table.insert(lines_below, l)
+  table.insert(lines_below, { { footer_line(total_w, gut, bc), border_hl } })
+  if cell.cell_type == "code" then
+    local ex = { { lead, "Normal" } }
+    vim.list_extend(ex, exec_status_chunks(cell, st))
+    table.insert(lines_below, ex)
+    if #(cell.outputs or {}) > 0 then
+      for _, l in ipairs(build_output_virt_lines(cell, width, nb, lead)) do
+        table.insert(lines_below, l)
+      end
     end
   end
   -- spacer so the next cell's top border doesn't glue to our outputs
@@ -437,26 +463,15 @@ local function render_cell(nb, cell, range, width, win, cellno, selected)
   if last < 0 then return end
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, last, 0, {
     virt_lines = lines_below,
+    virt_lines_leftcol = true,
   })
 
-  -- Side bars on each source line (input box only). Both bars repeat on
-  -- wrapped rows via virt_text_repeat_linebreak.
+  -- RIGHT border on each source line; the LEFT border is part of the
+  -- statuscolumn (so the insert cursor aligns even on empty lines).
+  -- Repeats on wrapped rows via virt_text_repeat_linebreak.
   for ln = range.start, math.min(range.stop - 1, total - 1) do
     pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
-      virt_text = { { "│ ", border_hl } },
-      virt_text_pos = "inline",
-      hl_mode = "combine",
-      priority = 100,
-    })
-    pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
-      virt_text = { { "│ ", border_hl } },
-      virt_text_win_col = 0,
-      virt_text_repeat_linebreak = true,
-      hl_mode = "combine",
-      priority = 95,
-    })
-    pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
-      virt_text = { { "│", border_hl } },
+      virt_text = { { bc.v, border_hl } },
       virt_text_pos = "right_align",
       virt_text_repeat_linebreak = true,
       hl_mode = "combine",
@@ -465,14 +480,14 @@ local function render_cell(nb, cell, range, width, win, cellno, selected)
   end
 
   -- Schedule image placements for image outputs
-  if image.supported() then
-    M.place_images(nb, cell, range, win)
+  if cell.cell_type == "code" and image.supported() then
+    M.place_images(nb, cell, range, win, gut)
   end
 end
 
 -- For each image in a cell's outputs, register the image_id and place it
 -- directly at the correct screen row using Kitty's a=T (transmit-and-place).
-function M.place_images(nb, cell, range, win)
+function M.place_images(nb, cell, range, win, gut)
   nb.image_ids = nb.image_ids or {}
   local b64, mime
   for _, o in ipairs(cell.outputs or {}) do
@@ -507,7 +522,7 @@ function M.place_images(nb, cell, range, win)
         local pos = vim.fn.screenpos(win, anchor_lnum, 1)
         if pos and pos.row and pos.row > 0 then
           local img_row = pos.row + 2
-          local img_col = 5
+          local img_col = (gut or 7) + 3
           image.place_at_screen_row(cell.id, img_row, img_col, 14, 56)
         end
       end)
@@ -591,23 +606,27 @@ function M.refresh(nb, win)
       local wins = vim.fn.win_findbuf(buf)
       win = (wins and wins[1]) or vim.api.nvim_get_current_win()
     end
-    -- Text-area width straight from the window: textoff already accounts
-    -- for statuscolumn/number/sign/fold in one number.
-    local width = 80
+    -- Geometry straight from the window: textoff = the statuscolumn gutter
+    -- (which carries the cells' left borders), width = text area.
+    local CellMode = require("jupynvim.cellmode")
+    local geom = { gut = CellMode.GUTTER, width = 80, total_w = 87 }
     if win and vim.api.nvim_win_is_valid(win) then
       local info = vim.fn.getwininfo(win)[1]
       if info then
-        width = math.max(info.width - (info.textoff or 0), 40)
+        geom.gut = info.textoff or CellMode.GUTTER
+        geom.total_w = info.width
+        geom.width = math.max(info.width - geom.gut, 30)
       end
     end
 
-    local CellMode = require("jupynvim.cellmode")
-    local sel_idx = CellMode.is_command(buf) and CellMode.selected_idx(buf) or nil
+    local sel_idx = CellMode.selected_idx(buf)
+    local edit_idx = (not CellMode.is_command(buf)) and sel_idx or nil
 
     for i, r in ipairs(ranges) do
       local cell = nb.cells[i]
       if cell then
-        local ok, err = pcall(render_cell, nb, cell, r, width, win, i, i == sel_idx)
+        local ok, err = pcall(render_cell, nb, cell, r, geom, win, i,
+          i == sel_idx, i == edit_idx)
         if not ok then
           require("jupynvim.log").warn("render_cell failed for cell " .. tostring(i) .. ": " .. tostring(err))
         end
@@ -620,9 +639,9 @@ end
 
 function M.setup_highlights()
   local hl = vim.api.nvim_set_hl
-  -- Borders are SUBTLE by default; the selected cell's border lights up.
-  hl(0, HL_BORDER,     { fg = "#414868" })
-  hl(0, HL_BORDER_SEL, { fg = "#7aa2f7" })
+  -- Visible borders; the selected cell's border goes bright + heavy glyphs.
+  hl(0, HL_BORDER,     { fg = "#7aa2f7" })
+  hl(0, HL_BORDER_SEL, { fg = "#7dcfff", bold = true })
   hl(0, HL_HEADER,     { fg = "#565f89" })
   hl(0, HL_BUSY,       { fg = "#e0af68", bold = true })
   hl(0, HL_OUTPUT,     { fg = "#a9b1d6" })

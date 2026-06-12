@@ -2,19 +2,25 @@
 --
 -- A notebook buffer is always in one of two modes:
 --
---   COMMAND (default)  j/k select whole cells (bar + background highlight,
---                      like VSCode's blue selection bar). The buffer is
---                      non-modifiable so stray keys can't edit text.
---                      Enter (or i) dives into the selected cell.
---                      a/b add cells, dd deletes, yy/p copy/paste cells,
---                      gg/G first/last cell.
+--   COMMAND (default)  j/k select whole cells (thick gutter bar, like
+--                      VSCode's blue selection bar; the text cursor is
+--                      hidden). The buffer is non-modifiable so stray keys
+--                      can't edit text. Enter (or i) dives into the
+--                      selected cell, restoring the cursor where you last
+--                      left it in that cell. a/b add cells, dd deletes,
+--                      yy/p copy/paste cells, gg/G first/last.
 --
---   EDIT               normal vim inside the cell text. Esc (from normal
---                      mode) returns to COMMAND.
+--   EDIT               normal vim INSIDE the cell: motions are confined to
+--                      the cell (G/gg go to the cell's last/first line and
+--                      anything that strays is clamped back). Esc returns
+--                      to COMMAND.
 --
--- The statuscolumn renders PER-CELL line numbers (each cell counts from 1,
--- separator lines blank) plus the selection bar, mirroring how VSCode gives
--- every cell its own little editor with its own gutter.
+-- The statuscolumn IS the left side of each cell's frame: per-cell line
+-- numbers (absolute in command mode, relative-to-cursor inside the edited
+-- cell), the selection bar, and the box's left border. Virtual rows
+-- (headers, outputs, execution bars) and markdown cells get a blank
+-- gutter, exactly like VSCode. Keeping the border out of the text area
+-- also means the insert cursor aligns correctly on empty lines.
 
 local M = {}
 
@@ -22,7 +28,10 @@ local Notebook = require("jupynvim.notebook")
 
 local ns = vim.api.nvim_create_namespace("jupynvim.cellmode")
 
--- buf -> { mode = "command"|"edit" }
+-- Gutter geometry: [bar 1][num 3][sp 1][border 1][sp 1] = 7 cells.
+M.GUTTER = 7
+
+-- buf -> { mode = "command"|"edit", edit_idx = n, pos = {idx -> {l, c}} }
 local state = {}
 
 -- ── cell ranges (cached by changedtick) ────────────────────────────────────
@@ -71,51 +80,81 @@ function M.selected_idx(buf)
 end
 
 -- ── statuscolumn ───────────────────────────────────────────────────────────
--- Per-cell line numbers: each cell's gutter counts from 1. The selected
--- cell (command mode) gets the VSCode-style bar; in edit mode the bar turns
--- green on the active cell.
+-- Per-cell gutter. Every branch renders exactly M.GUTTER display cells so
+-- the text area never shifts between lines.
+local function bar_for(buf, idx, sel)
+  if idx ~= sel then return " " end
+  if M.is_command(buf) then return "%#JupynvimBarSel#▌%*" end
+  return "%#JupynvimBarEdit#▌%*"
+end
+
 function M.statuscol()
-  local buf = vim.api.nvim_get_current_buf()
-  if not Notebook.get(buf) then return "" end
-  local lnum = vim.v.lnum
+  return M._statuscol_for(vim.api.nvim_get_current_buf(), vim.v.lnum, vim.v.virtnum, vim.v.relnum)
+end
+
+-- Pure form (testable): gutter content for (buf, lnum, virtnum, relnum).
+function M._statuscol_for(buf, lnum, virtnum, relnum)
+  local nb = Notebook.get(buf)
+  if not nb then return "" end
+  if virtnum < 0 then
+    return ""  -- virtual rows (header/outputs/exec bar): blank gutter
+  end
   local ranges = M.ranges(buf)
   local line0 = lnum - 1
-  local in_cell, rel
-  local sel = M.selected_idx(buf)
-  local cur_idx
-  for i, r in ipairs(ranges) do
-    if line0 >= r.start and line0 < r.stop then
-      in_cell, rel, cur_idx = true, line0 - r.start + 1, i
+  local r, idx
+  for i, range in ipairs(ranges) do
+    if line0 >= range.start and line0 < range.stop then
+      r, idx = range, i
       break
     end
   end
-  if not in_cell then
-    return "      "  -- separator line: blank gutter
+  if not r then return string.rep(" ", M.GUTTER) end  -- separator line
+  local sel = M.selected_idx(buf)
+  local cell = nb.cells[idx]
+  local editing = (not M.is_command(buf)) and idx == sel
+  local boxed = (cell and cell.cell_type == "code") or editing
+  local bar = bar_for(buf, idx, sel)
+  local border_hl = (idx == sel) and "JupynvimBorderSel" or "JupynvimBorder"
+  local edge_ch = (idx == sel) and "┃" or "│"
+  local edge = boxed and ("%#" .. border_hl .. "#" .. edge_ch .. "%* ") or "  "
+  if virtnum > 0 then
+    -- wrap continuation row: bar + border, no number
+    return bar .. "    " .. edge
   end
-  local bar = " "
-  if cur_idx == sel then
-    if M.is_command(buf) then
-      bar = "%#JupynvimBarSel#▎%*"
-    else
-      bar = "%#JupynvimBarEdit#▎%*"
-    end
+  if not boxed then
+    -- rendered markdown: no line numbers, like VSCode
+    return bar .. "    " .. edge
   end
-  return bar .. "%=%#LineNr#" .. string.format("%3d", rel) .. " %*"
+  local shown
+  if editing and relnum and relnum ~= 0 then
+    shown = relnum  -- relative to the cursor inside the edited cell
+  else
+    shown = line0 - r.start + 1  -- per-cell absolute
+  end
+  return bar .. "%#LineNr#" .. string.format("%3d", shown) .. "%* " .. edge
 end
 
--- ── selection highlight ────────────────────────────────────────────────────
-local function redraw_selection(buf)
-  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  if not M.is_command(buf) then return end
-  local idx = M.selected_idx(buf)
-  local r = M.ranges(buf)[idx]
-  if not r then return end
-  local total = vim.api.nvim_buf_line_count(buf)
-  for ln = r.start, math.min(r.stop - 1, total - 1) do
-    pcall(vim.api.nvim_buf_set_extmark, buf, ns, ln, 0, {
-      line_hl_group = "JupynvimCellSelectedBg",
-      priority = 5,
-    })
+-- ── selection / cursor visibility ──────────────────────────────────────────
+local _saved_guicursor = nil
+
+local function hide_cursor()
+  if _saved_guicursor == nil then
+    _saved_guicursor = vim.go.guicursor
+  end
+  vim.go.guicursor = "a:JupynvimHiddenCursor"
+end
+
+local function show_cursor()
+  if _saved_guicursor ~= nil then
+    vim.go.guicursor = _saved_guicursor
+    _saved_guicursor = nil
+  end
+end
+
+local function refresh_render(buf)
+  local nb = Notebook.get(buf)
+  if nb then
+    require("jupynvim.render").refresh(nb, vim.fn.bufwinid(buf))
   end
 end
 
@@ -131,31 +170,42 @@ M.with_modifiable = with_modifiable
 
 function M.enter_command(buf)
   buf = buf or vim.api.nvim_get_current_buf()
-  state[buf] = state[buf] or {}
-  if state[buf].mode == "command" then
-    redraw_selection(buf)
-    return
+  state[buf] = state[buf] or { pos = {} }
+  local win = vim.fn.bufwinid(buf)
+  if state[buf].mode ~= "command" then
+    -- remember where the cursor was inside the cell we're leaving
+    if win ~= -1 and state[buf].edit_idx then
+      state[buf].pos[state[buf].edit_idx] = vim.api.nvim_win_get_cursor(win)
+    end
   end
   state[buf].mode = "command"
+  state[buf].edit_idx = nil
   vim.bo[buf].modifiable = false
-  -- park the cursor at the start of the selected cell, like VSCode focusing
-  -- the cell rather than a character position
-  local win = vim.fn.bufwinid(buf)
-  if win ~= -1 then
-    local lnum = vim.api.nvim_win_get_cursor(win)[1]
-    local _, r = M.cell_idx_at(buf, lnum)
-    if r then pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 }) end
+  if win ~= -1 and vim.api.nvim_get_current_buf() == buf then
+    hide_cursor()
   end
-  redraw_selection(buf)
+  refresh_render(buf)
   vim.cmd("redraw")
 end
 
 function M.enter_edit(buf, keys)
   buf = buf or vim.api.nvim_get_current_buf()
-  state[buf] = state[buf] or {}
+  state[buf] = state[buf] or { pos = {} }
   state[buf].mode = "edit"
   vim.bo[buf].modifiable = true
-  redraw_selection(buf)
+  show_cursor()
+  local win = vim.fn.bufwinid(buf)
+  local idx = M.selected_idx(buf)
+  state[buf].edit_idx = idx
+  -- restore the cursor to where it last was in THIS cell
+  local saved = state[buf].pos[idx]
+  local r = M.ranges(buf)[idx]
+  if win ~= -1 and r then
+    if saved and saved[1] - 1 >= r.start and saved[1] - 1 < r.stop then
+      pcall(vim.api.nvim_win_set_cursor, win, saved)
+    end
+  end
+  refresh_render(buf)
   if keys then
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "n", false)
   end
@@ -171,7 +221,6 @@ local function select_cell(buf, idx)
   if win ~= -1 and r then
     pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 })
   end
-  redraw_selection(buf)
 end
 
 function M.move_selection(buf, delta)
@@ -206,7 +255,6 @@ function M.paste_cell(buf, api)
   with_modifiable(buf, function()
     api.add_cell(buf, "below")
   end)
-  -- the new empty cell is now selected/below; fill it in
   vim.schedule(function()
     with_modifiable(buf, function()
       local idx = M.selected_idx(buf)
@@ -218,52 +266,98 @@ function M.paste_cell(buf, api)
         api.set_cell_type(buf, "markdown")
       end
     end)
-    redraw_selection(buf)
   end)
 end
 
+-- ── edit-mode confinement ──────────────────────────────────────────────────
+-- VSCode can't move focus out of a cell editor with plain motions: clamp
+-- the cursor back into the edited cell whenever it strays (covers G, gg,
+-- }, searches, everything).
+local function clamp_to_cell(buf)
+  local st = state[buf]
+  if not st or st.mode ~= "edit" or not st.edit_idx then return end
+  local win = vim.fn.bufwinid(buf)
+  if win == -1 or vim.api.nvim_get_current_buf() ~= buf then return end
+  local r = M.ranges(buf)[st.edit_idx]
+  if not r then return end
+  local cur = vim.api.nvim_win_get_cursor(win)
+  local lnum = cur[1]
+  if lnum - 1 < r.start then
+    pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, cur[2] })
+  elseif lnum - 1 >= r.stop then
+    pcall(vim.api.nvim_win_set_cursor, win, { math.max(r.stop, r.start + 1), cur[2] })
+  end
+end
+
 -- ── attach ─────────────────────────────────────────────────────────────────
--- Buffer-local keymaps + autocmds implementing the two-mode model.
 function M.attach(buf, api)
-  state[buf] = { mode = "edit" }  -- enter_command below flips it (and guards)
+  state[buf] = { mode = "edit", pos = {} }
 
   local function map(mode, lhs, fn, desc)
     vim.keymap.set(mode, lhs, fn, { buffer = buf, silent = true, nowait = true, desc = desc })
   end
 
-  -- command-mode navigation. The guard pattern: in edit mode the same key
-  -- falls through to its native behavior.
-  local function cmdmap(lhs, fn, desc, fallthrough)
+  -- command-mode key, falling through to a custom edit-mode behavior
+  local function cmdmap(lhs, fn, desc, edit_fn)
     map("n", lhs, function()
       if M.is_command(buf) then
         fn()
+      elseif edit_fn then
+        edit_fn()
       else
         vim.api.nvim_feedkeys(
-          vim.api.nvim_replace_termcodes(fallthrough or lhs, true, false, true), "n", false)
+          vim.api.nvim_replace_termcodes(lhs, true, false, true), "n", false)
       end
     end, desc)
   end
 
-  cmdmap("j", function() M.move_selection(buf, 1) end, "jupynvim: next cell")
-  cmdmap("k", function() M.move_selection(buf, -1) end, "jupynvim: prev cell")
-  cmdmap("<Down>", function() M.move_selection(buf, 1) end, "jupynvim: next cell", "<Down>")
-  cmdmap("<Up>", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", "<Up>")
-  cmdmap("gg", function() M.select_first(buf) end, "jupynvim: first cell")
-  cmdmap("G", function() M.select_last(buf) end, "jupynvim: last cell")
+  local function edit_cell_range()
+    local st = state[buf]
+    local idx = (st and st.edit_idx) or M.selected_idx(buf)
+    return M.ranges(buf)[idx]
+  end
+
+  -- j/k in edit mode stop at the cell's edges (VSCode editors don't bleed
+  -- into the next cell)
+  local function edit_down()
+    local r = edit_cell_range()
+    local l = vim.api.nvim_win_get_cursor(0)[1]
+    if r and l < r.stop then
+      vim.api.nvim_feedkeys("j", "n", false)
+    end
+  end
+  local function edit_up()
+    local r = edit_cell_range()
+    local l = vim.api.nvim_win_get_cursor(0)[1]
+    if r and l - 1 > r.start then
+      vim.api.nvim_feedkeys("k", "n", false)
+    end
+  end
+  cmdmap("j", function() M.move_selection(buf, 1) end, "jupynvim: next cell", edit_down)
+  cmdmap("k", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", edit_up)
+  cmdmap("<Down>", function() M.move_selection(buf, 1) end, "jupynvim: next cell", edit_down)
+  cmdmap("<Up>", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", edit_up)
+  -- gg/G: first/last cell in command mode, first/last line OF THE CELL in
+  -- edit mode (motions never leave the cell editor)
+  cmdmap("gg", function() M.select_first(buf) end, "jupynvim: first cell", function()
+    local r = edit_cell_range()
+    if r then pcall(vim.api.nvim_win_set_cursor, 0, { r.start + 1, 0 }) end
+  end)
+  cmdmap("G", function() M.select_last(buf) end, "jupynvim: last cell", function()
+    local r = edit_cell_range()
+    if r then pcall(vim.api.nvim_win_set_cursor, 0, { math.max(r.stop, r.start + 1), 0 }) end
+  end)
   cmdmap("dd", function()
     with_modifiable(buf, function() api.delete_cell(buf) end)
-    redraw_selection(buf)
   end, "jupynvim: delete cell")
   cmdmap("yy", function() M.yank_cell(buf) end, "jupynvim: yank cell")
   cmdmap("p", function() M.paste_cell(buf, api) end, "jupynvim: paste cell below")
   cmdmap("a", function()
     with_modifiable(buf, function() api.add_cell(buf, "above") end)
-    vim.schedule(function() redraw_selection(buf) end)
-  end, "jupynvim: add cell above", "a")
+  end, "jupynvim: add cell above")
   cmdmap("b", function()
     with_modifiable(buf, function() api.add_cell(buf, "below") end)
-    vim.schedule(function() redraw_selection(buf) end)
-  end, "jupynvim: add cell below", "b")
+  end, "jupynvim: add cell below")
 
   -- Enter edit mode. Enter = plain focus; i/o/O carry their editing intent.
   map("n", "<CR>", function()
@@ -273,14 +367,14 @@ function M.attach(buf, api)
       vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
     end
   end, "jupynvim: edit cell")
-  cmdmap("i", function() M.enter_edit(buf) end, "jupynvim: edit cell", "i")
-  cmdmap("I", function() M.enter_edit(buf, "I") end, "jupynvim: edit cell", "I")
-  cmdmap("A", function() M.enter_edit(buf, "A") end, "jupynvim: edit cell", "A")
-  cmdmap("o", function() M.enter_edit(buf, "o") end, "jupynvim: edit cell", "o")
-  cmdmap("O", function() M.enter_edit(buf, "O") end, "jupynvim: edit cell", "O")
+  cmdmap("i", function() M.enter_edit(buf) end, "jupynvim: edit cell")
+  cmdmap("I", function() M.enter_edit(buf, "I") end, "jupynvim: edit cell")
+  cmdmap("A", function() M.enter_edit(buf, "A") end, "jupynvim: edit cell")
+  cmdmap("o", function() M.enter_edit(buf, "o") end, "jupynvim: edit cell")
+  cmdmap("O", function() M.enter_edit(buf, "O") end, "jupynvim: edit cell")
 
-  -- Esc: edit -> command (VSCode). In command mode it stays put (and clears
-  -- search highlight so the global Esc habit still works).
+  -- Esc: edit -> command (VSCode). In command mode it clears search
+  -- highlight so the global Esc habit still works.
   map("n", "<Esc>", function()
     if M.is_command(buf) then
       vim.cmd("nohlsearch")
@@ -289,17 +383,32 @@ function M.attach(buf, api)
     end
   end, "jupynvim: cell command mode")
 
-  -- keep the selection bar in sync with any cursor movement (]c, S-CR
-  -- advance, mouse clicks, searches)
-  vim.api.nvim_create_autocmd("CursorMoved", {
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     buffer = buf,
     callback = function()
-      if M.is_command(buf) then redraw_selection(buf) end
+      if M.is_command(buf) then
+        vim.cmd("redrawstatus")
+      else
+        clamp_to_cell(buf)
+      end
     end,
+  })
+  -- cursor visibility follows window focus: hidden only while the notebook
+  -- window is current AND in command mode
+  vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+    buffer = buf,
+    callback = function()
+      if M.is_command(buf) then hide_cursor() end
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave" }, {
+    buffer = buf,
+    callback = function() show_cursor() end,
   })
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = buf,
     callback = function()
+      show_cursor()
       state[buf] = nil
       _range_cache[buf] = nil
     end,
@@ -312,7 +421,7 @@ function M.setup_hl()
   local hl = vim.api.nvim_set_hl
   hl(0, "JupynvimBarSel",  { fg = "#7aa2f7", bold = true })
   hl(0, "JupynvimBarEdit", { fg = "#9ece6a", bold = true })
-  hl(0, "JupynvimCellSelectedBg", { bg = "#1f2335" })
+  hl(0, "JupynvimHiddenCursor", { blend = 100, nocombine = true })
 end
 
 return M
