@@ -54,6 +54,10 @@ local paste_hooked = false
 local function hook_paste()
   if paste_hooked then return end
   paste_hooked = true
+  vim.api.nvim_create_autocmd("TextYankPost", {
+    group = vim.api.nvim_create_augroup("jupynvim_term_yank", { clear = true }),
+    callback = function() M._yank_ts = vim.uv.hrtime() end,
+  })
   local orig = vim.paste
   vim.paste = function(lines, phase)
     local buf = vim.api.nvim_get_current_buf()
@@ -230,8 +234,49 @@ end
 -- cursor: real highlight, every motion, y yanks to registers. One esc, then
 -- v, exactly like a local vi-mode shell.
 local VISUAL_OSC = "\27]51;jupynvim-visual\7"
+local PASTE_OSC = "\27]51;jupynvim-paste\7"
 local BIND_VISUAL =
-  [[bind -m vi-command -x '"v": printf "\033]51;jupynvim-visual\007" > /dev/tty' 2>/dev/null]]
+  [[bind -m vi-command -x '"v": printf "\033]51;jupynvim-visual\007" > /dev/tty' 2>/dev/null; ]] ..
+  [[bind -m vi-command -x '"p": printf "\033]51;jupynvim-paste\007" > /dev/tty' 2>/dev/null; ]] ..
+  [[bind -m vi-insert '"\C-y": yank' 2>/dev/null]]
+
+-- Timestamp of the last nvim yank anywhere (TextYankPost). Compared against
+-- the per-terminal shell kill-ring timestamp to decide what p pastes.
+M._yank_ts = 0
+
+-- Freshness heuristic for the unified p: every key typed into the terminal
+-- passes through on_input, so shell-side kill-ring activity (dd/x/cw/y...
+-- in vi command mode after an esc) can be noticed as it happens.
+local function track_keys(buf, data)
+  if data == "\27" then
+    vim.b[buf].jnv_vicmd = true
+  elseif vim.b[buf].jnv_vicmd and #data == 1 then
+    if data:match("^[dxXyD]") then
+      vim.b[buf].jnv_kill_ts = vim.uv.hrtime()
+    elseif data:match("^[csSC]") then
+      vim.b[buf].jnv_kill_ts = vim.uv.hrtime()
+      vim.b[buf].jnv_vicmd = false  -- these end in insert mode
+    elseif data:match("^[iaAIR]") then
+      vim.b[buf].jnv_vicmd = false
+    end
+  end
+end
+
+-- Unified p at the prompt: paste whichever is fresher, the nvim register
+-- (esc-esc yanks in the terminal, yanks from any other buffer) or the
+-- shell's own kill-ring (dd/x/cw at the prompt). The shell sits in vi
+-- command mode when this fires; both branches paste after the cursor and
+-- end back in command mode, like vi's p.
+local function bridge_paste(buf)
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return end
+  local kill_ts = vim.b[buf].jnv_kill_ts or 0
+  local reg = (vim.fn.getreg('"') or ""):gsub("\n", " "):gsub("%s+$", "")
+  if M._yank_ts > kill_ts and reg ~= "" then
+    send_text(buf, "a" .. reg .. "\27")
+  else
+    send_text(buf, "a\25\27")  -- C-y: the shell's native kill-ring yank
+  end
+end
 
 local function enter_visual(buf)
   if not (buf and vim.api.nvim_buf_is_valid(buf)) then return end
@@ -303,6 +348,11 @@ local function bind_visual_ops(buf)
       seq = seq .. "i"
     end
     send_text(buf, seq)
+    -- both the register and the shell kill-ring now hold the selection;
+    -- equal timestamps make the unified p prefer the ring (same content)
+    local now = vim.uv.hrtime()
+    M._yank_ts = now
+    vim.b[buf].jnv_kill_ts = now
     vim.b[buf].jnv_bridge_row = nil
     vim.cmd("startinsert")
   end
@@ -431,6 +481,7 @@ function M.open(alias, opts)
   local chan = vim.api.nvim_open_term(buf, {
     on_input = function(_e, _t, _b, data)
       if not pid_ref.pid then return end
+      track_keys(buf, data)
       client:call("proc_stdin", { pid = pid_ref.pid, data_b64 = vim.base64.encode(data) }, function() end)
     end,
   })
@@ -515,6 +566,8 @@ function M.open(alias, opts)
           -- command mode at the cursor while nvim runs the selection; the
           -- visual operators translate the result back into readline edits
           vim.schedule(function() enter_visual(entry.buf) end)
+        elseif data:find(PASTE_OSC, 1, true) then
+          vim.schedule(function() bridge_paste(entry.buf) end)
         end
         pcall(vim.api.nvim_chan_send, entry.chan, data)
       elseif e.kind == "exit" then
