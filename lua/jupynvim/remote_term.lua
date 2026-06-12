@@ -164,6 +164,22 @@ local function bind_edit_keys(buf, slot)
     if not win then return end
     local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
     local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    -- drop the terminal's trailing blank padding (scrollback fill): the live
+    -- view renders it as empty space, but in a normal buffer it would show
+    -- up as numbered empty lines and give the swap away (never trim past
+    -- the cursor line)
+    while #lines > 1 and #lines > view.lnum and lines[#lines] == "" do
+      table.remove(lines)
+    end
+    -- the swap must be PIXEL-IDENTICAL: a fresh buffer re-initializes
+    -- window-local options from the globals (number, signcolumn, ...) that
+    -- terminal windows don't use, visibly changing the window on the first
+    -- edit key. Carry the terminal window's exact options over.
+    local WINOPTS = { "number", "relativenumber", "signcolumn", "foldcolumn",
+                      "statuscolumn", "cursorline", "cursorcolumn", "list",
+                      "spell", "wrap", "colorcolumn", "winhighlight", "winbar" }
+    local wsave = {}
+    for _, o in ipairs(WINOPTS) do wsave[o] = vim.wo[win][o] end
     local sb = vim.api.nvim_create_buf(false, true)
     snaps[buf] = sb
     -- fill with undo recording OFF so `u` bottoms out at the terminal text
@@ -182,6 +198,9 @@ local function bind_edit_keys(buf, slot)
     vim.b[sb].jupynvim_term_slot = slot
     pcall(vim.api.nvim_buf_set_name, sb, vim.api.nvim_buf_get_name(buf) .. "*")
     vim.api.nvim_win_set_buf(win, sb)
+    for _, o in ipairs(WINOPTS) do
+      pcall(function() vim.wo[win][o] = wsave[o] end)
+    end
     vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
     vim.bo[sb].modified = false
     bind_resize_keys(sb, slot)
