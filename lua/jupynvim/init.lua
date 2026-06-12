@@ -516,8 +516,11 @@ local SSH_HOST_NOISE = {
 -- profile already covers hidden, and multiple aliases for the SAME machine
 -- (e.g. `gcp` + gcloud's generated `instance-...` entry) collapsed to the
 -- shortest one. Keeps the list to one entry per real target.
-function M._connect_items()
-  local items = {}
+-- Filtered, deduped connect targets: { {kind="profile"|"ssh", name=, host=} }.
+-- Shared by the chooser AND the :JupynvimConnect tab-completion so both show
+-- one entry per real machine.
+function M._connect_targets()
+  local out = {}
   local profile_hostnames = {}
   local function strip_user(h) return (tostring(h):gsub("^[^@]+@", "")) end
   local names = {}
@@ -526,10 +529,7 @@ function M._connect_items()
   for _, name in ipairs(names) do
     local prof = M.config.remote[name]
     profile_hostnames[strip_user(prof.host or "")] = true
-    table.insert(items, {
-      label = name .. "  (" .. (prof.host or "?") .. ")",
-      run = function() M.connect(name) end,
-    })
+    table.insert(out, { kind = "profile", name = name, host = prof.host })
   end
   local seen_machine = {}
   for _, e in ipairs(ssh_config_hosts_full()) do  -- shortest-alias-first order
@@ -540,9 +540,24 @@ function M._connect_items()
        and not profile_hostnames[machine]
        and not seen_machine[machine] then
       seen_machine[machine] = true
+      table.insert(out, { kind = "ssh", name = e.name })
+    end
+  end
+  return out
+end
+
+function M._connect_items()
+  local items = {}
+  for _, t in ipairs(M._connect_targets()) do
+    if t.kind == "profile" then
       table.insert(items, {
-        label = "ssh: " .. e.name .. "  (~/.ssh/config)",
-        run = function() M.connect_adhoc(e.name) end,
+        label = t.name .. "  (" .. (t.host or "?") .. ")",
+        run = function() M.connect(t.name) end,
+      })
+    else
+      table.insert(items, {
+        label = "ssh: " .. t.name .. "  (~/.ssh/config)",
+        run = function() M.connect_adhoc(t.name) end,
       })
     end
   end
@@ -3149,12 +3164,9 @@ function M.setup(opts)
   end, {
     nargs = "?",
     complete = function()
+      -- Same filtered/deduped list as the chooser: one name per real machine.
       local names = {}
-      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
-      table.sort(names)
-      for _, h in ipairs(M._ssh_config_hosts()) do
-        if not (M.config.remote or {})[h] then table.insert(names, h) end
-      end
+      for _, t in ipairs(M._connect_targets()) do table.insert(names, t.name) end
       return names
     end,
   })
