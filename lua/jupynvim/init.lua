@@ -888,7 +888,14 @@ function M.use_local()
     M.client = nil
   end
   M._remote_spec = nil
-  return ensure_client()
+  local c = ensure_client()
+  -- spawning the local core re-attaches kitty graphics with raw tty writes;
+  -- if those scroll the screen, nvim's grid is visually shifted (stale rows
+  -- on top, dead rows below the statusline). Repaint the whole screen once
+  -- the attach has settled.
+  vim.defer_fn(function() pcall(vim.cmd, "mode") end, 150)
+  vim.defer_fn(function() pcall(vim.cmd, "mode") end, 500)
+  return c
 end
 
 -- Parse a jupynvim:// URI into (alias, path). Returns nil on no match.
