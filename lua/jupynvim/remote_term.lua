@@ -146,108 +146,6 @@ local function bind_resize_keys(buf, slot)
   for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end
 end
 
--- ── direct editing ─────────────────────────────────────────────────────────
--- nvim's core forbids editing a terminal buffer in place (E21: the grid is
--- owned by the remote program, and forcing 'modifiable' on breaks rendering
--- entirely; a LOCAL :terminal has exactly the same limits). So edits work
--- directly via an INVISIBLE swap: the first edit key re-points the window at
--- a modifiable copy of the same text, same cursor, same scroll position, and
--- replays the key there. Nothing visibly changes except the edit happening;
--- from that moment it IS a regular buffer, so dd, ciw, dw, p, u, counts and
--- registers all behave natively. i/a/I/A put you back at the live prompt,
--- exactly like entering insert mode in any terminal.
-local snaps = {}  -- term buf → its text copy, while one is being shown
-
-local function bind_edit_keys(buf, slot)
-  local function to_text(key, vis)
-    local win = win_of(buf)
-    if not win then return end
-    local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    -- drop the terminal's trailing blank padding (scrollback fill): the live
-    -- view renders it as empty space, but in a normal buffer it would show
-    -- up as numbered empty lines and give the swap away (never trim past
-    -- the cursor line)
-    while #lines > 1 and #lines > view.lnum and lines[#lines] == "" do
-      table.remove(lines)
-    end
-    -- the swap must be PIXEL-IDENTICAL: a fresh buffer re-initializes
-    -- window-local options from the globals (number, signcolumn, ...) that
-    -- terminal windows don't use, visibly changing the window on the first
-    -- edit key. Carry the terminal window's exact options over.
-    local WINOPTS = { "number", "relativenumber", "signcolumn", "foldcolumn",
-                      "statuscolumn", "cursorline", "cursorcolumn", "list",
-                      "spell", "wrap", "colorcolumn", "winhighlight", "winbar" }
-    local wsave = {}
-    for _, o in ipairs(WINOPTS) do wsave[o] = vim.wo[win][o] end
-    local sb = vim.api.nvim_create_buf(false, true)
-    snaps[buf] = sb
-    -- fill with undo recording OFF so `u` bottoms out at the terminal text
-    -- instead of blanking the buffer (the fill must not be undo change #1)
-    vim.bo[sb].undolevels = -1
-    vim.api.nvim_buf_set_lines(sb, 0, -1, false, lines)
-    vim.bo[sb].undolevels = -123456  -- back to "use the global value"
-    vim.bo[sb].buftype = "nofile"
-    vim.bo[sb].swapfile = false
-    vim.bo[sb].bufhidden = "wipe"   -- reclaimed the moment it leaves the window
-    vim.bo[sb].buflisted = false
-    vim.bo[sb].filetype = "jupynvim-scrollback"
-    -- alias/slot ride along so resize keys, toggle and the window pickers
-    -- treat it as the terminal. NO pid: pasting here edits text, not the shell.
-    vim.b[sb].jupynvim_term_alias = vim.b[buf].jupynvim_term_alias
-    vim.b[sb].jupynvim_term_slot = slot
-    pcall(vim.api.nvim_buf_set_name, sb, vim.api.nvim_buf_get_name(buf) .. "*")
-    vim.api.nvim_win_set_buf(win, sb)
-    for _, o in ipairs(WINOPTS) do
-      pcall(function() vim.wo[win][o] = wsave[o] end)
-    end
-    vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
-    vim.bo[sb].modified = false
-    bind_resize_keys(sb, slot)
-    for _, lhs in ipairs({ "i", "a", "I", "A" }) do
-      pcall(vim.keymap.set, "n", lhs, function()
-        local w = win_of(sb)
-        if w and vim.api.nvim_buf_is_valid(buf) then
-          vim.api.nvim_win_set_buf(w, buf)  -- bufhidden=wipe reclaims the copy
-          M.sync_size(buf, true)            -- SIGWINCH jiggle -> fresh repaint
-          vim.cmd("startinsert")
-        else
-          vim.cmd("startinsert")            -- terminal died: just edit the text
-        end
-      end, { buffer = sb, silent = true, nowait = true, desc = "jupynvim: back to live shell" })
-    end
-    vim.api.nvim_create_autocmd("BufWipeout", {
-      buffer = sb,
-      callback = function() if snaps[buf] == sb then snaps[buf] = nil end end,
-    })
-    if vis then
-      -- recreate the visual selection that triggered the edit
-      pcall(vim.api.nvim_win_set_cursor, win, { math.min(vis.s[1], #lines), vis.s[2] })
-      vim.cmd("normal! " .. vis.mode)
-      pcall(vim.api.nvim_win_set_cursor, win, { math.min(vis.e[1], #lines), vis.e[2] })
-    end
-    if key then
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "n", false)
-    end
-  end
-  local EDIT_KEYS = { "d", "c", "x", "X", "s", "S", "C", "D", "p", "P", "o", "O", "r", "u" }
-  for _, lhs in ipairs(EDIT_KEYS) do
-    pcall(vim.keymap.set, "n", lhs, function() to_text(lhs) end,
-      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: edit terminal text (" .. lhs .. ")" })
-  end
-  pcall(vim.keymap.set, "n", "<C-r>", function() to_text("<C-r>") end,
-    { buffer = buf, silent = true, nowait = true, desc = "jupynvim: edit terminal text" })
-  for _, lhs in ipairs({ "d", "c", "x", "s", "p", "r" }) do
-    pcall(vim.keymap.set, "x", lhs, function()
-      local mode = vim.fn.mode()
-      local s = vim.fn.getpos("v")
-      local e = vim.fn.getpos(".")
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
-      to_text(lhs, { mode = mode, s = { s[2], s[3] - 1 }, e = { e[2], e[3] - 1 } })
-    end, { buffer = buf, silent = true, nowait = true, desc = "jupynvim: edit terminal text (visual " .. lhs .. ")" })
-  end
-end
-
 -- ── splits ─────────────────────────────────────────────────────────────────
 -- If focus is in a FLOATING window (e.g. the snacks explorer picker), move to
 -- a normal window first: splitting from a float fails / mangles the layout
@@ -371,8 +269,20 @@ function M.open(alias, opts)
     local ok, root = pcall(function() return require("jupynvim.remote_explorer").current_root(alias) end)
     if ok then cwd = root end
   end
+  -- Shell line editing mode. Vim-style prompt editing (esc -> dd/cw/v/p at
+  -- the command line) is the SHELL's job, exactly like a local zsh with
+  -- `bindkey -v`: set terminal.editing = "vi" to get it on remotes whose
+  -- dotfiles don't already enable it (bash and zsh both accept -o vi).
+  local args = opts.args
+  if not args then
+    args = { "-l", "-i" }
+    local editing = opts.editing or ((require("jupynvim").config or {}).terminal or {}).editing
+    if editing == "vi" or editing == "emacs" then
+      table.insert(args, "-o"); table.insert(args, editing)
+    end
+  end
   local err, res = client:call_sync("proc_spawn", {
-    cmd = opts.cmd or "bash", args = opts.args or { "-l", "-i" }, cwd = cwd,
+    cmd = opts.cmd or "bash", args = args, cwd = cwd,
     env = { TERM = "xterm-256color", COLORTERM = "truecolor" }, cols = cols, rows = rows,
   }, 10000)
   if err then
@@ -453,7 +363,6 @@ function M.open(alias, opts)
   })
 
   bind_resize_keys(buf, slot)
-  bind_edit_keys(buf, slot)
   vim.cmd("startinsert")
   return buf, res.pid
 end
@@ -469,14 +378,9 @@ function M.toggle(alias, opts)
   local slot = opts.slot or split
   local buf = slots(alias)[slot]
   if buf and vim.api.nvim_buf_is_valid(buf) then
-    -- the slot's window may currently show the editable text copy
-    local shown, w = buf, win_of(buf)
-    if not w then
-      local sb = snaps[buf]
-      if sb and vim.api.nvim_buf_is_valid(sb) then shown, w = sb, win_of(sb) end
-    end
+    local w = win_of(buf)
     if w then
-      remember_size(shown)  -- capture current size so reshow restores it
+      remember_size(buf)  -- capture current size so reshow restores it
       pcall(vim.api.nvim_win_close, w, false)
       return
     end
