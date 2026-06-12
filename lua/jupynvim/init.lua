@@ -2348,8 +2348,23 @@ local function _open_output_inline(buf, cell, range, origin_line)
     return
   end
 
+  -- INLINE focus: a borderless, FULL-WIDTH float over the cell's output
+  -- region. Its lines carry the exact same leading blanks as the rendered
+  -- output rows, so the overlay is aligned by construction and the cursor
+  -- just appears "inside" the output text. Scrolls the full output (not
+  -- the clamped preview) and yanks like any buffer.
+  local win = vim.fn.bufwinid(buf)
+  if win == -1 then win = vim.api.nvim_get_current_win() end
+  local info = vim.fn.getwininfo(win)[1] or {}
+  local textoff = info.textoff or 0
+  local win_h = vim.api.nvim_win_get_height(win)
+  local win_w = vim.api.nvim_win_get_width(win)
+  local pad = string.rep(" ", textoff + 2)
+
   local scratch = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(scratch, 0, -1, false, lines)
+  local padded = {}
+  for i, l in ipairs(lines) do padded[i] = pad .. l end
+  vim.api.nvim_buf_set_lines(scratch, 0, -1, false, padded)
   vim.api.nvim_set_option_value("modifiable", false, { buf = scratch })
   vim.api.nvim_set_option_value("buftype", "nofile", { buf = scratch })
   vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = scratch })
@@ -2358,16 +2373,6 @@ local function _open_output_inline(buf, cell, range, origin_line)
   vim.b[scratch].jupynvim_origin_line = origin_line
   vim.api.nvim_buf_set_name(scratch,
     string.format("jupynvim://Out[%s]", tostring(cell.execution_count or "?")))
-
-  -- INLINE focus: a borderless float laid exactly over the cell's output
-  -- region, so the cursor visually "enters" the rendered output. It scrolls
-  -- (full text, not the clamped preview) and yanks like any buffer.
-  local win = vim.fn.bufwinid(buf)
-  if win == -1 then win = vim.api.nvim_get_current_win() end
-  local info = vim.fn.getwininfo(win)[1] or {}
-  local textoff = info.textoff or 0
-  local win_h = vim.api.nvim_win_get_height(win)
-  local win_w = vim.api.nvim_win_get_width(win)
 
   -- screen row of the first output line: cell's last source line
   -- + 1 (footer box edge) + 1 (execution bar) + 1 (next row)
@@ -2381,19 +2386,17 @@ local function _open_output_inline(buf, cell, range, origin_line)
   if float_row >= win_h - 2 then float_row = math.max(win_h - 6, 1) end
   local max_h = (M.config.output_max_lines or 30)
   local height = math.max(math.min(#lines, max_h, win_h - float_row - 1), 3)
-  local width = math.max(win_w - textoff - 4, 20)
 
   local fwin = vim.api.nvim_open_win(scratch, true, {
     relative = "win", win = win,
-    row = float_row, col = textoff + 2,
-    width = width, height = height,
+    row = float_row, col = 0,
+    width = win_w, height = height,
     style = "minimal", border = "none",
   })
-  -- indistinguishable from the rendered output rows: same background, no
-  -- chrome; the cursor just appears "inside" the output text
   vim.wo[fwin].winhighlight = "Normal:Normal,EndOfBuffer:Normal,SignColumn:Normal"
   vim.wo[fwin].cursorline = false
   vim.wo[fwin].wrap = true
+  pcall(vim.api.nvim_win_set_cursor, fwin, { 1, #pad })
 
   local close_map = function()
     local origin_buf = vim.b.jupynvim_origin_buf
@@ -2404,8 +2407,10 @@ local function _open_output_inline(buf, cell, range, origin_line)
       if origin_l then
         pcall(vim.api.nvim_win_set_cursor, w, { origin_l, 0 })
       end
-      return
+      break
     end
+    -- borders/images under the float can be left stale: full repaint
+    vim.schedule(function() pcall(vim.cmd, "redraw!") end)
   end
   for _, lhs in ipairs({ "<C-j>", "<C-k>", "q", "<Esc>" }) do
     vim.keymap.set("n", lhs, close_map, { buffer = scratch, silent = true, desc = "Leave output" })

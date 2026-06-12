@@ -356,6 +356,11 @@ local function apply_line(buf, ns, lnum, raw)
       priority = 105,
     })
     set_mark(buf, ns, lnum, 0, { line_hl_group = hl, priority = 100 })
+    -- breathing room above headings, like VSCode's vertical rhythm
+    set_mark(buf, ns, lnum, 0, {
+      virt_lines = { { { " ", "Normal" } } },
+      virt_lines_above = true,
+    })
     inline_styling(buf, ns, lnum, raw)
     return
   end
@@ -375,14 +380,15 @@ local function apply_line(buf, ns, lnum, raw)
     inline_styling(buf, ns, lnum, raw)
     return
   end
-  -- Bullet list (with GitHub task-list checkboxes)
+  -- Bullet list (with GitHub task-list checkboxes). Overlay WITHOUT
+  -- conceal: concealing the marker shifted the text left one cell and
+  -- glued the bullet to the word.
   local indent, marker = raw:match("^(%s*)([%-%*%+])%s+")
   if marker then
     set_mark(buf, ns, lnum, #indent, {
       end_col = #indent + 1,
       virt_text = { { "•", HL.Bullet } },
       virt_text_pos = "overlay",
-      conceal = "",
       hl_mode = "combine",
     })
     local box_s, box_e, state = raw:find("^%s*[%-%*%+]%s+%[([ xX])%]")

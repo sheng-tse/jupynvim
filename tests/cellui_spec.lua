@@ -72,9 +72,9 @@ assert(vim.api.nvim_win_get_cursor(win)[1] == 4, "gg must go to the CELL's first
 feed("j"); feed("j")  -- would leave the cell; clamp must hold it
 assert(vim.api.nvim_win_get_cursor(win)[1] == 5, "motion escaped the cell: line "
   .. vim.api.nvim_win_get_cursor(win)[1])
--- relative numbers inside the edited cell (cursor on cell line 2)
-assert(sc(4, 0, 1):find("  1", 1, true), "edit mode should show relative distance")
-assert(sc(5, 0, 0):find("  2", 1, true), "cursor line shows its in-cell number")
+-- per-cell ABSOLUTE numbers in edit mode too (relnum must not leak in)
+assert(sc(4, 0, 1):find("  1", 1, true), "edit mode must keep per-cell absolute numbers")
+assert(sc(5, 0, 0):find("  2", 1, true), "edit mode must keep per-cell absolute numbers")
 feed("<Esc>")
 assert(CellMode.is_command(buf), "Esc did not return to command mode")
 assert(vim.bo[buf].modifiable == false, "command mode should re-lock")
@@ -108,6 +108,11 @@ local xcount = 0
 for _, row in ipairs(all_text) do if row:find("x%s*$") then xcount = xcount + 1 end end
 assert(xcount <= 30, "clamp failed: " .. xcount .. " output rows")
 assert(not blob:find("Markdown", 1, true), "markdown cell should be frameless when not edited")
+local has_bg = false
+for _, m in ipairs(marks) do
+  if m[4].line_hl_group == "JupynvimCellBg" and m[2] >= 3 then has_bg = true end
+end
+assert(has_bg, "code cells must get the darker editor background")
 for _, m in ipairs(marks) do
   local d = m[4]
   if d.virt_text_pos == "right_align" and m[2] <= 1 then
@@ -171,8 +176,13 @@ for _, w in ipairs(vim.api.nvim_list_wins()) do
   if vim.api.nvim_win_get_config(w).relative == "win" then fwin = w end
 end
 assert(fwin, "inline output float did not open")
+local fcfg = vim.api.nvim_win_get_config(fwin)
+assert(fcfg.col == 0 and fcfg.width == vim.api.nvim_win_get_width(win),
+  "float must span the full window width from col 0")
 local fbuf = vim.api.nvim_win_get_buf(fwin)
 assert(vim.api.nvim_buf_line_count(fbuf) == 30, "float should hold the FULL output")
+assert(vim.api.nvim_buf_get_lines(fbuf, 0, 1, false)[1]:match("^%s+y"),
+  "float lines must carry the render's leading blanks for alignment")
 assert(vim.wo[fwin].cursorline == false, "no popup chrome inside the output")
 feed("yy")
 assert(vim.fn.getreg('"'):find("y"), "yank inside output failed")

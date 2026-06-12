@@ -232,8 +232,14 @@ local function build_output_virt_lines(cell, width, nb, lead)
       local text = expand_tabs(strip_ansi(process_cr(as_str(o.text))))
       for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
         line = compact_tqdm(line)
-        for _, w in ipairs(wrap(line, inner_w)) do
-          push(w, hl)
+        if line:find("data:image/%w+;base64,") then
+          -- a printed data-URI is thousands of useless characters; the
+          -- image itself renders separately
+          push("[embedded image data]", HL_MORE)
+        else
+          for _, w in ipairs(wrap(line, inner_w)) do
+            push(w, hl)
+          end
         end
       end
     elseif o.output_type == "execute_result" or o.output_type == "display_data" then
@@ -434,7 +440,8 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
 
   -- ── boxed editor: code cells always; markdown while being edited ──
   local bc = box_chars(selected)
-  local border_hl = selected and HL_BORDER_SEL or HL_BORDER
+  local border_hl = editing and "JupynvimBorderEdit"
+    or (selected and HL_BORDER_SEL or HL_BORDER)
   local label = cell.cell_type == "code" and "Python" or "Markdown"
   local hdr = header_line(total_w, gut, label, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
@@ -468,7 +475,8 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
 
   -- RIGHT border on each source line; the LEFT border is part of the
   -- statuscolumn (so the insert cursor aligns even on empty lines).
-  -- Repeats on wrapped rows via virt_text_repeat_linebreak.
+  -- Repeats on wrapped rows via virt_text_repeat_linebreak. Each source
+  -- line also gets the darker editor background, like VSCode's cells.
   for ln = range.start, math.min(range.stop - 1, total - 1) do
     pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
       virt_text = { { bc.v, border_hl } },
@@ -476,6 +484,10 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
       virt_text_repeat_linebreak = true,
       hl_mode = "combine",
       priority = 100,
+    })
+    pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
+      line_hl_group = "JupynvimCellBg",
+      priority = 1,
     })
   end
 

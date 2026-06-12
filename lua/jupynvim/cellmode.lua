@@ -81,19 +81,15 @@ end
 
 -- ── statuscolumn ───────────────────────────────────────────────────────────
 -- Per-cell gutter. Every branch renders exactly M.GUTTER display cells so
--- the text area never shifts between lines.
-local function bar_for(buf, idx, sel)
-  if idx ~= sel then return " " end
-  if M.is_command(buf) then return "%#JupynvimBarSel#▌%*" end
-  return "%#JupynvimBarEdit#▌%*"
-end
-
+-- the text area never shifts between lines. The cell's left border IS the
+-- selection indicator: heavy + colored on the current cell (blue in
+-- command mode, green while editing), like VSCode's bar; no second bar.
 function M.statuscol()
   return M._statuscol_for(vim.api.nvim_get_current_buf(), vim.v.lnum, vim.v.virtnum, vim.v.relnum)
 end
 
 -- Pure form (testable): gutter content for (buf, lnum, virtnum, relnum).
-function M._statuscol_for(buf, lnum, virtnum, relnum)
+function M._statuscol_for(buf, lnum, virtnum, _relnum)
   local nb = Notebook.get(buf)
   if not nb then return "" end
   if virtnum < 0 then
@@ -113,25 +109,26 @@ function M._statuscol_for(buf, lnum, virtnum, relnum)
   local cell = nb.cells[idx]
   local editing = (not M.is_command(buf)) and idx == sel
   local boxed = (cell and cell.cell_type == "code") or editing
-  local bar = bar_for(buf, idx, sel)
-  local border_hl = (idx == sel) and "JupynvimBorderSel" or "JupynvimBorder"
-  local edge_ch = (idx == sel) and "┃" or "│"
-  local edge = boxed and ("%#" .. border_hl .. "#" .. edge_ch .. "%* ") or "  "
-  if virtnum > 0 then
-    -- wrap continuation row: bar + border, no number
-    return bar .. "    " .. edge
+  local hl = "JupynvimBorder"
+  local ch = "│"
+  if idx == sel then
+    ch = "┃"
+    hl = M.is_command(buf) and "JupynvimBorderSel" or "JupynvimBorderEdit"
   end
-  if not boxed then
-    -- rendered markdown: no line numbers, like VSCode
-    return bar .. "    " .. edge
-  end
-  local shown
-  if editing and relnum and relnum ~= 0 then
-    shown = relnum  -- relative to the cursor inside the edited cell
+  local edge
+  if boxed then
+    edge = "%#" .. hl .. "#" .. ch .. "%* "
+  elseif idx == sel then
+    edge = "%#" .. hl .. "#▌%* "  -- rendered markdown: VSCode selection bar
   else
-    shown = line0 - r.start + 1  -- per-cell absolute
+    edge = "  "
   end
-  return bar .. "%#LineNr#" .. string.format("%3d", shown) .. "%* " .. edge
+  if virtnum > 0 or not boxed then
+    -- wrap continuation rows and rendered markdown carry no number
+    return "     " .. edge
+  end
+  -- per-cell ABSOLUTE numbering, both modes
+  return " %#LineNr#" .. string.format("%3d", line0 - r.start + 1) .. "%* " .. edge
 end
 
 -- ── selection / cursor visibility ──────────────────────────────────────────
@@ -387,6 +384,13 @@ function M.attach(buf, api)
     buffer = buf,
     callback = function()
       if M.is_command(buf) then
+        -- the box borders are extmarks: re-render when the selection moves
+        -- so the highlighted frame follows it (not just the gutter)
+        local s = M.selected_idx(buf)
+        if state[buf] and state[buf].last_sel ~= s then
+          state[buf].last_sel = s
+          refresh_render(buf)
+        end
         vim.cmd("redrawstatus")
       else
         clamp_to_cell(buf)
@@ -419,8 +423,7 @@ end
 
 function M.setup_hl()
   local hl = vim.api.nvim_set_hl
-  hl(0, "JupynvimBarSel",  { fg = "#7aa2f7", bold = true })
-  hl(0, "JupynvimBarEdit", { fg = "#9ece6a", bold = true })
+  hl(0, "JupynvimBorderEdit", { fg = "#9ece6a", bold = true })
   hl(0, "JupynvimHiddenCursor", { blend = 100, nocombine = true })
 end
 
