@@ -114,10 +114,15 @@ local function bind_resize_keys(buf, slot)
   end
   for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end
   for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end
-  -- Edit operators can never work on a terminal buffer (E21: 'modifiable' is
-  -- off), so silence them in normal mode. Movement, search, visual mode, and
-  -- y (copying scrollback) all still work; i/a enter terminal-insert as usual.
-  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "S", "C", "D", "p", "P", "o", "O", "r", "u", "<C-r>" }) do
+  -- Terminal scrollback is read-only (true of every terminal, incl. stock
+  -- :terminal): edit operators would only raise E21, so they're inert in
+  -- BOTH normal and visual mode. Movement, search, visual selection, and
+  -- y (copying scrollback) still work; i/a enter terminal-insert as usual.
+  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "S", "C", "D", "p", "P", "r" }) do
+    pcall(vim.keymap.set, { "n", "x" }, lhs, function() end,
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
+  end
+  for _, lhs in ipairs({ "o", "O", "u", "<C-r>" }) do
     pcall(vim.keymap.set, "n", lhs, function() end,
       { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
   end
