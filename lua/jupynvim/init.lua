@@ -57,8 +57,8 @@ M.config = {
   -- (used as `alias:relative/path` in the command) to a connection spec.
   -- Example:
   --   remote = {
-  --     psc_bridges2 = {
-  --       host = "user@bridges2.psc.edu",
+  --     mycluster = {
+  --       host = "user@cluster.example.edu",
   --       core_path = "~/.local/bin/jupynvim-core",
   --       -- ssh_args = { "-J", "jumpbox" },  -- optional ProxyJump etc
   --       -- slurm = "interact -p GPU-shared --gpus 1 -t 02:00:00", -- v0.3.x
@@ -888,7 +888,7 @@ function M.use_local()
 end
 
 -- Parse a jupynvim:// URI into (alias, path). Returns nil on no match.
---   jupynvim://psc/jet/home/slin32/foo.py  →  "psc", "/jet/home/slin32/foo.py"
+--   jupynvim://psc/home/user/foo.py  →  "psc", "/home/user/foo.py"
 --   jupynvim://psc/~/foo.py                →  "psc", "/~/foo.py"  (server expands ~)
 function M._parse_uri(uri)
   local alias, path = uri:match("^jupynvim://([^/]+)(/.*)$")
@@ -3051,7 +3051,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
 
   -- :JupynvimRemoteCd <alias> <path> — re-root the remote explorer at <path>
-  -- (absolute remote path, e.g. /ocean/projects/cis260125p/shared). Lets you
+  -- (absolute remote path, e.g. /ocean/projects/<alloc>/shared). Lets you
   -- browse/edit anywhere on the remote, not just $HOME. In the tree, `-` roots
   -- up one level and `.` prompts for a path.
   vim.api.nvim_create_user_command("JupynvimRemoteCd", function(o)

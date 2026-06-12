@@ -14,7 +14,7 @@ ROOT="$(pwd)"
 
 # Activate the conda env so cargo/python deps are available
 # shellcheck disable=SC1091
-source /Users/sheng-tselin/miniconda3/etc/profile.d/conda.sh
+source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate jupynvim 2>/dev/null
 
 PASS=0
