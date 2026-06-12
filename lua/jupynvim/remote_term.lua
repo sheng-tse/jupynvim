@@ -243,9 +243,78 @@ local function enter_visual(buf)
   elseif m:sub(1, 1) == "n" then
     keys = "v"
   end
-  if keys then
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "n", false)
+  if not keys then return end
+  -- remember where the SHELL's cursor is (== nvim cursor here): the shell
+  -- sits in vi command mode at this spot while the user selects in nvim,
+  -- and the visual operators below translate the selection into readline
+  -- edits relative to it
+  local win = win_of(buf)
+  if win then
+    local cur = vim.api.nvim_win_get_cursor(win)
+    vim.b[buf].jnv_bridge_row = cur[1]
+    vim.b[buf].jnv_bridge_col = cur[2]
   end
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "n", false)
+end
+
+-- Visual operators on the terminal buffer. On the command line (the row
+-- where the bridge started, shell waiting in vi command mode) they become
+-- real readline edits sent down the PTY:
+--   d/x  -> delete the selected chars (lands in the shell kill-ring: p works)
+--   c    -> same, then insert mode
+--   y    -> delete + undo: line untouched, kill-ring loaded, so p pastes the
+--           selection; the text is also yanked into nvim's registers
+-- Anywhere else (output/scrollback) y is a plain nvim yank and d/c are
+-- read-only, exactly like a local :terminal.
+local function bind_visual_ops(buf)
+  local function op(key)
+    local brow = vim.b[buf].jnv_bridge_row
+    local bcol = vim.b[buf].jnv_bridge_col
+    local mode = vim.fn.mode()
+    local vp, cp = vim.fn.getpos("v"), vim.fn.getpos(".")
+    local sl, sc, el = vp[2], vp[3], cp[2]
+    if el < sl or (el == sl and cp[3] < sc) then
+      sl, sc, el = cp[2], cp[3], vp[2]
+    end
+    local on_prompt = brow and mode == "v" and sl == brow and el == brow
+    if not on_prompt then
+      -- outside the command line: behave exactly like a local :terminal
+      if key == "y" then
+        vim.api.nvim_feedkeys("y", "n", false)
+      else
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
+        vim.notify("jupynvim: output is read-only (y copies; d/c/x edit the command line)",
+                   vim.log.levels.INFO)
+      end
+      return
+    end
+    local region = vim.fn.getregion(vp, cp, { type = mode })
+    vim.fn.setreg('"', table.concat(region, "\n"))
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+    local line = vim.api.nvim_buf_get_lines(buf, brow - 1, brow, false)[1] or ""
+    local n = vim.fn.strchars(region[1] or "")
+    -- chars between the selection start and the shell cursor (the anchor,
+    -- where v was pressed: the shell is still parked there in command mode)
+    local back = vim.fn.strchars(line:sub(sc, bcol))
+    local seq = (back > 0 and (back .. "h") or "") .. n .. "x"
+    if key == "y" then
+      seq = seq .. "u"  -- delete + undo: kill-ring loaded, line untouched
+    elseif key == "c" then
+      seq = seq .. "i"
+    end
+    send_text(buf, seq)
+    vim.b[buf].jnv_bridge_row = nil
+    vim.cmd("startinsert")
+  end
+  for _, lhs in ipairs({ "d", "x", "c", "y" }) do
+    pcall(vim.keymap.set, "x", lhs, function() op(lhs) end,
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: visual " .. lhs })
+  end
+  -- back at the live prompt: the bridge handoff is over
+  vim.api.nvim_create_autocmd("TermEnter", {
+    buffer = buf,
+    callback = function() vim.b[buf].jnv_bridge_row = nil end,
+  })
 end
 
 -- ── splits ─────────────────────────────────────────────────────────────────
@@ -442,10 +511,9 @@ function M.open(alias, opts)
       if e.kind == "stdout" then
         local data = vim.base64.decode(e.data_b64)
         if data:find(VISUAL_OSC, 1, true) then
-          -- the shell's v announced itself: shell back to insert (prompt
-          -- stays intact), nvim takes over with its own visual mode
-          entry.client:call("proc_stdin",
-            { pid = e.pid, data_b64 = vim.base64.encode("i") }, function() end)
+          -- the shell's v announced itself: the shell stays parked in vi
+          -- command mode at the cursor while nvim runs the selection; the
+          -- visual operators translate the result back into readline edits
           vim.schedule(function() enter_visual(entry.buf) end)
         end
         pcall(vim.api.nvim_chan_send, entry.chan, data)
@@ -500,6 +568,7 @@ function M.open(alias, opts)
   })
 
   bind_resize_keys(buf, slot)
+  bind_visual_ops(buf)
   vim.cmd("startinsert")
   return buf, res.pid
 end
