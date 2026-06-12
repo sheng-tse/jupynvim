@@ -2415,6 +2415,19 @@ local function _open_output_inline(buf, cell, range, origin_line)
   for _, lhs in ipairs({ "<C-j>", "<C-k>", "q", "<Esc>" }) do
     vim.keymap.set("n", lhs, close_map, { buffer = scratch, silent = true, desc = "Leave output" })
   end
+  -- a float pinned to window coords must never outlive its context:
+  -- close it the moment focus leaves it (scrolling the notebook, jumping
+  -- to another window), or it becomes a ghost overlay
+  vim.api.nvim_create_autocmd("WinLeave", {
+    buffer = scratch,
+    once = true,
+    callback = function()
+      if vim.api.nvim_win_is_valid(fwin) then
+        pcall(vim.api.nvim_win_close, fwin, true)
+        vim.schedule(function() pcall(vim.cmd, "redraw!") end)
+      end
+    end,
+  })
 end
 
 local function _has_output(cell)
@@ -2447,11 +2460,11 @@ function M.enter_output(buf, direction)
   local nb = Notebook.get(buf)
   if not nb then return end
   -- VSCode model: output interaction belongs to the focused (edit-mode)
-  -- cell. In command mode, Enter first.
+  -- cell. In command mode, C-j/C-k act as plain window navigation so the
+  -- terminal/explorer round-trip keeps working.
   local CellMode = require("jupynvim.cellmode")
   if CellMode.is_command(buf) then
-    vim.notify("jupynvim: press Enter on the cell first, then <C-j> opens its output",
-      vim.log.levels.INFO)
+    vim.cmd("wincmd " .. (direction == "up" and "k" or "j"))
     return
   end
   nb:sync_from_buffer()

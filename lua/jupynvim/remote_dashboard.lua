@@ -15,7 +15,9 @@ M.logo = {
   " ╚════╝  ╚═════╝ ╚═╝        ╚═╝   ╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝",
 }
 
-vim.api.nvim_set_hl(0, "JupynvimDashLogo",   { default = true, link = "Function" })
+-- Claude Code style: the ANSI Shadow block font in Claude's signature
+-- orange.
+vim.api.nvim_set_hl(0, "JupynvimDashLogo",   { fg = "#D97757", bold = true })
 vim.api.nvim_set_hl(0, "JupynvimDashIcon",   { default = true, link = "Special" })
 vim.api.nvim_set_hl(0, "JupynvimDashKey",    { default = true, link = "Special" })
 vim.api.nvim_set_hl(0, "JupynvimDashDesc",   { default = true, link = "Normal" })

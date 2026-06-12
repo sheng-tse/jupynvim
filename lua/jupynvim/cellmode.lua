@@ -113,19 +113,19 @@ function M._statuscol_for(buf, lnum, virtnum, _relnum)
   local ch = "│"
   if idx == sel then
     ch = "┃"
-    hl = M.is_command(buf) and "JupynvimBorderSel" or "JupynvimBorderEdit"
+    hl = "JupynvimBorderSel"
   end
-  local edge
-  if boxed then
-    edge = "%#" .. hl .. "#" .. ch .. "%* "
-  elseif idx == sel then
-    edge = "%#" .. hl .. "#▌%* "  -- rendered markdown: VSCode selection bar
-  else
-    edge = "  "
+  if not boxed then
+    -- rendered markdown: selection bar at the FAR LEFT (VSCode), no
+    -- numbers, no box edge
+    if idx == sel then
+      return "%#JupynvimBorderSel#▌%*" .. string.rep(" ", M.GUTTER - 1)
+    end
+    return string.rep(" ", M.GUTTER)
   end
-  if virtnum > 0 or not boxed then
-    -- wrap continuation rows and rendered markdown carry no number
-    return "     " .. edge
+  local edge = "%#" .. hl .. "#" .. ch .. "%* "
+  if virtnum > 0 then
+    return "     " .. edge  -- wrap continuation rows carry no number
   end
   -- per-cell ABSOLUTE numbering, both modes
   return " %#LineNr#" .. string.format("%3d", line0 - r.start + 1) .. "%* " .. edge
@@ -203,6 +203,20 @@ function M.enter_edit(buf, keys)
     end
   end
   refresh_render(buf)
+  -- editing the FIRST cell: its new top border is a virt line above buffer
+  -- line 1; pull it into view
+  if idx == 1 and win ~= -1 then
+    vim.schedule(function()
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_call(win, function()
+          local v = vim.fn.winsaveview()
+          if v.topline == 1 then
+            pcall(vim.fn.winrestview, { topline = 1, topfill = 5, lnum = v.lnum, col = v.col })
+          end
+        end)
+      end
+    end)
+  end
   if keys then
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "n", false)
   end
@@ -417,8 +431,24 @@ function M.attach(buf, api)
       _range_cache[buf] = nil
     end,
   })
+  -- frames span the window width: re-render when it changes (explorer or
+  -- terminal toggles, window resizes)
+  vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+    buffer = buf,
+    callback = function() refresh_render(buf) end,
+  })
 
   M.enter_command(buf)
+  -- the first cell's top border is a virt line ABOVE buffer line 1: pull
+  -- it into view on open
+  vim.schedule(function()
+    local win = vim.fn.bufwinid(buf)
+    if win ~= -1 and vim.api.nvim_win_get_cursor(win)[1] <= 3 then
+      vim.api.nvim_win_call(win, function()
+        pcall(vim.fn.winrestview, { topline = 1, topfill = 5 })
+      end)
+    end
+  end)
 end
 
 function M.setup_hl()

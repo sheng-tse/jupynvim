@@ -275,8 +275,12 @@ local function build_output_virt_lines(cell, width, nb, lead)
       if text ~= "" then
         text = expand_tabs(text)
         for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-          for _, w in ipairs(wrap(line, inner_w)) do
-            push(w, HL_RESULT)
+          if line:find("data:image/%w+;base64,") then
+            push("[embedded image data]", HL_MORE)
+          else
+            for _, w in ipairs(wrap(line, inner_w)) do
+              push(w, HL_RESULT)
+            end
           end
         end
       end
@@ -440,8 +444,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
 
   -- ── boxed editor: code cells always; markdown while being edited ──
   local bc = box_chars(selected)
-  local border_hl = editing and "JupynvimBorderEdit"
-    or (selected and HL_BORDER_SEL or HL_BORDER)
+  local border_hl = selected and HL_BORDER_SEL or HL_BORDER
   local label = cell.cell_type == "code" and "Python" or "Markdown"
   local hdr = header_line(total_w, gut, label, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
@@ -535,7 +538,9 @@ function M.place_images(nb, cell, range, win, gut)
         if pos and pos.row and pos.row > 0 then
           local img_row = pos.row + 2
           local img_col = (gut or 7) + 3
-          image.place_at_screen_row(cell.id, img_row, img_col, 14, 56)
+          local cfg = require("jupynvim").config or {}
+          image.place_at_screen_row(cell.id, img_row, img_col,
+            cfg.image_rows or 10, cfg.image_cols or 44)
         end
       end)
     end
