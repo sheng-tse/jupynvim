@@ -2466,6 +2466,26 @@ function M.enter_output(buf, direction)
   _open_output_inline(buf, nb.cells[target_idx], ranges[target_idx], lnum)
 end
 
+-- gx on a rendered markdown link: the URL part is concealed, so resolve
+-- the link under the cursor from the raw line and open it.
+function M.open_link(buf)
+  local line = vim.api.nvim_get_current_line()
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local l = require("jupynvim.markdown").link_at(line, col)
+  if l and l.url and l.url ~= "" then
+    if l.url:match("^jupynvim%-img:") then
+      vim.notify("jupynvim: embedded image (<leader>nI saves it to a file)", vim.log.levels.INFO)
+      return
+    end
+    vim.ui.open(l.url)
+    local shown = #l.url > 70 and (l.url:sub(1, 70) .. "…") or l.url
+    vim.notify("jupynvim: opening " .. shown, vim.log.levels.INFO)
+    return
+  end
+  local cf = vim.fn.expand("<cfile>")
+  if cf and cf ~= "" then pcall(vim.ui.open, cf) end
+end
+
 -- Save the current cell's image (markdown embedded or code-cell output)
 -- to a file. Format inferred from image/png vs image/jpeg vs image/gif.
 function M.save_image(buf, path)
