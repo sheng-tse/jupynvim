@@ -1,0 +1,44 @@
+# Minimal zsh setup for jupynvim remote terminals.
+#
+# Why zsh: vim-style editing at the prompt (esc, then dd/cw/x/p, v to
+# select with highlight, d to delete the selection) is the shell's line
+# editor. bash's vi mode has no visual mode; zsh's does. Pair this with
+# `shell = "zsh"` on the jupynvim profile.
+#
+# Install on a fresh Debian/Ubuntu box:
+#   sudo apt-get install -y zsh
+#   scp extras/zshrc-remote <host>:~/.zshrc
+
+export PATH="$HOME/.local/bin:$PATH"
+
+PROMPT='%F{6}%n@%m%f:%F{4}%~%f$ '
+
+# vi line editing, like a local `bindkey -v`
+bindkey -v
+export KEYTIMEOUT=15
+
+# NORMAL / VISUAL indicator on the right, like powerlevel10k's vi_mode
+# segment (insert mode shows nothing). zle-line-pre-redraw keeps it fresh
+# when v toggles the region without a keymap change.
+function jupynvim-vi-indicator {
+  local m=""
+  if [[ $KEYMAP == vicmd ]]; then
+    if (( REGION_ACTIVE )); then m="%F{5}VISUAL%f"; else m="%F{2}NORMAL%f"; fi
+  fi
+  if [[ $RPS1 != $m ]]; then
+    RPS1=$m
+    zle reset-prompt
+  fi
+}
+function zle-keymap-select { jupynvim-vi-indicator }
+function zle-line-init { jupynvim-vi-indicator }
+function zle-line-pre-redraw { jupynvim-vi-indicator }
+zle -N zle-keymap-select
+zle -N zle-line-init
+zle -N zle-line-pre-redraw
+
+# conda, if present (same hook the bash install puts in .bashrc)
+if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+  . "$HOME/miniconda3/etc/profile.d/conda.sh"
+  conda activate base
+fi

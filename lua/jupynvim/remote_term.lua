@@ -269,20 +269,25 @@ function M.open(alias, opts)
     local ok, root = pcall(function() return require("jupynvim.remote_explorer").current_root(alias) end)
     if ok then cwd = root end
   end
-  -- Shell line editing mode. Vim-style prompt editing (esc -> dd/cw/v/p at
-  -- the command line) is the SHELL's job, exactly like a local zsh with
-  -- `bindkey -v`: set terminal.editing = "vi" to get it on remotes whose
-  -- dotfiles don't already enable it (bash and zsh both accept -o vi).
+  -- Shell + line editing mode. Vim-style prompt editing (esc -> dd/cw/v/p
+  -- at the command line) is the SHELL's job, exactly like a local zsh with
+  -- `bindkey -v`. terminal.editing = "vi" passes -o vi (bash and zsh both
+  -- accept it) for remotes whose dotfiles don't enable it. Visual mode with
+  -- highlight only exists in zsh: set shell = "zsh" on the profile (or
+  -- terminal.shell globally) for full parity with a local zsh.
+  local conf = J.config or {}
+  local prof = (conf.remote or {})[alias] or {}
+  local shell = opts.cmd or prof.shell or (conf.terminal or {}).shell or "bash"
   local args = opts.args
   if not args then
     args = { "-l", "-i" }
-    local editing = opts.editing or ((require("jupynvim").config or {}).terminal or {}).editing
+    local editing = opts.editing or (conf.terminal or {}).editing
     if editing == "vi" or editing == "emacs" then
       table.insert(args, "-o"); table.insert(args, editing)
     end
   end
   local err, res = client:call_sync("proc_spawn", {
-    cmd = opts.cmd or "bash", args = args, cwd = cwd,
+    cmd = shell, args = args, cwd = cwd,
     env = { TERM = "xterm-256color", COLORTERM = "truecolor" }, cols = cols, rows = rows,
   }, 10000)
   if err then
