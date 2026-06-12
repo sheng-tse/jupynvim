@@ -35,6 +35,36 @@ local function win_of(buf)
   return nil
 end
 
+-- Send raw text to the buffer's remote PTY (the shell's stdin).
+local function send_text(buf, text)
+  local alias, pid = vim.b[buf].jupynvim_term_alias, vim.b[buf].jupynvim_term_pid
+  local entry = alias and pid and terms[key(alias, pid)]
+  if not entry then return false end
+  entry.client:call("proc_stdin", { pid = pid, data_b64 = vim.base64.encode(text) }, function() end)
+  return true
+end
+
+-- Take over pasting for jupynvim terminals. Neovim's built-in paste only
+-- knows how to feed its own :terminal jobs; for our relayed PTY it garbled
+-- the bracketed-paste markers (the shell got the start marker but never the
+-- end, showing a stray "~" + highlighted text and hanging until Ctrl-C).
+-- We send the text directly down the PTY, with newlines as CR like real
+-- terminals paste.
+local paste_hooked = false
+local function hook_paste()
+  if paste_hooked then return end
+  paste_hooked = true
+  local orig = vim.paste
+  vim.paste = function(lines, phase)
+    local buf = vim.api.nvim_get_current_buf()
+    if vim.b[buf].jupynvim_term_pid then
+      send_text(buf, table.concat(lines, "\r"))
+      return true
+    end
+    return orig(lines, phase)
+  end
+end
+
 -- Push the buffer's CURRENT window size to its PTY. `force` jiggles the size
 -- (rows-1 then rows) to guarantee a SIGWINCH so the shell repaints even when
 -- the size is unchanged — needed on reshow, where nvim's terminal grid is
@@ -118,13 +148,23 @@ local function bind_resize_keys(buf, slot)
   -- :terminal): edit operators would only raise E21, so they're inert in
   -- BOTH normal and visual mode. Movement, search, visual selection, and
   -- y (copying scrollback) still work; i/a enter terminal-insert as usual.
-  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "S", "C", "D", "p", "P", "r" }) do
+  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "S", "C", "D", "r" }) do
     pcall(vim.keymap.set, { "n", "x" }, lhs, function() end,
       { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
   end
   for _, lhs in ipairs({ "o", "O", "u", "<C-r>" }) do
     pcall(vim.keymap.set, "n", lhs, function() end,
       { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
+  end
+  -- p/P in normal mode: paste the register into the SHELL (what paste means
+  -- in a terminal). With clipboard=unnamedplus this is the system clipboard.
+  for _, lhs in ipairs({ "p", "P" }) do
+    pcall(vim.keymap.set, "n", lhs, function()
+      local lines = vim.fn.getreg('"', 1, true)
+      local text = table.concat(lines, "\r")
+      if vim.fn.getregtype('"') == "V" then text = text .. "\r" end
+      send_text(buf, text)
+    end, { buffer = buf, silent = true, nowait = true, desc = "jupynvim: paste register to shell" })
   end
 end
 
@@ -216,6 +256,7 @@ end
 -- opts.slot: toggle slot name (defaults to opts.split). opts.cwd: working dir.
 function M.open(alias, opts)
   opts = opts or {}
+  hook_paste()
   local split = opts.split or "below"
   local slot = opts.slot or split
   local J = require("jupynvim")
