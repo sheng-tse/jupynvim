@@ -12,6 +12,11 @@ local M = {}
 
 -- (alias, pid) → terminal state, keyed "alias:pid".
 local terms = {}
+-- Output that arrived for a pid BEFORE its terms[] entry existed (the PTY
+-- starts emitting the login banner/prompt the instant it spawns, racing the
+-- spawn RPC's response). Flushed into the terminal once registered; without
+-- this the first prompt was missing.
+local orphans = {}
 -- Toggle slots per alias: slot name ("below"/"right"/"left"/"tab") → buffer.
 -- Each slot is independently summon/dismiss-able. "below" is the <C-/> one.
 M._slots = {}
@@ -109,6 +114,13 @@ local function bind_resize_keys(buf, slot)
   end
   for action, lhs in pairs(cfg.normal) do rk("n", lhs, action) end
   for action, lhs in pairs(cfg.insert) do rk({ "n", "t" }, lhs, action) end
+  -- Edit operators can never work on a terminal buffer (E21: 'modifiable' is
+  -- off), so silence them in normal mode. Movement, search, visual mode, and
+  -- y (copying scrollback) all still work; i/a enter terminal-insert as usual.
+  for _, lhs in ipairs({ "c", "d", "x", "X", "s", "S", "C", "D", "p", "P", "o", "O", "r", "u", "<C-r>" }) do
+    pcall(vim.keymap.set, "n", lhs, function() end,
+      { buffer = buf, silent = true, nowait = true, desc = "jupynvim: no edits in terminal" })
+  end
 end
 
 -- ── splits ─────────────────────────────────────────────────────────────────
@@ -252,8 +264,16 @@ function M.open(alias, opts)
     client._proc_event_hooked = true
     client:on("proc_event", function(args)
       local e = args[1] or args
-      local entry = terms[key(alias, e.pid)]
-      if not entry then return end
+      local k2 = key(alias, e.pid)
+      local entry = terms[k2]
+      if not entry then
+        -- terminal not registered yet (spawn RPC response still in flight):
+        -- stash so the first prompt isn't lost. Bounded.
+        local q = orphans[k2] or {}
+        if #q < 200 then table.insert(q, e) end
+        orphans[k2] = q
+        return
+      end
       if e.kind == "stdout" then
         pcall(vim.api.nvim_chan_send, entry.chan, vim.base64.decode(e.data_b64))
       elseif e.kind == "exit" then
@@ -261,9 +281,21 @@ function M.open(alias, opts)
         if entry.buf and vim.api.nvim_buf_is_valid(entry.buf) then
           vim.b[entry.buf].jupynvim_term_alive = false
         end
-        terms[key(alias, e.pid)] = nil
+        terms[k2] = nil
       end
     end)
+  end
+  -- Flush output that raced the spawn response (login banner, first prompt).
+  local early = orphans[k]
+  orphans[k] = nil
+  for _, e in ipairs(early or {}) do
+    if e.kind == "stdout" then
+      pcall(vim.api.nvim_chan_send, chan, vim.base64.decode(e.data_b64))
+    elseif e.kind == "exit" then
+      pcall(vim.api.nvim_chan_send, chan, "\r\n[process exited with code " .. tostring(e.code) .. "]\r\n")
+      vim.b[buf].jupynvim_term_alive = false
+      terms[k] = nil
+    end
   end
 
   -- Resize → PTY. Look up the buffer's CURRENT window each time (not a captured
