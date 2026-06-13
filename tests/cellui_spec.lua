@@ -255,5 +255,25 @@ assert(g:find("│", 1, true) and g:find("%d"),
 vim.cmd("close")
 print("H. gutter independent of focused window ok")
 
+-- I. selection change re-renders extmark bars DETERMINISTICALLY (no
+--    reliance on CursorMoved): after move_selection the new cell's
+--    header row must carry the bar and the old cell's rows must not
+vim.api.nvim_win_set_cursor(win, { 1, 0 })       -- select md cell 1
+CellMode.move_selection(buf, 1)                  -- -> cell 2, refresh inside
+vim.wait(300)
+local Rng = CellMode.ranges(buf)
+local hdr_bar, md_bar = false, false
+for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, nb.border_ns, 0, -1, { details = true })) do
+  for _, vl in ipairs(m[4].virt_lines or {}) do
+    if vl[1] and vl[1][1] == "▌" then
+      if m[2] == Rng[2].start then hdr_bar = true end
+      if m[2] < Rng[2].start - 1 then md_bar = true end
+    end
+  end
+end
+assert(hdr_bar, "selected cell's header must carry the bar after move_selection")
+assert(not md_bar, "previous cell must NOT keep a stale bar after move_selection")
+print("I. deterministic selection refresh ok")
+
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")

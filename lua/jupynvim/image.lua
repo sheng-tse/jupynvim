@@ -519,10 +519,24 @@ local function start_animation(p, cell_id)
       return
     end
     p.frame_idx = (p.frame_idx % #p.frames) + 1
-    kitty_call_async("kitty_transmit_only", {
-      image_id = p.image_id,
-      png_b64 = p.frames[p.frame_idx],
-    })
+    -- Re-assert the VIRTUAL placement (U=1 + c/r) with every frame, not a
+    -- bare retransmit: replacing the image data frees the old image AND
+    -- its placement attributes, and the terminal then re-derives the
+    -- placeholder grid from whatever cells happen to be on screen. After
+    -- a scroll that left the block partially visible, that re-derivation
+    -- zooms/crops the gif into the visible sub-block.
+    if p.renderer == "placeholder" and p.cols and p.rows then
+      kitty_call_async("kitty_transmit_virtual", {
+        image_id = p.image_id,
+        png_b64 = p.frames[p.frame_idx],
+        cols = p.cols, rows = p.rows,
+      })
+    else
+      kitty_call_async("kitty_transmit_only", {
+        image_id = p.image_id,
+        png_b64 = p.frames[p.frame_idx],
+      })
+    end
     if p.timer then
       local d = p.delays[p.frame_idx] or 100
       pcall(p.timer.start, p.timer, d, 0, vim.schedule_wrap(tick))

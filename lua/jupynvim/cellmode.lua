@@ -272,9 +272,27 @@ local function select_cell(buf, idx)
   idx = math.max(1, math.min(idx, #ranges))
   local r = ranges[idx]
   local win = vim.fn.bufwinid(buf)
-  if win ~= -1 and r then
-    pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 })
-  end
+  if win == -1 or not r then return end
+  pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 })
+  -- selection changed: re-render NOW. The CursorMoved hook does this too,
+  -- but a missed autocmd leaves stale selection bars frozen into the
+  -- header/footer/image extmark rows, so don't depend on it.
+  if state[buf] then state[buf].last_sel = idx end
+  refresh_render(buf)
+  -- reveal the cell: when the cell plus its output fits the window,
+  -- scroll just enough that ALL of it is visible (VSCode shows the whole
+  -- selected cell, not only its first line at the window bottom)
+  vim.api.nvim_win_call(win, function()
+    local h = vim.api.nvim_win_get_height(win)
+    local first = r.start + 1
+    local total = vim.api.nvim_buf_line_count(buf)
+    local last = math.min((r.out_stop or r.stop) + 4, total)  -- + frame/exec rows
+    if (last - first + 1) >= h then return end  -- taller than the window
+    local need = last - vim.fn.line("w$")
+    local max_up = math.max(first - vim.fn.line("w0") - 1, 0)
+    local n = math.min(need, max_up)
+    if n > 0 then vim.cmd("normal! " .. n .. "\5") end
+  end)
 end
 
 function M.move_selection(buf, delta)
