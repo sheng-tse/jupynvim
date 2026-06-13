@@ -265,6 +265,7 @@ impl Server {
             "kitty_attach" => self.kitty_attach(p).await,
             "kitty_transmit_only" => self.kitty_transmit_only(p).await,
             "kitty_transmit_virtual" => self.kitty_transmit_virtual(p).await,
+            "kitty_place_virtual" => self.kitty_place_virtual(p).await,
             "kitty_place" => self.kitty_place(p).await,
             "kitty_clear_image" => self.kitty_clear_image(p).await,
             "kitty_clear_visible" => self.kitty_clear_visible(p).await,
@@ -787,6 +788,20 @@ impl Server {
         let mut base = serde_json::Map::new();
         base.insert("image_id".into(), json!(id));
         self.emit_kitty(bytes, base).await
+    }
+
+    /// Re-assert the explicit virtual placement for an already-transmitted
+    /// image (`a=d,d=i` then `a=p,U=1,p=1`). No image data moves; heals
+    /// placements lost to deletes or left accumulated as anonymous internals.
+    async fn kitty_place_virtual(&self, p: Json) -> Result<Json> {
+        let image_id = p.get("image_id").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("image_id required"))? as u32;
+        let cols = p.get("cols").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("cols required"))? as u32;
+        let rows = p.get("rows").and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("rows required"))? as u32;
+        let bytes = kitty::encode_place_virtual(image_id, cols, rows);
+        self.emit_kitty(bytes, serde_json::Map::new()).await
     }
 
     /// `a=p`: place an already-transmitted image. If `screen_row` and

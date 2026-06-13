@@ -610,6 +610,9 @@ function M.refresh(nb, win)
     end
     clear_separators(nb, ranges)
     manage_busy_ticker(nb)
+    -- heal any static image whose virtual placement the terminal lost
+    -- (placeholder cells without one render as a randomly cropped image)
+    pcall(image.reassert_virtual_placements)
   end)
 end
 

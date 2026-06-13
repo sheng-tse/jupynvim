@@ -268,9 +268,19 @@ local function encode_local(method, a)
   if method == "kitty_transmit_only" then
     return enc_transmit("\x1b_Ga=t,f=100,i=" .. a.image_id .. ",q=2,m=%d;%s\x1b\\", a.png_b64)
   elseif method == "kitty_transmit_virtual" then
-    return enc_transmit(
-      "\x1b_Ga=T,U=1,f=100,i=" .. a.image_id .. ",c=" .. a.cols .. ",r=" .. a.rows .. ",q=2,m=%d;%s\x1b\\",
-      a.png_b64)
+    -- a=t data + explicit virtual placement (p=1). NOT a=T: displays
+    -- without a placement id get internal ids that ACCUMULATE one per
+    -- transmit (ghost/double rendering); an external p=1 is replaced in
+    -- place, so per-frame retransmits keep exactly one placement.
+    return enc_transmit("\x1b_Ga=t,f=100,i=" .. a.image_id .. ",q=2,m=%d;%s\x1b\\", a.png_b64)
+      .. string.format("\x1b_Ga=p,U=1,i=%d,p=1,c=%d,r=%d,q=2\x1b\\",
+        a.image_id, a.cols, a.rows)
+  elseif method == "kitty_place_virtual" then
+    -- placement-only re-assert: drop ALL of the image's placements
+    -- (lowercase d=i keeps the data), then create the single external one
+    return string.format(
+      "\x1b_Ga=d,d=i,i=%d,q=2\x1b\\\x1b_Ga=p,U=1,i=%d,p=1,c=%d,r=%d,q=2\x1b\\",
+      a.image_id, a.image_id, a.cols, a.rows)
   elseif method == "kitty_place" then
     if a.screen_row and a.screen_col then
       return string.format("\x1b[s\x1b[%d;%dH\x1b_Ga=p,i=%d,p=%d,c=%d,r=%d,q=2\x1b\\\x1b[u",
@@ -519,12 +529,10 @@ local function start_animation(p, cell_id)
       return
     end
     p.frame_idx = (p.frame_idx % #p.frames) + 1
-    -- Re-assert the VIRTUAL placement (U=1 + c/r) with every frame, not a
-    -- bare retransmit: replacing the image data frees the old image AND
-    -- its placement attributes, and the terminal then re-derives the
-    -- placeholder grid from whatever cells happen to be on screen. After
-    -- a scroll that left the block partially visible, that re-derivation
-    -- zooms/crops the gif into the visible sub-block.
+    -- transmit_virtual = a=t frame data + a=p,U=1,p=1 in ONE atomic write:
+    -- the explicit p=1 placement is replaced in place every frame, so the
+    -- grid geometry stays authoritative (no re-derivation crops) and
+    -- placements never accumulate (no ghost/double rendering)
     if p.renderer == "placeholder" and p.cols and p.rows then
       kitty_call_async("kitty_transmit_virtual", {
         image_id = p.image_id,
@@ -595,10 +603,16 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     end
     local p = {
       image_id = id, png_hash = h, b64 = b64,
-      placement_id = id, renderer = "placeholder",
+      placement_id = 1, renderer = "placeholder",
       rows = PLACEHOLDER_ROWS, cols = PLACEHOLDER_COLS,
     }
     placements[cell_id] = p
+    -- one-time cleanup: drop any anonymous placements this image id may
+    -- have accumulated in the terminal (older sessions used a=T per
+    -- frame), leaving exactly the explicit p=1 placement
+    kitty_call_async("kitty_place_virtual", {
+      image_id = id, cols = PLACEHOLDER_COLS, rows = PLACEHOLDER_ROWS,
+    })
     log.info(string.format("placeholder: cell=%s id=%d transmitted ok, fg=#%06x",
       cell_id, id, id))
     callback(id)
@@ -711,6 +725,21 @@ end
 function M.force_replace(cell_id)
   local p = placements[cell_id]
   if p then p.placed_row = nil; p.placed_col = nil end
+end
+
+-- Re-assert the explicit virtual placement of every placeholder image
+-- (~60 bytes each, no image data). A placeholder cell whose image has no
+-- virtual placement falls back to native-size tile mapping, which renders
+-- as a randomly cropped image; this heals that within one refresh.
+function M.reassert_virtual_placements()
+  for _, p in pairs(placements) do
+    -- animated placements self-heal on every frame tick; statics need this
+    if p.renderer == "placeholder" and p.cols and p.rows and not p.timer then
+      kitty_call_async("kitty_place_virtual", {
+        image_id = p.image_id, cols = p.cols, rows = p.rows,
+      })
+    end
+  end
 end
 
 local function stop_timer(p)

@@ -69,24 +69,46 @@ pub fn encode_transmit_only(id: u32, png: &[u8]) -> Vec<u8> {
     out.into_bytes()
 }
 
-/// Transmit-and-register-for-virtual-placement (`a=T`, `U=1`, `c=cols`, `r=rows`).
-/// Used for Unicode-placeholder rendering: image anchors to buffer text.
+/// Transmit data + (re)create the EXPLICIT virtual placement: `a=t` chunks
+/// followed by `a=p,U=1,p=1,c,r`, one buffer = one atomic tty write.
+///
+/// NOT `a=T,U=1`: a display without a placement id gets an INTERNAL id and
+/// those accumulate one per transmit (Ghostty graphics_storage.zig: "This
+/// allows multiple placements"), which double-draws gif frames as ghosts.
+/// An external `p=1` is one-per-(image,placement) and replaced in place,
+/// so per-frame retransmits keep exactly one placement with authoritative
+/// geometry (no shadows, no crop from grid re-derivation).
 pub fn encode_transmit_virtual(id: u32, png: &[u8], cols: u32, rows: u32) -> Vec<u8> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(png);
     let mut out = String::with_capacity(b64.len() + 256);
     write_chunks(&mut out, &b64, |out, part, first, more| {
         let m = if more { 1 } else { 0 };
         if first {
-            let _ = write!(
-                out,
-                "\x1b_Ga=T,U=1,f=100,i={},c={},r={},q=2,m={};{}\x1b\\",
-                id, cols, rows, m, part
-            );
+            let _ = write!(out, "\x1b_Ga=t,f=100,i={},q=2,m={};{}\x1b\\", id, m, part);
         } else {
             let _ = write!(out, "\x1b_Gm={},q=2;{}\x1b\\", m, part);
         }
     });
+    let _ = write!(
+        out,
+        "\x1b_Ga=p,U=1,i={},p=1,c={},r={},q=2\x1b\\",
+        id, cols, rows
+    );
     out.into_bytes()
+}
+
+/// (Re)assert the explicit virtual placement WITHOUT retransmitting data:
+/// first delete every placement of the image (lowercase `d=i` with no `p=`
+/// removes placements only, data stays), then create the single external
+/// one. Heals images whose placement was lost or left over as anonymous
+/// internals, after which the terminal would fall back to native-size
+/// placeholder mapping (renders as a random crop).
+pub fn encode_place_virtual(id: u32, cols: u32, rows: u32) -> Vec<u8> {
+    format!(
+        "\x1b_Ga=d,d=i,i={},q=2\x1b\\\x1b_Ga=p,U=1,i={},p=1,c={},r={},q=2\x1b\\",
+        id, id, cols, rows
+    )
+    .into_bytes()
 }
 
 /// Place an already-transmitted image (`a=p`) at the cursor's current position.
@@ -225,9 +247,23 @@ mod tests {
     }
 
     #[test]
-    fn transmit_virtual_has_u_and_cr() {
+    fn transmit_virtual_is_data_plus_explicit_placement() {
         let out = s(encode_transmit_virtual(7, b"\x89PNG", 96, 32));
-        assert!(out.starts_with("\x1b_Ga=T,U=1,f=100,i=7,c=96,r=32,q=2,m=0;"));
+        // data goes as a plain a=t transmit...
+        assert!(out.starts_with("\x1b_Ga=t,f=100,i=7,q=2,m=0;"));
+        // ...followed by the explicit virtual placement (fixed p=1)
+        assert!(out.ends_with("\x1b_Ga=p,U=1,i=7,p=1,c=96,r=32,q=2\x1b\\"));
+        // never the anonymous-placement form (those accumulate per frame)
+        assert!(!out.contains("a=T"));
+    }
+
+    #[test]
+    fn place_virtual_clears_then_creates_one_placement() {
+        let out = s(encode_place_virtual(7, 48, 16));
+        assert_eq!(
+            out,
+            "\x1b_Ga=d,d=i,i=7,q=2\x1b\\\x1b_Ga=p,U=1,i=7,p=1,c=48,r=16,q=2\x1b\\"
+        );
     }
 
     #[test]
