@@ -450,6 +450,22 @@ local function apply_size(split, alias, slot)
   end
 end
 
+-- Opening/hiding a terminal split resizes the notebook window (a side
+-- terminal narrows it), which leaves the cell frames, full-width strings
+-- sized for the OLD width, broken until re-rendered. Re-render every
+-- visible notebook once the layout settles.
+local function refresh_notebooks()
+  vim.schedule(function()
+    local ok, Notebook = pcall(require, "jupynvim.notebook")
+    if not ok then return end
+    local Render = require("jupynvim.render")
+    for buf, nb in pairs(Notebook.all()) do
+      local win = vim.fn.bufwinid(buf)
+      if win ~= -1 then pcall(Render.refresh, nb, win) end
+    end
+  end)
+end
+
 -- ── open / toggle ──────────────────────────────────────────────────────────
 -- Open a remote shell. opts.split: "below"(default)/"right"/"left"/"tab".
 -- opts.slot: toggle slot name (defaults to opts.split). opts.cwd: working dir.
@@ -622,6 +638,7 @@ function M.open(alias, opts)
 
   bind_resize_keys(buf, slot)
   bind_visual_ops(buf)
+  refresh_notebooks()  -- the new split narrowed the notebook; redraw frames
   vim.cmd("startinsert")
   return buf, res.pid
 end
@@ -641,11 +658,13 @@ function M.toggle(alias, opts)
     if w then
       remember_size(buf)  -- capture current size so reshow restores it
       pcall(vim.api.nvim_win_close, w, false)
+      refresh_notebooks()  -- notebook reclaimed the space; redraw frames
       return
     end
     if vim.b[buf].jupynvim_term_alive then
       if not make_split(split, buf) then return end
       apply_size(split, alias, slot)  -- restore the size you had
+      refresh_notebooks()  -- the reshown split narrowed the notebook again
       vim.schedule(function() M.sync_size(buf, true); vim.cmd("startinsert") end)
       return
     end

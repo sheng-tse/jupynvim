@@ -140,30 +140,32 @@ function M._statuscol_for(buf, lnum, virtnum)
   if virtnum > 0 then
     return bar .. "    " .. edge  -- wrap continuation rows carry no number
   end
-  -- VSCode-hybrid numbering: in the ACTIVE cell, lines show their distance
-  -- to the anchor (the line the cursor sits on while editing, or last sat
-  -- on after Esc) and the anchor line keeps its in-cell absolute number,
-  -- highlighted. Inactive cells show plain per-cell absolute numbers.
+  -- VSCode-hybrid numbering. Every cell remembers the line the cursor last
+  -- sat on (its "anchor") and keeps that line's number highlighted, even
+  -- when the cell is NOT selected, so you can see where you left off in
+  -- each cell. The ACTIVE cell additionally shows distances (relative
+  -- numbers) to its anchor; inactive cells show plain per-cell absolute
+  -- numbers with just the anchor line highlighted.
   local n, num_hl = line0 - r.start + 1, "LineNr"
+  -- resolve this cell's anchor: live cursor while editing, else remembered
+  local anchor
+  local saved = st and st.pos and st.pos[idx]
+  if saved and saved[1] - 1 >= r.start and saved[1] - 1 < r.stop then
+    anchor = saved[1]
+  end
+  if editing then
+    local win = vim.fn.bufwinid(buf)
+    if win ~= -1 then
+      local cl = vim.api.nvim_win_get_cursor(win)[1]
+      if cl - 1 >= r.start and cl - 1 < r.stop then anchor = cl end
+    end
+  end
   local active = editing or (command and idx == sel)
-  if active then
-    local anchor = r.start + 1
-    local saved = st and st.pos and st.pos[idx]
-    if saved and saved[1] - 1 >= r.start and saved[1] - 1 < r.stop then
-      anchor = saved[1]
-    end
-    if editing then
-      local win = vim.fn.bufwinid(buf)
-      if win ~= -1 then
-        local cl = vim.api.nvim_win_get_cursor(win)[1]
-        if cl - 1 >= r.start and cl - 1 < r.stop then anchor = cl end
-      end
-    end
-    if lnum == anchor then
-      num_hl = "CursorLineNr"            -- in-cell absolute, highlighted
-    else
-      n = math.abs(lnum - anchor)        -- distance to the anchor line
-    end
+  if active and not anchor then anchor = r.start + 1 end
+  if anchor and lnum == anchor then
+    num_hl = "CursorLineNr"               -- highlighted anchor (absolute)
+  elseif active and anchor then
+    n = math.abs(lnum - anchor)           -- active cell: distance to anchor
   end
   return bar .. "%#" .. num_hl .. "#" .. string.format("%3d", n) .. "%* " .. edge
 end
@@ -273,24 +275,12 @@ local function select_cell(buf, idx)
   local r = ranges[idx]
   local win = vim.fn.bufwinid(buf)
   if win == -1 or not r then return end
+  -- Just move the cursor. NO extmark re-render (bars are statuscolumn-only,
+  -- redrawn live with the cursor) and NO reveal-scroll: forcing a layout
+  -- pass via line("w$") + normal! <C-e> on every j/k thrashed redraws
+  -- (badly, against the gif's continuous frame writes) and made cell
+  -- navigation laggy. nvim's own scrolloff keeps the cell in view.
   pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 })
-  -- NO extmark re-render here: nothing in the extmarks depends on the
-  -- selection (bars are statuscolumn-only, redrawn live with the cursor
-  -- move), so j/k stays instant even on huge markdown cells.
-  -- reveal the cell: when the cell plus its output fits the window,
-  -- scroll just enough that ALL of it is visible (VSCode shows the whole
-  -- selected cell, not only its first line at the window bottom)
-  vim.api.nvim_win_call(win, function()
-    local h = vim.api.nvim_win_get_height(win)
-    local first = r.start + 1
-    local total = vim.api.nvim_buf_line_count(buf)
-    local last = math.min((r.out_stop or r.stop) + 4, total)  -- + frame/exec rows
-    if (last - first + 1) >= h then return end  -- taller than the window
-    local need = last - vim.fn.line("w$")
-    local max_up = math.max(first - vim.fn.line("w0") - 1, 0)
-    local n = math.min(need, max_up)
-    if n > 0 then vim.cmd("normal! " .. n .. "\5") end
-  end)
 end
 
 function M.move_selection(buf, delta)

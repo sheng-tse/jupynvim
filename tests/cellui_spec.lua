@@ -318,5 +318,36 @@ assert(ot.link == "Normal" or ot.fg == nm.fg,
   "output text must track Normal, not a captured color")
 print("K. output text tracks Normal ok")
 
+-- L. an INACTIVE cell keeps its last cursor line highlighted (orange),
+--    so you can see where you left off in each cell (VSCode behavior)
+local lbuf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_set_current_buf(lbuf)
+local lnb = Notebook.create(lbuf, "/tmp/l.ipynb", "ls", { cells = {
+  { id = "x1", cell_type = "code", source = "a = 1\nb = 2\nc = 3", outputs = {} },
+  { id = "x2", cell_type = "code", source = "d = 4\ne = 5", outputs = {} },
+} })
+J._populate_buffer(lnb)
+CellMode.attach(lbuf, J)
+local lwin = vim.api.nvim_get_current_win()
+local function lsc(n) return CellMode._statuscol_for(lbuf, n, 0) end
+-- enter cell 1, put the cursor on its 2nd line (buffer line 2), leave
+vim.api.nvim_win_set_cursor(lwin, { 1, 0 })
+feed("<CR>")           -- edit cell 1
+vim.api.nvim_win_set_cursor(lwin, { 2, 0 })
+feed("<Esc>")          -- back to command mode, cell 1 still selected
+-- now select cell 2, so cell 1 is INACTIVE
+local LR = CellMode.ranges(lbuf)
+vim.api.nvim_win_set_cursor(lwin, { LR[2].start + 1, 0 })
+assert(CellMode.selected_idx(lbuf) == 2, "setup: cell 2 should be selected")
+-- cell 1 (inactive) must still highlight its remembered line (buffer line 2)
+assert(lsc(2):find("CursorLineNr", 1, true),
+  "inactive cell must keep its last cursor line highlighted: " .. lsc(2))
+assert(not lsc(1):find("CursorLineNr", 1, true),
+  "inactive cell's other lines stay plain: " .. lsc(1))
+-- and inactive cells use ABSOLUTE numbers (not relative)
+assert(lsc(1):find("  1", 1, true) and lsc(2):find("  2", 1, true),
+  "inactive cell numbers must be absolute")
+print("L. inactive cell remembers highlighted line ok")
+
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")
