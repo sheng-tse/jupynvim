@@ -299,5 +299,24 @@ assert(sc(Rng[2].start + 1):find("▌", 1, true), "gutter bar must be on the new
 assert(not sc(1):find("▌", 1, true), "gutter bar must leave the previous cell")
 print("I. statuscolumn-only selection bar ok")
 
+-- J. a source ending in "\n" must NOT create a phantom trailing empty
+--    line (it showed a stray gutter number above the next cell)
+local pbuf = vim.api.nvim_create_buf(true, false)
+local pnb = Notebook.create(pbuf, "/tmp/p.ipynb", "ps", { cells = {
+  { id = "p1", cell_type = "code", source = "a = 1\nb = 2\n", outputs = {} },
+} })
+local plines = (pnb:to_lines())
+assert(#plines == 2 and plines[2] == "b = 2",
+  "trailing newline must not add a phantom empty line: " .. vim.inspect(plines))
+print("J. no phantom trailing line ok")
+
+-- K. output text masks to the live Normal foreground (no stale/gray color)
+Render.setup_highlights()
+local ot = vim.api.nvim_get_hl(0, { name = "JupynvimOutputText" })
+local nm = vim.api.nvim_get_hl(0, { name = "Normal" })
+assert(ot.link == "Normal" or ot.fg == nm.fg,
+  "output text must track Normal, not a captured color")
+print("K. output text tracks Normal ok")
+
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")

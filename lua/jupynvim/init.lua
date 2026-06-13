@@ -2565,6 +2565,13 @@ function M.setup(opts)
   M.config = deep_merge(M.config, opts or {})
   Log.set_level(M.config.log_level)
   Render.setup_highlights()
+  -- A `:colorscheme` runs `hi clear`, wiping our groups (and the
+  -- JupynvimOutputText -> Normal link). Re-establish them on every
+  -- colorscheme change so output text never falls back to a stale color.
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = vim.api.nvim_create_augroup("jupynvim_colors", { clear = true }),
+    callback = function() pcall(Render.setup_highlights) end,
+  })
   require("jupynvim.diag").setup()
   require("jupynvim.lsp").setup()
   Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols })

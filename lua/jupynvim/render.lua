@@ -637,9 +637,12 @@ function M.setup_highlights()
   hl(0, HL_MORE,       { fg = "#565f89", italic = true })
   hl(0, "JupynvimCellBg", { bg = "#1f2335" })
   hl(0, "JupynvimSeparator", { fg = "#414868" })
-  -- plain foreground for output regions (masks treesitter's code colors)
-  local norm_ok, norm = pcall(vim.api.nvim_get_hl, 0, { name = "Normal", link = false })
-  hl(0, "JupynvimOutputText", { fg = (norm_ok and norm.fg) or 0xc0caf5 })
+  -- Output regions render as plain TEXT (mask treesitter/LSP code colors).
+  -- LINK to Normal instead of snapshotting Normal.fg: setup_highlights
+  -- runs at plugin load, often BEFORE the colorscheme finalizes, so a
+  -- snapshot captured a stale/gray fg that never updated. A link always
+  -- resolves to the live Normal, so output is always the main text color.
+  hl(0, "JupynvimOutputText", { link = "Normal" })
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
   require("jupynvim.markdown").setup_hl()
   require("jupynvim.cellmode").setup_hl()

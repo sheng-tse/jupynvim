@@ -176,15 +176,20 @@ function Notebook:to_lines()
   local ranges = {}
   for i, c in ipairs(self.cells) do
     local start = #out
-    -- split source into lines (preserve empty cells as one empty line)
+    -- split source into lines (preserve empty cells as one empty line).
+    -- Strip exactly ONE trailing newline first: nbformat sources commonly
+    -- end with "\n" (it's the line terminator, not a blank line), and
+    -- keeping it would add a phantom empty last line to the cell that
+    -- shows a stray gutter number above the next cell (like VSCode, the
+    -- terminating newline is not its own editable line).
     local src = c.source or ""
+    if src:sub(-1) == "\n" then src = src:sub(1, -2) end
     if src == "" then
       table.insert(out, "")
     else
       for line in (src .. "\n"):gmatch("([^\n]*)\n") do
         table.insert(out, line)
       end
-      -- if source didn't end with \n, the last empty token is dropped already
     end
     local stop = #out
     table.insert(ranges, { id = c.id, start = start, stop = stop, type = c.cell_type })
