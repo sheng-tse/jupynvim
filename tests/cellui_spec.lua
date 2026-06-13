@@ -124,7 +124,9 @@ for _, m in ipairs(marks) do
   end
 end
 local blob = table.concat(all_text, "\n")
-assert(blob:find("╭─ Python", 1, true), "cell header missing")
+assert(blob:find("╭", 1, true), "cell header missing")
+assert(blob:find("─ Python ─", 1, true), "language label must sit in the footer (VSCode bottom-right)")
+assert(not blob:find("╭─ Python", 1, true), "label must NOT be in the header anymore")
 assert(not blob:find("┏", 1, true), "frames must stay uniform (no heavy variant)")
 assert(blob:find("#2", 1, true), "cell number badge missing")
 assert(blob:find("✓", 1, true), "exec check missing")
@@ -188,6 +190,31 @@ s = ""
 for _, c in ipairs(chunks) do s = s .. c[1] end
 assert(s:find("✗"), "error bar should show cross: " .. s)
 print("F. execution timing ok: " .. s)
+
+-- F2. duration survives save + reopen: restored from jupyter-standard
+--     timing metadata (metadata.execution stamps)
+local ns2 = Notebook.saved_duration_ns({ execution = {
+  ["iopub.execute_input"] = "2026-06-12T21:38:05.100Z",
+  ["shell.execute_reply"] = "2026-06-12T21:38:05.400Z",
+} })
+assert(ns2 and math.abs(ns2 - 0.3e9) < 0.05e9,
+  "saved duration parse wrong: " .. tostring(ns2))
+local buf2 = vim.api.nvim_create_buf(true, false)
+local nb2 = Notebook.create(buf2, "/tmp/t2.ipynb", "s2", { cells = {
+  { id = "z1", cell_type = "code", source = "1", execution_count = 4,
+    outputs = {},
+    metadata = { execution = {
+      ["iopub.execute_input"] = "2026-06-12T21:38:05.100Z",
+      ["shell.execute_reply"] = "2026-06-12T21:38:06.600Z",
+    } } },
+} })
+local zst = nb2.cell_state["z1"]
+assert(zst and zst.duration_ns and zst.exec_state == "idle",
+  "duration not restored from metadata on open")
+local zs = ""
+for _, c in ipairs(Render._exec_status_chunks(nb2.cells[1], zst)) do zs = zs .. c[1] end
+assert(zs:find("✓ 1.5s", 1, true), "restored bar must show check + duration: " .. zs)
+print("F2. saved timing restored on open ok")
 
 -- G. outputs are REAL buffer lines: C-j enters them, motions/yank work
 local CMr = CellMode.ranges(buf)

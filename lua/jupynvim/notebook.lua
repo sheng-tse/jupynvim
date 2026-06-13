@@ -83,6 +83,33 @@ function M.output_lines(cell)
   return lines
 end
 
+-- "2026-06-12T21:38:05.123Z" -> epoch seconds (fractional). Both stamps
+-- come from the same clock and format, so timezone handling cancels out
+-- in the subtraction.
+local function _iso_to_epoch(s)
+  if type(s) ~= "string" then return nil end
+  local y, mo, d, h, mi, sec, frac =
+    s:match("(%d+)%-(%d+)%-(%d+)T(%d+):(%d+):(%d+)%.?(%d*)")
+  if not y then return nil end
+  local t = os.time({
+    year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+    hour = tonumber(h), min = tonumber(mi), sec = tonumber(sec),
+  })
+  if not t then return nil end
+  return t + (tonumber("0." .. (frac ~= "" and frac or "0")) or 0)
+end
+
+-- Saved execution duration in ns from Jupyter-standard timing metadata
+-- (metadata.execution stamps written on run; survive save + reopen).
+function M.saved_duration_ns(meta)
+  local ex = type(meta) == "table" and meta.execution
+  if type(ex) ~= "table" then return nil end
+  local a = _iso_to_epoch(ex["iopub.execute_input"])
+  local b = _iso_to_epoch(ex["shell.execute_reply"])
+  if not (a and b) or b < a then return nil end
+  return (b - a) * 1e9
+end
+
 local notebooks = {}   -- buf -> Notebook
 
 local Notebook = {}
@@ -117,6 +144,16 @@ function M.create(buf, path, session_id, snapshot)
       execution_count = c.execution_count,
       outputs = c.outputs or {},
     })
+    -- restore the execution bar's duration from saved timing metadata,
+    -- so "[n] ✓ 0.3s" survives :wq + reopen like VSCode
+    local dur = M.saved_duration_ns(c.metadata)
+    if dur and c.cell_type == "code" and c.execution_count then
+      local failed = false
+      for _, o in ipairs(c.outputs or {}) do
+        if o.output_type == "error" then failed = true end
+      end
+      nb.cell_state[c.id] = { exec_state = "idle", duration_ns = dur, failed = failed }
+    end
   end
   if #nb.cells == 0 then
     table.insert(nb.cells, { id = "tmp_" .. tostring(buf), cell_type = "code", source = "", outputs = {} })

@@ -52,17 +52,23 @@ local function box_chars(_)
   return { tl = "╭", tr = "╮", bl = "╰", br = "╯", h = "─", v = "│" }
 end
 
-local function header_line(total_w, gut, label, cellno, busy, bc)
+-- VSCode layout: the top edge carries only the cell number badge; the
+-- language label sits at the BOTTOM-RIGHT of the cell (see VSCode's
+-- notebook editor), right above the "[n] ✓ 0.1s" execution bar.
+local function header_line(total_w, gut, cellno, busy, bc)
   local prefix = repeat_char(" ", math.max(gut - 2, 0))
-  local main = prefix .. bc.tl .. bc.h .. " " .. label .. (busy and " (running) " or " ")
+  local main = prefix .. bc.tl .. (busy and (bc.h .. " (running) ") or "")
   local tail = bc.h .. " #" .. cellno .. " " .. bc.h .. bc.tr
   local pad = total_w - dw(main) - dw(tail)
   return main .. repeat_char(bc.h, math.max(pad, 0)) .. tail
 end
 
-local function footer_line(total_w, gut, bc)
+local function footer_line(total_w, gut, bc, label)
   local prefix = repeat_char(" ", math.max(gut - 2, 0))
-  return prefix .. bc.bl .. repeat_char(bc.h, math.max(total_w - dw(prefix) - 2, 0)) .. bc.br
+  local main = prefix .. bc.bl
+  local tail = label and (bc.h .. " " .. label .. " " .. bc.h .. bc.br) or bc.br
+  local pad = total_w - dw(main) - dw(tail)
+  return main .. repeat_char(bc.h, math.max(pad, 0)) .. tail
 end
 
 -- Wrap a single line to `width` DISPLAY COLUMNS, breaking at space
@@ -362,7 +368,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   local bc = box_chars(selected)
   local border_hl = HL_BORDER
   local label = cell.cell_type == "code" and "Python" or "Markdown"
-  local hdr = header_line(total_w, gut, label, cellno, busy, bc)
+  local hdr = header_line(total_w, gut, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
     virt_lines = { { { hdr, busy and HL_BUSY or border_hl } } },
     virt_lines_above = true,
@@ -374,7 +380,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   -- No selection bars here: bars are statuscolumn-only (live), so these
   -- rows are selection-independent and never re-render on j/k.
   local lines_below = {}
-  table.insert(lines_below, { { footer_line(total_w, gut, bc), border_hl } })
+  table.insert(lines_below, { { footer_line(total_w, gut, bc, label), border_hl } })
   local sub_lead = repeat_char(" ", gut)
   if cell.cell_type == "code" then
     local ex = { { sub_lead, "Normal" } }
@@ -629,7 +635,9 @@ function M.setup_highlights()
   hl(0, HL_RESULT,     { fg = "#bb9af7" })
   hl(0, HL_OK,         { fg = "#9ece6a" })
   hl(0, HL_MORE,       { fg = "#565f89", italic = true })
-  hl(0, "JupynvimCellBg", { bg = "#1f2335" })
+  -- clearly lighter than the page background, like VSCode's cell slabs
+  -- (lighter, not darker: the near-black variant read as a hole)
+  hl(0, "JupynvimCellBg", { bg = "#272e45" })
   hl(0, "JupynvimSeparator", { fg = "#414868" })
   -- plain foreground for output regions (masks treesitter's code colors)
   local norm_ok, norm = pcall(vim.api.nvim_get_hl, 0, { name = "Normal", link = false })

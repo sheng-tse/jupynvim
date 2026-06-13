@@ -22,6 +22,7 @@ pub struct CellSnapshot {
     pub source: String,
     pub execution_count: Option<u64>,
     pub outputs: Vec<Value>,
+    pub metadata: Value,
 }
 
 impl From<&Cell> for CellSnapshot {
@@ -32,6 +33,7 @@ impl From<&Cell> for CellSnapshot {
             source: c.source.clone(),
             execution_count: c.execution_count,
             outputs: c.outputs.clone(),
+            metadata: c.metadata.clone(),
         }
     }
 }
@@ -334,6 +336,16 @@ impl Session {
             KernelEvent::ExecuteInput { execution_count, .. } => {
                 cell.execution_count = Some(*execution_count);
                 cell.outputs.clear(); // clear previous outputs at start of new execution
+                // Record Jupyter-standard timing metadata (the same keys
+                // JupyterLab's "record timing" writes and VSCode reads), so
+                // the execution duration survives save + reopen.
+                if !cell.metadata.is_object() {
+                    cell.metadata = json!({});
+                }
+                cell.metadata["execution"] = json!({
+                    "iopub.execute_input":
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                });
                 json!({ "kind": "execute_input", "execution_count": execution_count })
             }
             KernelEvent::Status { execution_state, .. } => {
@@ -344,6 +356,17 @@ impl Session {
                 execution_count,
                 ..
             } => {
+                if let Some(exec) = cell
+                    .metadata
+                    .get_mut("execution")
+                    .and_then(|v| v.as_object_mut())
+                {
+                    exec.insert(
+                        "shell.execute_reply".into(),
+                        json!(chrono::Utc::now()
+                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+                    );
+                }
                 json!({ "kind": "execute_reply", "status": status, "execution_count": execution_count })
             }
             KernelEvent::ClearOutput { wait, .. } => {
