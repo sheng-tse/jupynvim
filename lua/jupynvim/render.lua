@@ -297,11 +297,10 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
 
   -- ── markdown / raw, not being edited: frameless document flow ──
   if not boxed then
-    -- image rows embed the selection bar as their first column (these
-    -- rows bypass the statuscolumn via virt_lines_leftcol); the trailing
-    -- spacer row stays bar-less so the bar stops at the cell
-    local md_bar = selected and { "▌", "JupynvimBarSel" } or { " ", "Normal" }
-    local md_lead = repeat_char(" ", math.max(gut - 1, 0))
+    -- NOTE: no selection bar in any extmark row. Bars are drawn ONLY by
+    -- the statuscolumn (live per redraw), so selection changes never wait
+    -- on an extmark re-render and can never linger over the gif/image.
+    local md_lead = repeat_char(" ", gut)
     local lines_below = {}
     if cell.cell_type == "markdown" then
       local Embedded = require("jupynvim.embedded")
@@ -312,13 +311,13 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
           local ph = image.placeholder_virt_lines(key)
           if ph then
             for _, line in ipairs(ph) do
-              table.insert(lines_below, { md_bar, { md_lead, "Normal" }, { line[1][1], line[1][2] } })
+              table.insert(lines_below, { { md_lead, "Normal" }, { line[1][1], line[1][2] } })
             end
           else
             local ascii = image.ascii_lines_for(key)
             if ascii then
               for _, line in ipairs(ascii) do
-                table.insert(lines_below, { md_bar, { md_lead .. line, "Normal" } })
+                table.insert(lines_below, { { md_lead .. line, "Normal" } })
               end
             end
           end
@@ -363,37 +362,27 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   local bc = box_chars(selected)
   local border_hl = HL_BORDER
   local label = cell.cell_type == "code" and "Python" or "Markdown"
-  -- header/footer bypass the statuscolumn (virt_lines_leftcol), so the
-  -- far-left selection bar is embedded as their first column
-  local bar_chunk = selected and { "▌", "JupynvimBarSel" } or { " ", "Normal" }
-  local function drop_first_col(s)
-    return s:sub(1, 1) == " " and s:sub(2) or s
-  end
   local hdr = header_line(total_w, gut, label, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
-    virt_lines = { { bar_chunk, { drop_first_col(hdr), busy and HL_BUSY or border_hl } } },
+    virt_lines = { { { hdr, busy and HL_BUSY or border_hl } } },
     virt_lines_above = true,
     virt_lines_leftcol = true,
   })
 
   -- one leftcol extmark for everything under the source: row order inside
   -- a single extmark is guaranteed (footer, exec bar, images, spacer).
-  -- Each row embeds the selection bar as its first column so the bar runs
-  -- the cell's full height; the spacer row stays bar-less (gap between
-  -- cells, like VSCode).
+  -- No selection bars here: bars are statuscolumn-only (live), so these
+  -- rows are selection-independent and never re-render on j/k.
   local lines_below = {}
-  table.insert(lines_below,
-    { bar_chunk, { drop_first_col(footer_line(total_w, gut, bc)), border_hl } })
-  local sub_lead = repeat_char(" ", math.max(gut - 1, 0))
+  table.insert(lines_below, { { footer_line(total_w, gut, bc), border_hl } })
+  local sub_lead = repeat_char(" ", gut)
   if cell.cell_type == "code" then
-    local ex = { bar_chunk, { sub_lead, "Normal" } }
+    local ex = { { sub_lead, "Normal" } }
     vim.list_extend(ex, exec_status_chunks(cell, st))
     table.insert(lines_below, ex)
     if #(cell.outputs or {}) > 0 then
       for _, l in ipairs(build_image_virt_lines(cell, width, nb, sub_lead)) do
-        local row = { bar_chunk }
-        vim.list_extend(row, l)
-        table.insert(lines_below, row)
+        table.insert(lines_below, l)
       end
     end
   end
@@ -579,9 +568,20 @@ function M.refresh(nb, win)
     local CellMode = require("jupynvim.cellmode")
     local ranges = CellMode.ranges(buf)
 
-    if not win or not vim.api.nvim_win_is_valid(win) then
-      local wins = vim.fn.win_findbuf(buf)
-      win = (wins and wins[1]) or vim.api.nvim_get_current_win()
+    -- Geometry must come from a real (non-floating) window: file-explorer
+    -- preview floats show this buffer with no statuscolumn, and reading
+    -- textoff=0 from one bakes prefix-less frames into the extmarks
+    -- (corners rendered at window column 1).
+    local function is_float(w)
+      local ok, cfg = pcall(vim.api.nvim_win_get_config, w)
+      return ok and cfg.relative ~= nil and cfg.relative ~= ""
+    end
+    if not win or not vim.api.nvim_win_is_valid(win) or is_float(win) then
+      win = nil
+      for _, w in ipairs(vim.fn.win_findbuf(buf)) do
+        if not is_float(w) then win = w; break end
+      end
+      win = win or vim.api.nvim_get_current_win()
     end
     -- Geometry straight from the window: textoff = the statuscolumn gutter
     -- (which carries the cells' left borders), width = text area.

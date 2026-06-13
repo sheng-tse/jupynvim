@@ -274,11 +274,9 @@ local function select_cell(buf, idx)
   local win = vim.fn.bufwinid(buf)
   if win == -1 or not r then return end
   pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 })
-  -- selection changed: re-render NOW. The CursorMoved hook does this too,
-  -- but a missed autocmd leaves stale selection bars frozen into the
-  -- header/footer/image extmark rows, so don't depend on it.
-  if state[buf] then state[buf].last_sel = idx end
-  refresh_render(buf)
+  -- NO extmark re-render here: nothing in the extmarks depends on the
+  -- selection (bars are statuscolumn-only, redrawn live with the cursor
+  -- move), so j/k stays instant even on huge markdown cells.
   -- reveal the cell: when the cell plus its output fits the window,
   -- scroll just enough that ALL of it is visible (VSCode shows the whole
   -- selected cell, not only its first line at the window bottom)
@@ -531,18 +529,12 @@ function M.attach(buf, api)
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     buffer = buf,
     callback = function()
-      if M.is_command(buf) then
-        -- the box borders are extmarks: re-render when the selection moves
-        -- so the highlighted frame follows it (not just the gutter)
-        local s = M.selected_idx(buf)
-        if state[buf] and state[buf].last_sel ~= s then
-          state[buf].last_sel = s
-          refresh_render(buf)
-        end
-        vim.cmd("redrawstatus")
-      else
+      if not M.is_command(buf) then
         clamp_to_cell(buf)
       end
+      -- command-mode selection needs no re-render: extmarks are
+      -- selection-independent and the statuscolumn bar follows the
+      -- cursor on the same redraw
     end,
   })
   -- cursor visibility follows window focus: hidden only while the notebook

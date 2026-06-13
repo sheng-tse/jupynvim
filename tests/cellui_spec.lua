@@ -255,25 +255,22 @@ assert(g:find("│", 1, true) and g:find("%d"),
 vim.cmd("close")
 print("H. gutter independent of focused window ok")
 
--- I. selection change re-renders extmark bars DETERMINISTICALLY (no
---    reliance on CursorMoved): after move_selection the new cell's
---    header row must carry the bar and the old cell's rows must not
+-- I. selection bars live ONLY in the statuscolumn. Extmark rows must
+--    never carry one (extmark bars wait on a re-render, so they lag j/k
+--    and linger over gif/image rows), and the gutter bar must follow the
+--    selection immediately, with no extmark re-render involved.
 vim.api.nvim_win_set_cursor(win, { 1, 0 })       -- select md cell 1
-CellMode.move_selection(buf, 1)                  -- -> cell 2, refresh inside
-vim.wait(300)
+CellMode.move_selection(buf, 1)                  -- -> cell 2
+vim.wait(200)
 local Rng = CellMode.ranges(buf)
-local hdr_bar, md_bar = false, false
 for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, nb.border_ns, 0, -1, { details = true })) do
   for _, vl in ipairs(m[4].virt_lines or {}) do
-    if vl[1] and vl[1][1] == "▌" then
-      if m[2] == Rng[2].start then hdr_bar = true end
-      if m[2] < Rng[2].start - 1 then md_bar = true end
-    end
+    assert(vl[1][1] ~= "▌", "extmark rows must never carry the selection bar")
   end
 end
-assert(hdr_bar, "selected cell's header must carry the bar after move_selection")
-assert(not md_bar, "previous cell must NOT keep a stale bar after move_selection")
-print("I. deterministic selection refresh ok")
+assert(sc(Rng[2].start + 1):find("▌", 1, true), "gutter bar must be on the new selection")
+assert(not sc(1):find("▌", 1, true), "gutter bar must leave the previous cell")
+print("I. statuscolumn-only selection bar ok")
 
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")
