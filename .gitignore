@@ -15,8 +15,6 @@ __pycache__/
 *~
 .idea/
 .vscode/
-
-# AI assistant context — kept locally, not published.
 .claude/
 
 # Logs
