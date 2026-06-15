@@ -41,9 +41,12 @@ vim.api.nvim_win_set_cursor(win, { 1, 0 })  -- select markdown cell 1
 local function sc(lnum, virtnum)
   return CellMode._statuscol_for(buf, lnum, virtnum or 0)
 end
+-- code cells are numbered even when not selected. Numbers are RELATIVE to the
+-- cell's anchor; an unvisited cell (cell 2 here) references its first line, so
+-- line 1 reads "1" and line 2 reads its distance "1".
 assert(sc(4):find("  1", 1, true) and sc(4):find("│", 1, true),
-  "code line 1 should number 1 with border: " .. sc(4))
-assert(sc(5):find("  2", 1, true), "code line 2 should number 2: " .. sc(5))
+  "code first line shows its number with border: " .. sc(4))
+assert(sc(5):find("%d"), "code lines are numbered: " .. sc(5))
 assert(not sc(3):find("%d"), "separator must have blank gutter")
 assert(not sc(1):find("%d"), "markdown lines must have NO numbers: " .. sc(1))
 assert(sc(1):find("▌", 1, true), "selected markdown cell must show the bar")
@@ -99,7 +102,7 @@ assert(vim.bo[buf].modifiable == false, "command mode should re-lock")
 assert(sc(5):find("CursorLineNr", 1, true) and sc(5):find("  2", 1, true),
   "after Esc the anchor must stay on the last cursor line: " .. sc(5))
 assert(sc(4):find("  1", 1, true), "after Esc distances stay relative: " .. sc(4))
--- inactive cells show plain per-cell absolute numbers
+-- inactive cells show plain per-cell absolute numbers, anchor highlighted
 local R3 = CellMode.ranges(buf)[3]
 assert(sc(R3.start + 1):find("  1", 1, true) and not sc(R3.start + 1):find("CursorLineNr"),
   "inactive cells use plain absolute numbers: " .. sc(R3.start + 1))
@@ -134,11 +137,14 @@ local xcount = 0
 for _, row in ipairs(all_text) do if row:find("x%s*$") then xcount = xcount + 1 end end
 assert(xcount == 0, "text outputs must be REAL lines, not virtual rows")
 assert(not blob:find("Markdown", 1, true), "markdown cell should be frameless when not edited")
+-- code cells no longer get a background fill: the VSCode-style dark fill read
+-- as gray bands on a transparent theme (and smeared onto output rows on
+-- scroll). Borders mark the cell instead.
 local has_bg = false
 for _, m in ipairs(marks) do
-  if m[4].line_hl_group == "JupynvimCellBg" and m[2] >= 3 then has_bg = true end
+  if m[4].line_hl_group == "JupynvimCellBg" then has_bg = true end
 end
-assert(has_bg, "code cells must get the darker editor background")
+assert(not has_bg, "code cells must NOT get a background fill")
 for _, m in ipairs(marks) do
   local d = m[4]
   if d.virt_text_pos == "right_align" and m[2] <= 1 then
@@ -310,16 +316,35 @@ assert(#plines == 2 and plines[2] == "b = 2",
   "trailing newline must not add a phantom empty line: " .. vim.inspect(plines))
 print("J. no phantom trailing line ok")
 
--- K. output text masks to the live Normal foreground (no stale/gray color)
+-- K. output text is derived LIVE from Normal (never a stale captured color),
+--    and lifted toward white on dark themes so a block of plain output doesn't
+--    read as gray next to syntax-highlighted code.
 Render.setup_highlights()
 local ot = vim.api.nvim_get_hl(0, { name = "JupynvimOutputText" })
 local nm = vim.api.nvim_get_hl(0, { name = "Normal" })
-assert(ot.link == "Normal" or ot.fg == nm.fg,
-  "output text must track Normal, not a captured color")
-print("K. output text tracks Normal ok")
+local function ch(x, s) return math.floor(x / s) % 256 end
+if vim.o.background ~= "light" and type(nm.fg) == "number" then
+  assert(type(ot.fg) == "number" and ot.fg ~= nm.fg,
+    "output should be brightened above Normal on dark themes")
+  assert(ch(ot.fg, 65536) >= ch(nm.fg, 65536)
+    and ch(ot.fg, 256) >= ch(nm.fg, 256)
+    and ch(ot.fg, 1) >= ch(nm.fg, 1),
+    "each channel must be lifted toward white, not darkened/captured")
+else
+  assert(ot.link == "Normal" or ot.fg == nm.fg, "output must track Normal on light themes")
+end
+-- explicit override wins
+require("jupynvim").config.output_color = "#abcdef"
+Render.setup_highlights()
+assert(vim.api.nvim_get_hl(0, { name = "JupynvimOutputText" }).fg == tonumber("abcdef", 16),
+  "output_color config must override")
+require("jupynvim").config.output_color = nil
+Render.setup_highlights()
+print("K. output text derives from Normal (brightened on dark) ok")
 
--- L. an INACTIVE cell keeps its last cursor line highlighted (orange),
---    so you can see where you left off in each cell (VSCode behavior)
+-- L. an INACTIVE cell keeps its last cursor line highlighted (orange) even
+--    after Esc and after moving to another cell, so you can see where you left
+--    off in each cell (VSCode-style anchor).
 local lbuf = vim.api.nvim_create_buf(true, false)
 vim.api.nvim_set_current_buf(lbuf)
 local lnb = Notebook.create(lbuf, "/tmp/l.ipynb", "ls", { cells = {
@@ -348,6 +373,118 @@ assert(not lsc(1):find("CursorLineNr", 1, true),
 assert(lsc(1):find("  1", 1, true) and lsc(2):find("  2", 1, true),
   "inactive cell numbers must be absolute")
 print("L. inactive cell remembers highlighted line ok")
+
+-- M. cell frames track the window WIDTH across layout changes (explorer /
+--    terminal open+close). The frame is a full-width string; it must
+--    equal the window width after open AND after close, with no leftover.
+local mbuf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_set_current_buf(mbuf)
+local mnb = Notebook.create(mbuf, "/tmp/m.ipynb", "ms", { cells = {
+  { id = "m1", cell_type = "code", source = "x = 1", execution_count = 1, outputs = {} },
+} })
+J._populate_buffer(mnb)
+CellMode.attach(mbuf, J)
+Render.refresh(mnb, vim.api.nvim_get_current_win())
+vim.wait(120)
+local function frame_w()
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(mbuf, mnb.border_ns, 0, -1, { details = true })) do
+    for _, vl in ipairs(m[4].virt_lines or {}) do
+      local s = ""
+      for _, c in ipairs(vl) do s = s .. c[1] end
+      if s:find("#1", 1, true) then return vim.fn.strwidth(s) end
+    end
+  end
+end
+local function nb_w() return vim.api.nvim_win_get_width(vim.fn.bufwinid(mbuf)) end
+assert(frame_w() == nb_w(), "initial frame must match window width: " .. tostring(frame_w()) .. " vs " .. nb_w())
+-- open a left split (explorer-like): notebook narrows; rely on autocmds
+local mscratch = vim.api.nvim_create_buf(false, true)
+vim.cmd("topleft 30vsplit")
+vim.api.nvim_set_current_buf(mscratch)
+vim.wait(200)
+assert(frame_w() == nb_w(), "after split-open, frame must match the narrowed window: "
+  .. tostring(frame_w()) .. " vs " .. nb_w())
+-- close it: notebook widens; frame must follow
+vim.cmd("close")
+vim.wait(200)
+assert(frame_w() == nb_w(), "after split-close, frame must match the widened window: "
+  .. tostring(frame_w()) .. " vs " .. nb_w())
+print("M. frames track window width across open/close ok")
+
+-- N. treesitter scoping self-heals after an external region reset. Something
+-- (an LSP attaching, the kernel starting, nvim-treesitter re-init on FileType)
+-- resets the parser's included_regions to the whole buffer; the re-sync must
+-- restore the code-cell scoping instead of no-opping on a stale cache (that
+-- was the "leader-nB too fast renders plain" bug).
+if pcall(vim.treesitter.get_string_parser, "x=1", "python") then
+  local tbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(tbuf)
+  local tnb = Notebook.create(tbuf, "/tmp/ts_heal_spec.ipynb", "ts", { cells = {
+    { id = "m1", cell_type = "markdown", source = "# Heading\ntext" },
+    { id = "c1", cell_type = "code", source = "import numpy as np\nx = np.arange(5)", execution_count = 1, outputs = {} },
+    { id = "c2", cell_type = "code", source = "print(x)", outputs = {} },
+  } })
+  J._populate_buffer(tnb)
+  vim.bo[tbuf].filetype = "python"
+  local function rcount()
+    local ok, p = pcall(vim.treesitter.get_parser, tbuf, "python")
+    if not ok or not p then return -1 end
+    return #p:included_regions()
+  end
+  J._sync_treesitter_ranges(tnb)
+  assert(rcount() == 2, "expected 2 code-cell regions after sync, got " .. rcount())
+  -- external reset (what an LSP attach / kernel start does)
+  vim.treesitter.get_parser(tbuf, "python"):set_included_regions({})
+  J._sync_treesitter_ranges(tnb)
+  assert(rcount() == 2, "treesitter scoping did not self-heal after reset, got " .. rcount())
+  print("N. treesitter scoping self-heals after external reset ok")
+else
+  print("N. (skipped: no python treesitter parser in this env)")
+end
+
+-- O. the execution timer rides INLINE in the bottom border, not on a separate
+--    line below the box.
+do
+  local bc = { tl = "╭", tr = "╮", bl = "╰", br = "╯", h = "─", v = "│" }
+  local cell = { cell_type = "code", execution_count = 4 }
+  local st = { duration_ns = 50000000 }
+  local chunks = Render._footer_chunks(120, CellMode.GUTTER, bc, "Python", cell, st)
+  local s = ""
+  for _, c in ipairs(chunks) do s = s .. c[1] end
+  assert(s:find("╰", 1, true) and s:find("╯", 1, true), "footer must have box corners")
+  assert(s:find("%[4%]"), "footer must embed the exec badge [4]: " .. s)
+  assert(s:find("Python", 1, true), "footer must keep the language label")
+  assert(vim.fn.strwidth(s) == 120, "footer must fill the full width, got " .. vim.fn.strwidth(s))
+  print("O. exec timer rides inline in the bottom border ok")
+end
+
+-- P. frame corners sit at the fixed GUTTER column (aligned with the source │
+--    edge), NOT at getwininfo().textoff (which reports a stale value right
+--    after a layout change and shifted the header/footer left).
+do
+  local pbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(pbuf)
+  local pnb = Notebook.create(pbuf, "/tmp/p.ipynb", "ps", { cells = {
+    { id = "p1", cell_type = "code", source = "x = 1", execution_count = 1, outputs = {} },
+  } })
+  J._populate_buffer(pnb)
+  CellMode.attach(pbuf, J)
+  Render.refresh(pnb, vim.api.nvim_get_current_win())
+  vim.wait(120)
+  local hdr
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(pbuf, pnb.border_ns, 0, -1, { details = true })) do
+    for _, vl in ipairs(m[4].virt_lines or {}) do
+      local s = ""
+      for _, c in ipairs(vl) do s = s .. c[1] end
+      if s:find("#1", 1, true) and s:find("╭", 1, true) then hdr = s end
+    end
+  end
+  assert(hdr, "header virt_line not found")
+  local lead = hdr:match("^( *)╭")
+  assert(lead and #lead == CellMode.GUTTER - 2,
+    "header ╭ must sit at GUTTER (" .. (CellMode.GUTTER - 2) .. " leading spaces), got " .. tostring(lead and #lead))
+  print("P. frame corners align to the fixed GUTTER ok")
+end
 
 print("ALL CELL-UI CHECKS PASSED")
 vim.cmd("qa!")

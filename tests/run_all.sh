@@ -5,17 +5,25 @@
 #   1. cargo test (Rust unit tests)
 #   2. backend_integration.py (Python harness against jupynvim-core)
 #   3. lua_e2e.lua (headless Neovim Lua tests)
+#   4. cellui_spec.lua + markdown_spec.lua (headless render/UI specs)
+#   5. frame_layout.sh (real rendered screen via tmux: frame alignment across
+#      terminal-split / floating-window layout changes)
 #
-# All three must pass for the suite to succeed.
+# All must pass for the suite to succeed.
 
 set -u
 cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
 
-# Activate the conda env so cargo/python deps are available
+# Activate the conda env so cargo/python deps are available. conda's activate
+# functions reference unset vars, so they abort under `set -u` (which silently
+# killed the whole suite in non-interactive / CI shells). Relax set -u just for
+# the activation.
+set +u
 # shellcheck disable=SC1091
-source "$HOME/miniconda3/etc/profile.d/conda.sh"
+[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate jupynvim 2>/dev/null
+set -u
 
 PASS=0
 FAIL=0
@@ -77,6 +85,24 @@ if [ -f "$STATUS_FILE" ]; then
 else
   section "lua e2e" "$LUA_RC"
 fi
+
+# ── 4. Cell-UI + markdown specs ─────────────────────────
+echo
+echo "── 4/5 cell-ui + markdown specs (headless nvim) ─"
+ui_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellui_spec.lua" -c 'qa' 2>&1)
+echo "$ui_out" | tail -1
+echo "$ui_out" | grep -q "ALL CELL-UI CHECKS PASSED"
+section "cell-ui spec" "$?"
+md_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c 'qa' 2>&1)
+echo "$md_out" | tail -1
+echo "$md_out" | grep -q "ALL MARKDOWN CHECKS PASSED"
+section "markdown spec" "$?"
+
+# ── 5. Frame-layout (real rendered screen via tmux) ─────
+echo
+echo "── 5/5 frame-layout (tmux rendered screen) ─"
+bash "$ROOT/tests/frame_layout.sh"
+section "frame layout" "$?"
 
 # ── Summary ─────────────────────────────────────────────
 echo
