@@ -72,7 +72,7 @@ echo
 echo "── 3/3 lua e2e (headless nvim) ─"
 STATUS_FILE="$(mktemp -t jupynvim_lua_status.XXXXXX)"
 JUPYNVIM_TEST_STATUS_FILE="$STATUS_FILE" \
-  nvim --headless -u NONE -c "luafile $ROOT/tests/lua_e2e.lua" -c 'qa' 2>&1
+  nvim --headless -u NONE -c "luafile $ROOT/tests/lua_e2e.lua" -c 'qa!' 2>&1
 LUA_RC=$?
 if [ -f "$STATUS_FILE" ]; then
   status=$(head -n1 "$STATUS_FILE")
@@ -89,11 +89,11 @@ fi
 # ── 4. Cell-UI + markdown specs ─────────────────────────
 echo
 echo "── 4/5 cell-ui + markdown specs (headless nvim) ─"
-ui_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellui_spec.lua" -c 'qa' 2>&1)
+ui_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellui_spec.lua" -c 'qa!' 2>&1)
 echo "$ui_out" | tail -1
 echo "$ui_out" | grep -q "ALL CELL-UI CHECKS PASSED"
 section "cell-ui spec" "$?"
-md_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c 'qa' 2>&1)
+md_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c 'qa!' 2>&1)
 echo "$md_out" | tail -1
 echo "$md_out" | grep -q "ALL MARKDOWN CHECKS PASSED"
 section "markdown spec" "$?"
