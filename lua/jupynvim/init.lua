@@ -2346,6 +2346,9 @@ function M.clear_outputs(buf)
     if c.cell_type == "code" then
       c.outputs = {}
       c.execution_count = nil
+      -- also drop the execution-timing stamp, else saved_duration_ns rebuilds
+      -- the "✓ 1.6s" badge from it after the clear
+      if type(c.metadata) == "table" then c.metadata.execution = nil end
       nb.cell_state[c.id] = nil
       -- Drop only code-cell image placements; markdown embedded images
       -- (keys like "<id>_md_<idx>") stay so the cell still renders them.
@@ -2385,6 +2388,7 @@ function M.clear_cell_output(buf)
   end
   cell.outputs = {}
   cell.execution_count = nil
+  if type(cell.metadata) == "table" then cell.metadata.execution = nil end
   nb.cell_state[cell.id] = nil
   pcall(require("jupynvim.image").clear_for_cell, cell.id)
   nb.image_ids = nb.image_ids or {}

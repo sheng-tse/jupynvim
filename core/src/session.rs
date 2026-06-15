@@ -189,15 +189,23 @@ impl Session {
         for cell in nb.cells.iter_mut() {
             cell.outputs.clear();
             cell.execution_count = None;
+            // drop the execution-timing stamp too, so it isn't re-saved and the
+            // frontend can't rebuild the "✓ 1.6s" badge from it after a clear
+            if let Some(obj) = cell.metadata.as_object_mut() {
+                obj.remove("execution");
+            }
         }
     }
 
-    /// Wipe outputs and execution_count for a single cell by id.
+    /// Wipe outputs, execution_count and timing for a single cell by id.
     pub fn clear_cell_output(&self, cell_id: &str) {
         let mut nb = self.notebook.write();
         if let Some(cell) = nb.cells.iter_mut().find(|c| c.id == cell_id) {
             cell.outputs.clear();
             cell.execution_count = None;
+            if let Some(obj) = cell.metadata.as_object_mut() {
+                obj.remove("execution");
+            }
         }
     }
 
@@ -448,6 +456,31 @@ mod tests {
             .get("execution")
             .cloned()
             .unwrap_or(json!(null))
+    }
+
+    #[test]
+    fn clear_outputs_drops_execution_metadata() {
+        // Clearing a cell's output must also drop metadata.execution, else the
+        // frontend's saved_duration_ns rebuilds the "✓ 1.6s" badge from it.
+        let (s, cid) = session_with_one_code_cell();
+        {
+            let mut nb = s.notebook.write();
+            let cell = nb.cells.iter_mut().find(|c| c.id == cid).unwrap();
+            cell.execution_count = Some(4);
+            cell.metadata["execution"] = json!({
+                "iopub.execute_input": "2026-06-13T00:00:00.100Z",
+                "shell.execute_reply": "2026-06-13T00:00:00.450Z",
+            });
+        }
+        assert!(execution(&s, &cid) != json!(null), "setup: timing should be set");
+        s.clear_outputs();
+        let nb = s.notebook.read();
+        let cell = nb.cells.iter().find(|c| c.id == cid).unwrap();
+        assert!(cell.execution_count.is_none(), "execution_count not cleared");
+        assert!(
+            cell.metadata.get("execution").is_none(),
+            "timing metadata not cleared by clear_outputs"
+        );
     }
 
     #[test]
