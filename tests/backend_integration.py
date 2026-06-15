@@ -6,6 +6,7 @@ notebook ops, output streaming, save round-trip.
 """
 import json
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -317,10 +318,96 @@ def t_silent_execute():
     os.unlink(nb_path)
 
 
+# ── kernel-cleanup helpers ──────────────────────────────────────────────
+def _child_pids(ppid):
+    out = subprocess.run(["pgrep", "-P", str(ppid)], capture_output=True, text=True).stdout
+    return [int(x) for x in out.split()]
+
+
+def _proc_cmd(pid):
+    return subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _kernel_pids_of(core_pid):
+    # The ipykernel process is a direct child of jupynvim-core.
+    return [p for p in _child_pids(core_pid) if "ipykernel" in _proc_cmd(p)]
+
+
+def _wait_all_dead(pids, timeout=6):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not any(_alive(p) for p in pids):
+            return []
+        time.sleep(0.1)
+    return [p for p in pids if _alive(p)]
+
+
+def _kernel_cleanup_case(name, terminate):
+    """Start a kernel, trigger terminate(client), assert the kernel process dies.
+
+    Reproduces the leak where core exits but orphans its ipykernel (the procs
+    that pile up as PPID-1). Without explicit kill on disconnect/signal, the
+    kernel survives and this fails.
+    """
+    cl = Client()
+    nb_path = tempfile.mktemp(suffix=".ipynb")
+    json.dump(make_test_nb(), open(nb_path, "w"))
+    _, res = cl.call("open", {"path": nb_path})
+    sid = res["session_id"]
+    cl.call("start_kernel", {"session_id": sid}, timeout=15)
+    time.sleep(0.5)
+    kpids = _kernel_pids_of(cl.p.pid)
+    if not kpids:
+        report(name, False, "no kernel process found to test")
+        cl.stop()
+        os.unlink(nb_path)
+        return
+    cl._stop = True
+    terminate(cl)
+    try:
+        cl.p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        cl.p.kill()
+    survivors = _wait_all_dead(kpids)
+    report(name, not survivors, f"orphaned kernels: {survivors}")
+    for p in survivors:  # don't let a failing test leak the kernel itself
+        try:
+            os.kill(p, 9)
+        except OSError:
+            pass
+    os.unlink(nb_path)
+
+
+def t_kernel_killed_on_disconnect():
+    # Frontend (nvim) exiting closes core's stdin. Core must kill its kernel.
+    _kernel_cleanup_case(
+        "kernel killed on frontend disconnect (stdin EOF)",
+        lambda cl: cl.p.stdin.close(),
+    )
+
+
+def t_kernel_killed_on_sigterm():
+    # Core receiving SIGTERM must kill its kernel before exiting.
+    _kernel_cleanup_case(
+        "kernel killed on SIGTERM",
+        lambda cl: cl.p.send_signal(signal.SIGTERM),
+    )
+
+
 TESTS = [
     t_ping, t_list_kernels, t_open_close, t_kernel_lifecycle,
     t_run_cell_streams, t_run_cell_expression, t_run_cell_error,
     t_save_roundtrip, t_image_output, t_insert_delete_move, t_silent_execute,
+    t_kernel_killed_on_disconnect, t_kernel_killed_on_sigterm,
 ]
 
 

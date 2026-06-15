@@ -160,12 +160,47 @@ impl Server {
             }
         });
 
+        // Wake on any of: explicit shutdown, the frontend disconnecting (stdin
+        // EOF ends the reader), the writer dying, or a termination signal.
+        // Closing a terminal sends SIGHUP; `kill` sends SIGTERM. Without these
+        // handlers the default action kills core instantly, no destructors run,
+        // and the kernel is orphaned (it lingers as a PPID-1 ipykernel proc).
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
         tokio::select! {
-            _ = self.shutdown.notified() => {}
-            _ = reader => {}
-            _ = writer => {}
+            _ = self.shutdown.notified() => tracing::info!("shutdown requested"),
+            _ = reader => tracing::info!("frontend disconnected (stdin closed)"),
+            _ = writer => tracing::info!("writer task ended"),
+            _ = sigterm.recv() => tracing::info!("received SIGTERM"),
+            _ = sighup.recv() => tracing::info!("received SIGHUP"),
         }
+
+        // Kill every kernel now, while the runtime is alive. Doing it here is
+        // deterministic; Child::kill_on_drop during runtime teardown is not.
+        self.shutdown_kernels().await;
         Ok(())
+    }
+
+    /// Kill every session's kernel so none is left orphaned when core exits.
+    async fn shutdown_kernels(&self) {
+        // Snapshot the session handles first so we don't hold DashMap shard
+        // guards across .await.
+        let sessions: Vec<Arc<Session>> =
+            self.sessions.iter().map(|e| e.value().clone()).collect();
+        let mut killed = 0;
+        for s in sessions {
+            let guard = s.kernel.read().await;
+            if let Some(k) = guard.as_ref() {
+                if let Err(e) = k.kill().await {
+                    tracing::warn!("kill kernel on shutdown: {e}");
+                } else {
+                    killed += 1;
+                }
+            }
+        }
+        if killed > 0 {
+            tracing::info!("killed {killed} kernel(s) on shutdown");
+        }
     }
 
     async fn send(&self, msg: Mp) {
