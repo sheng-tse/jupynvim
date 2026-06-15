@@ -298,4 +298,19 @@ mod tests {
         assert!(js.contains("\"b\\n\""));
         assert!(js.contains("\"c\""));
     }
+
+    #[test]
+    fn execution_metadata_survives_save_load() {
+        // The execution-timing display persists across save+reopen by riding
+        // in cell metadata.execution (the same keys JupyterLab records). The
+        // save path must NOT drop it.
+        let src = r#"{"cells":[{"cell_type":"code","id":"x","metadata":{"execution":{"iopub.execute_input":"2026-06-13T00:00:00.100Z","shell.execute_reply":"2026-06-13T00:00:00.450Z"}},"source":"x=1","execution_count":4,"outputs":[]}],"metadata":{},"nbformat":4,"nbformat_minor":5}"#;
+        let nb = Notebook::from_json(src).unwrap();
+        let js = nb.to_json_pretty().unwrap();
+        assert!(js.contains("iopub.execute_input"), "execute_input stamp lost on save");
+        assert!(js.contains("shell.execute_reply"), "execute_reply stamp lost on save");
+        // and a second round-trip is stable
+        let js2 = Notebook::from_json(&js).unwrap().to_json_pretty().unwrap();
+        assert!(js2.contains("shell.execute_reply"));
+    }
 }
