@@ -140,32 +140,32 @@ function M._statuscol_for(buf, lnum, virtnum)
   if virtnum > 0 then
     return bar .. "    " .. edge  -- wrap continuation rows carry no number
   end
-  -- VSCode-hybrid numbering. Every cell remembers the line the cursor last
-  -- sat on (its "anchor") and keeps that line's number highlighted, even
-  -- when the cell is NOT selected, so you can see where you left off in
-  -- each cell. The ACTIVE cell additionally shows distances (relative
-  -- numbers) to its anchor; inactive cells show plain per-cell absolute
-  -- numbers with just the anchor line highlighted.
+  -- RELATIVE numbering in EVERY cell. Each cell has an "anchor": the live
+  -- cursor if it sits in this cell, else the line the cursor last sat on here
+  -- (remembered across Esc and across moving to other cells). The anchor line
+  -- shows its in-cell absolute number highlighted ORANGE; every other line
+  -- shows its distance to the anchor. Cells you've not visited reference their
+  -- first line (no orange). Relative-everywhere keeps a long plot cell's last
+  -- line a small distance near where you were, instead of a big absolute like
+  -- "42" floating at the bottom.
   local n, num_hl = line0 - r.start + 1, "LineNr"
-  -- resolve this cell's anchor: live cursor while editing, else remembered
   local anchor
   local saved = st and st.pos and st.pos[idx]
   if saved and saved[1] - 1 >= r.start and saved[1] - 1 < r.stop then
     anchor = saved[1]
   end
-  if editing then
+  do
     local win = vim.fn.bufwinid(buf)
     if win ~= -1 then
       local cl = vim.api.nvim_win_get_cursor(win)[1]
       if cl - 1 >= r.start and cl - 1 < r.stop then anchor = cl end
     end
   end
-  local active = editing or (command and idx == sel)
-  if active and not anchor then anchor = r.start + 1 end
-  if anchor and lnum == anchor then
-    num_hl = "CursorLineNr"               -- highlighted anchor (absolute)
-  elseif active and anchor then
-    n = math.abs(lnum - anchor)           -- active cell: distance to anchor
+  local ref = anchor or (r.start + 1)
+  if lnum == ref then
+    if anchor then num_hl = "CursorLineNr" end  -- real anchor highlighted; absolute number
+  else
+    n = math.abs(lnum - ref)                    -- distance to the anchor
   end
   return bar .. "%#" .. num_hl .. "#" .. string.format("%3d", n) .. "%* " .. edge
 end
@@ -187,10 +187,10 @@ local function show_cursor()
   end
 end
 
-local function refresh_render(buf)
+local function refresh_render(buf, opts)
   local nb = Notebook.get(buf)
   if nb then
-    require("jupynvim.render").refresh(nb, vim.fn.bufwinid(buf))
+    require("jupynvim.render").refresh(nb, vim.fn.bufwinid(buf), opts)
   end
 end
 
@@ -397,6 +397,16 @@ end
 function M.attach(buf, api)
   state[buf] = { mode = "edit", pos = {}, region = "src" }
 
+  -- Notebook navigation should be instant (one-shot cell-to-cell), not the
+  -- smooth-scroll "dragging" animation. snacks.scroll (a LazyVim default) runs
+  -- in the LOCAL frontend and animates every scroll; over a remote backend that
+  -- per-frame animation competes with the gif's main-loop frame writes and
+  -- feels laggy, while a bare nvim (no snacks.scroll) felt snappy. Disable it
+  -- for the notebook buffer unless the user opts back in with smooth_scroll=true.
+  if not (api and api.config and api.config.smooth_scroll) then
+    vim.b[buf].snacks_scroll = false
+  end
+
   local function map(mode, lhs, fn, desc)
     vim.keymap.set(mode, lhs, fn, { buffer = buf, silent = true, nowait = true, desc = desc })
   end
@@ -547,16 +557,75 @@ function M.attach(buf, api)
       _range_cache[buf] = nil
     end,
   })
-  -- frames span the window width: re-render when it changes. WinResized
-  -- is a GLOBAL event (a buffer-local autocmd never fires), so register it
-  -- globally and filter.
+  -- Any layout change (opening/closing the explorer or a terminal, a manual
+  -- :vsplit, GUI resize) does TWO bad things to the notebook window:
+  --   1. if the width changed, the full-width frame strings are stale, and
+  --   2. closing a terminal/float does only a PARTIAL screen repaint, so the
+  --      notebook's cells show stale pixels even when the frame data is fine
+  --      (verified via :JupynvimDebugFrames — the extmarks are correct; the
+  --      SCREEN isn't repainted).
+  -- These are GLOBAL events (a buffer-local autocmd never fires for them) and
+  -- this handler fires regardless of how a key like <C-/> is routed (snacks
+  -- may swallow it inside its own terminal, bypassing our dispatcher). So:
+  -- re-render (fixes width) AND force a redraw (flushes the stale screen).
+  -- The redraw is what actually repairs the "broken after C-/" case.
+  local resize_pending = false
+  local function resize_refresh()
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    if vim.fn.bufwinid(buf) == -1 then return end
+    -- Skip while the cmdline is open. Typing ":" pops a completion float, which
+    -- fires WinNew/WinClosed; re-rendering the frames then (with the cmdline
+    -- popup as the active window) drew them off-shape until Esc.
+    if vim.fn.getcmdtype() ~= "" then return end
+    if resize_pending then return end  -- coalesce bursts into one redraw
+    resize_pending = true
+    refresh_render(buf)
+    vim.schedule(function()
+      resize_pending = false
+      local win = vim.fn.bufwinid(buf)
+      if vim.api.nvim_buf_is_valid(buf) and win ~= -1 then
+        pcall(vim.cmd, "redraw")
+        -- the left frame is the statuscolumn, which a plain redraw leaves stale
+        -- on undirtied source lines; force it to re-evaluate too
+        pcall(vim.api.nvim__redraw, { win = win, statuscolumn = true, valid = false })
+      end
+    end)
+  end
   local resize_group = vim.api.nvim_create_augroup("jupynvim_resize_" .. buf, { clear = true })
-  vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+  vim.api.nvim_create_autocmd(
+    { "WinResized", "VimResized", "WinNew", "WinClosed" },
+    { group = resize_group, callback = resize_refresh }
+  )
+
+  -- Anything that overlaps or relayouts around the notebook (notify popups, the
+  -- <leader>n history, the <leader><leader> picker, a <C-/> terminal split, the
+  -- explorer) leaves the frame's virt_line borders visually broken. A plain
+  -- redraw does NOT repaint stale virt_lines (verified: the user's working fix
+  -- is i/a, which goes through enter_edit -> refresh_render, a real re-render).
+  -- So when focus lands back on the notebook, rebuild the borders. Crucially we
+  -- pass no_image=true: this rebuilds the frame extmarks (fixing the screen)
+  -- WITHOUT re-asserting kitty placements, which is what made an earlier
+  -- re-render-on-WinEnter rework disturb images. Border rebuild is cheap and
+  -- debounced, so doing it on every focus-return is fine.
+  vim.api.nvim_create_autocmd("WinEnter", {
     group = resize_group,
     callback = function()
-      if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
-        refresh_render(buf)
-      end
+      if vim.fn.getcmdtype() ~= "" then return end
+      if vim.api.nvim_get_current_buf() ~= buf then return end
+      local win = vim.fn.bufwinid(buf)
+      if win == -1 then return end
+      local nb = Notebook.get(buf)
+      if not nb then return end
+      -- SYNCHRONOUS rebuild (not the debounced refresh, which gets dropped when
+      -- another refresh is already pending — that is the "sometimes it fixes,
+      -- sometimes it doesn't"). Rebuilds the virt_line borders AND the output
+      -- virt_lines (where the stale selection bar lived). no_image so kitty
+      -- placements are untouched.
+      pcall(require("jupynvim.render").refresh_sync, nb, win, { no_image = true })
+      -- Force a full window repaint: the left frame is the statuscolumn, which a
+      -- plain redraw leaves stale on undirtied lines (real AND output-virtline),
+      -- so invalidate the whole window and re-evaluate its statuscolumn.
+      pcall(vim.api.nvim__redraw, { win = win, valid = false, statuscolumn = true })
     end,
   })
 

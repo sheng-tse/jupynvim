@@ -16,6 +16,15 @@ M._states = states  -- exposed for tests/debugging
 
 local function J() return require("jupynvim") end
 local function client(alias) return J().client_for(alias) end
+
+-- The explorer is a snacks SIDEBAR split: opening/closing it narrows/widens
+-- the notebook window. Re-render notebook frames via the shared helper
+-- (synchronous rebuild + a scheduled backstop, both before the redraw, so
+-- no stale-frame flash). Used here for the q/close-key path that the
+-- <leader>e dispatcher doesn't go through.
+local function refresh_notebooks()
+  pcall(function() require("jupynvim")._refresh_notebooks_soon() end)
+end
 local function uri(alias, p) return "jupynvim://" .. alias .. p end
 
 local function join(dir, name)
@@ -472,8 +481,10 @@ function M.open(alias, root)
     on_close = function()
       local st = states[alias]
       if st then st.picker = nil end
+      refresh_notebooks()  -- notebook reclaimed the sidebar width
     end,
   })
+  refresh_notebooks()  -- notebook narrowed for the new sidebar
 
   -- Swap any startup dashboard in the main pane for the jupynvim one.
   -- NOTE: do NOT close "empty" windows here. The picker treats one regular

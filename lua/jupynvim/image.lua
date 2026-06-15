@@ -171,6 +171,8 @@ local function tmux_wrap(s)
 end
 
 local function tty_write(s)
+  M._tty_n = (M._tty_n or 0) + 1
+  M._tty_bytes = (M._tty_bytes or 0) + #s
   if IN_TMUX then s = tmux_wrap(s) end
   local uv = vim.uv or vim.loop
 
@@ -338,7 +340,34 @@ local function kitty_call_async(method, args)
   end)
 end
 
-local NEXT_ID = 1000
+-- Image ids double as the placeholder cell's FOREGROUND color (Kitty's Unicode
+-- placeholder protocol encodes the id in the cell's fg). Any cell the image
+-- fails to cover (Kitty's mapping breaks when the window narrows/wraps on a
+-- layout toggle) falls back to the font rendering U+10EEEE in that fg. With the
+-- old base (id 1000 -> #0003E8) those gaps flashed BRIGHT BLUE. Derive ids from
+-- the editor BACKGROUND instead, nudging each channel a little for uniqueness
+-- but staying dark, so an uncovered cell blends into the background. Override
+-- the base with setup({ image_placeholder_bg = "#rrggbb" }) when the theme is
+-- transparent and the fallback doesn't match the terminal background.
+local NEXT_N = 0
+local function next_image_id()
+  local ok, cfg = pcall(function() return require("jupynvim").config end)
+  local bg
+  if ok and cfg and type(cfg.image_placeholder_bg) == "string" then
+    bg = tonumber((cfg.image_placeholder_bg:gsub("#", "")), 16)
+  end
+  if not bg then
+    local nrm = vim.api.nvim_get_hl(0, { name = "Normal" })
+    bg = (type(nrm.bg) == "number") and (nrm.bg % 0x1000000) or 0x16161e
+  end
+  local n = NEXT_N
+  NEXT_N = NEXT_N + 1
+  -- spread n across the three channels, each +0..23, so ids stay near the bg
+  local off = (n % 24) + (math.floor(n / 24) % 24) * 0x100 + (math.floor(n / 576) % 24) * 0x10000
+  local id = (bg + off) % 0x1000000
+  if id == 0 then id = 0x010101 end  -- never #000000 (Kitty reads it as "default")
+  return id
+end
 
 -- Generate ASCII art via chafa for the PNG and CACHE it per cell hash.
 -- ASCII art is rendered as virt_lines in the buffer — it scrolls naturally
@@ -518,6 +547,7 @@ end
 -- id), so the placeholders showing that id refresh on each tick.
 local function start_animation(p, cell_id)
   if not p or not p.frames or #p.frames < 2 then return end
+  if M._anim_paused then return end
   if p.timer then pcall(p.timer.stop, p.timer); pcall(p.timer.close, p.timer) end
   p.frame_idx = 1
   p.cell_id = cell_id
@@ -554,6 +584,25 @@ local function start_animation(p, cell_id)
   pcall(p.timer.start, p.timer, p.delays[1] or 100, 0, vim.schedule_wrap(tick))
 end
 
+-- Pause / resume all gif animations. Diagnostic + workaround: each animated
+-- gif re-transmits a frame on a timer, which in remote mode runs on nvim's main
+-- loop. Toggling this off is an A/B test for whether animation drives the
+-- "slow motion" navigation users see over a remote backend.
+M._anim_paused = false
+function M.pause_animations()
+  M._anim_paused = true
+  for _, p in pairs(placements) do
+    if p.timer then pcall(p.timer.stop, p.timer); pcall(p.timer.close, p.timer); p.timer = nil end
+  end
+end
+function M.resume_animations()
+  M._anim_paused = false
+  for cid, p in pairs(placements) do
+    if p.frames and #p.frames > 1 and not p.timer then start_animation(p, cid) end
+  end
+end
+function M.animations_paused() return M._anim_paused end
+
 function M.ensure_transmitted(cell_id, b64, callback, opts)
   opts = opts or {}
   local renderer = opts.renderer or "chafa"
@@ -584,8 +633,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     end)
     return
   end
-  local id = NEXT_ID
-  NEXT_ID = NEXT_ID + 1
+  local id = next_image_id()
 
   if renderer == "placeholder" then
     -- Real PNG via Kitty Unicode placeholder protocol — image stays

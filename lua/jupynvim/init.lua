@@ -807,6 +807,41 @@ function M.remote_browse(alias, subpath)
   require("jupynvim.remote_explorer").open(alias, (subpath ~= nil and subpath ~= "") and subpath or "~")
 end
 
+-- Re-render every visible notebook's frames. Toggling the explorer or a
+-- terminal (local snacks float OR remote split) changes the layout, but
+-- those toggles settle ASYNC and don't reliably fire a resize event the
+-- notebook sees, so the width-sized frames go stale until something else
+-- re-renders (the user found `i`/`a` or a second toggle "fixes" it — both
+-- just trigger a refresh). So every toggle dispatcher calls this. We fire
+-- once on the next tick (synchronous-settle case, before the redraw) and
+-- once after a short delay (async-settle backstop). Render.refresh clears
+-- and redraws in one pass and re-resolves the notebook's current window,
+-- so running it twice never shows a half-state.
+function M._refresh_notebooks_soon()
+  local Render = require("jupynvim.render")
+  local function each(fn)
+    for buf, nb in pairs(Notebook.all()) do
+      if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
+        fn(nb, vim.fn.bufwinid(buf))
+      end
+    end
+  end
+  -- The frame extmarks are already correct after a toggle (verified via
+  -- :JupynvimDebugFrames). The real problem is the SCREEN: closing a
+  -- terminal float does a PARTIAL repaint that leaves the notebook's cells
+  -- stale. The cellmode WinNew/WinClosed handler re-renders + redraws
+  -- regardless of how the key was routed; this is a dispatcher-side backstop
+  -- for the toggles that DO go through here. No SYNCHRONOUS render: snacks
+  -- settles its window async, so an immediate render shows the pre-settle
+  -- layout for a tick (the "jump" you saw). Render on the next tick
+  -- (settled), then redraw to flush the stale screen. Plain redraw, no flash.
+  vim.schedule(function()
+    each(function(nb, win) pcall(Render.refresh_sync, nb, win) end)
+    pcall(vim.cmd, "redraw")
+  end)
+  vim.defer_fn(function() pcall(vim.cmd, "redraw") end, 90)
+end
+
 -- <leader>e dispatcher / TOGGLE. When an SSH session is active, toggle the
 -- REMOTE tree explorer (open if hidden, close if shown); otherwise fall
 -- through to the local explorer (snacks). Bound to explorer_keys in M.setup.
@@ -821,11 +856,13 @@ function M.explorer()
     else
       M.remote_browse(alias)
     end
+    M._refresh_notebooks_soon()
     return
   end
   -- Local fallback: snacks explorer, else netrw.
   local ok = pcall(function() require("snacks").explorer() end)
   if not ok then pcall(vim.cmd, "Lexplore") end
+  M._refresh_notebooks_soon()
 end
 
 -- Terminal dispatcher / TOGGLE. SSH-connected → toggle a REMOTE PTY terminal
@@ -835,10 +872,12 @@ function M.terminal()
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
     require("jupynvim.remote_term").toggle(alias)
+    M._refresh_notebooks_soon()
     return
   end
   local ok = pcall(function() require("snacks").terminal() end)
   if not ok then pcall(vim.cmd, "botright split | terminal") end
+  M._refresh_notebooks_soon()
 end
 
 -- Toggle a SECOND remote terminal on the right (independent of the <C-/>
@@ -847,6 +886,7 @@ function M.terminal_right()
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
     require("jupynvim.remote_term").toggle(alias, { split = "right" })
+    M._refresh_notebooks_soon()
   else
     vim.notify("jupynvim: no active SSH session", vim.log.levels.WARN)
   end
@@ -1088,8 +1128,18 @@ function M.open(path, opts)
   if existing_buf > 0 then
     local existing_nb = Notebook.get(existing_buf)
     if existing_nb and not opts.force then
-      vim.api.nvim_set_current_buf(existing_buf)
-      Render.refresh(existing_nb, vim.api.nvim_get_current_win())
+      -- Already open: if a window already shows it, FOCUS that window (like
+      -- <C-w>w to it) rather than re-displaying the buffer in the current
+      -- window. Re-displaying (e.g. when the explorer opens the same file)
+      -- duplicated the notebook into the explorer's pane and forced a stale
+      -- re-render. Only fall back to set_current_buf when no window shows it.
+      local wins = vim.fn.win_findbuf(existing_buf)
+      if #wins > 0 then
+        pcall(vim.api.nvim_set_current_win, wins[1])
+      else
+        vim.api.nvim_set_current_buf(existing_buf)
+      end
+      Render.refresh(existing_nb, vim.fn.bufwinid(existing_buf))
       return existing_buf
     end
   end
@@ -1162,11 +1212,17 @@ function M.open(path, opts)
   -- pre-edit history without affecting future edits.
   do
     local prev = vim.bo[buf].undolevels
+    -- Force modifiable for the no-op insert: after :bd + reopen the reused
+    -- buffer can come back with 'modifiable' off (cellmode leaves it off in
+    -- command mode), which made this normal! a<BS> throw E21.
+    local prev_mod = vim.bo[buf].modifiable
+    vim.bo[buf].modifiable = true
     vim.bo[buf].undolevels = -1
     vim.api.nvim_buf_call(buf, function()
       vim.cmd('exe "normal! a \\<BS>\\<Esc>"')
     end)
     vim.bo[buf].undolevels = prev
+    vim.bo[buf].modifiable = prev_mod
     -- The no-op insert/backspace bumps `modified` even though buffer text is
     -- unchanged. Reset it so :q doesn't prompt to save on a freshly-opened
     -- file the user hasn't actually edited.
@@ -1194,6 +1250,7 @@ function M.open(path, opts)
   -- the literal "# %%[jupynvim:cell-sep]" markers flash visible on open.
   vim.api.nvim_set_current_buf(buf)
   local cur_win = vim.api.nvim_get_current_win()
+  M._disable_indent_guides(buf)
 
   -- Force a single window for the notebook buffer. Other plugins (LazyVim
   -- defaults, snacks.dashboard, neo-tree, etc.) sometimes auto-split on
@@ -1212,7 +1269,11 @@ function M.open(path, opts)
   -- very first redraw. Doing this in a scheduled callback caused a one-frame
   -- flash where the separator markers were visible.
   vim.api.nvim_win_call(cur_win, function()
-    vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+    -- nolist: a global `set list` (LazyVim sets it) renders the trailing
+    -- spaces on blank output lines (the "  " from OUT_INDENT) as listchars
+    -- `trail` dashes, which showed as stray gray "—" between output blocks.
+    -- A rendered notebook view shouldn't show whitespace markers anyway.
+    vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
     vim.cmd([[setlocal showbreak=\ ]])
   end)
   -- Cursor to top of the rendered notebook. The BufReadCmd pre-populates
@@ -1248,6 +1309,13 @@ function M.open(path, opts)
       pcall(function() vim.bo[buf].indentexpr = "python#GetIndent(v:lnum)" end)
     end
   end)
+  -- Re-scope treesitter NOW. _populate_buffer already called this, but that
+  -- ran before the filetype above attached the parser, so it was a no-op and
+  -- treesitter would parse the whole buffer (markdown + separators + code)
+  -- unscoped — which throws the Python parser into error recovery and the
+  -- cells render plain. Re-run it here, after the parser exists, so code
+  -- cells are highlighted even if no edit (which also re-syncs) ever happens.
+  pcall(M._sync_treesitter_ranges, nb)
 
   -- Look up the kernel python BEFORE LSP attaches so we can inject
   -- settings.python.pythonPath + analysis.extraPaths into the config.
@@ -1313,6 +1381,32 @@ function M.open(path, opts)
 
   Render.refresh(nb, cur_win)
   M._opening[abs] = nil
+
+  -- Fast follow-up render + redraw. The first paint can be incomplete if the
+  -- user fires a command the instant the notebook opens (e.g. run-all), so
+  -- the frames look absent for a beat; this repaints once things settle. (It
+  -- does not speed up treesitter's own async parse, which colors a little
+  -- later on its own.)
+  vim.defer_fn(function()
+    if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
+      pcall(M._sync_treesitter_ranges, nb)  -- backstop if the parser wasn't ready synchronously
+      pcall(Render.refresh, nb, vim.fn.bufwinid(buf))
+      pcall(vim.cmd, "redraw")
+    end
+  end, 120)
+
+  -- Treesitter scoping can be reset asynchronously after open by an LSP
+  -- attaching or the kernel starting (the "leader-nB too fast renders plain"
+  -- path: running cells starts the kernel, which makes the LSP attach). We
+  -- re-scope in those handlers, but the exact moment the reset lands is
+  -- timing-dependent, so also run a couple of self-healing passes over the
+  -- first second. _sync compares actual-vs-desired regions, so each pass is a
+  -- cheap no-op (a row-signature compare, no re-parse) once scoping is correct.
+  for _, delay in ipairs({ 400, 1000 }) do
+    vim.defer_fn(function()
+      if vim.api.nvim_buf_is_valid(buf) then pcall(M._sync_treesitter_ranges, nb) end
+    end, delay)
+  end
 
   -- Auto-start kernel based on notebook metadata
   vim.defer_fn(function() M.start_kernel(buf) end, 50)
@@ -1522,7 +1616,7 @@ function M._populate_buffer(nb)
   -- continuation row. Right border on continuation rows is a known gap.
   for _, win in ipairs(vim.fn.win_findbuf(nb.buf)) do
     vim.api.nvim_win_call(win, function()
-      vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
+      vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
       -- The statuscolumn IS the cell gutter: per-cell line numbers,
       -- selection bar, and the cell's left border. The buffer number is
       -- baked in because the expression can evaluate while ANOTHER window
@@ -1550,6 +1644,21 @@ function M._sync_treesitter_ranges(nb)
   if not vim.treesitter then return end
   local ok, parser = pcall(vim.treesitter.get_parser, nb.buf, vim.bo[nb.buf].filetype)
   if not ok or not parser then return end
+  -- When the treesitter highlighter is active, turn off Vim's regex syntax.
+  -- They otherwise both run: treesitter (scoped to code cells below) colors the
+  -- code, while vim syntax knows nothing about our cell/output regions and
+  -- paints every output line that starts with "#" as pythonComment, so printed
+  -- output like `# transpose` rendered gray. Treesitter alone is enough; gate
+  -- on the highlighter being active so configs without treesitter highlighting
+  -- keep their syntax-based colors (the output mask uses hl_mode=replace, which
+  -- covers that case too). Re-checked on every sync, so a filetype re-set that
+  -- reloads syntax gets corrected on the next pass.
+  pcall(function()
+    local hltr = vim.treesitter.highlighter
+    if hltr and hltr.active and hltr.active[nb.buf] and vim.bo[nb.buf].syntax ~= "" then
+      vim.bo[nb.buf].syntax = ""
+    end
+  end)
   local _, ranges = nb:to_lines()
   local lines = vim.api.nvim_buf_get_lines(nb.buf, 0, -1, false)
   local regions = {}
@@ -1564,21 +1673,46 @@ function M._sync_treesitter_ranges(nb)
       })
     end
   end
-  -- Skip set_included_regions when the cell structure (row boundaries)
-  -- hasn't changed. Byte offsets shift on every keystroke, but treesitter's
-  -- own incremental parser handles intra-line edits inside an existing
-  -- region. Re-setting regions here would force a full tree invalidation
-  -- on each keystroke, which races with indentexpr (treesitter indent
-  -- returns -1 against an invalidated tree, so Enter after `:` falls back
-  -- to plain autoindent). Compare row boundaries only.
-  local row_sig = {}
-  for i, region in ipairs(regions) do
-    row_sig[i] = region[1][1] .. ":" .. region[1][4]
+  -- Re-scope only when the parser isn't already scoped the way we want, but
+  -- decide that by comparing our desired regions against the parser's CURRENT
+  -- included_regions rather than a cached copy of our own last value.
+  -- Something external resets the regions to the whole buffer after open — an
+  -- LSP attaching, the kernel starting, or nvim-treesitter re-initialising the
+  -- parser when FileType fires — and a self-keyed cache never notices, so the
+  -- re-sync no-ops and the cells parse as plain markdown+separator+code soup
+  -- (the "leader-nB too fast renders plain" report). Comparing actual-vs-
+  -- desired self-heals after any such reset while still skipping the genuine
+  -- no-op case, so we don't force a full tree invalidation on every keystroke
+  -- (which races indentexpr: treesitter indent returns -1 against a freshly
+  -- invalidated tree, dropping autoindent after `:`). Byte offsets shift on
+  -- every keystroke, so compare row boundaries only — treesitter's own
+  -- incremental parser handles intra-line edits inside an existing region.
+  local function row_signature(regs)
+    local parts = {}
+    for i, region in ipairs(regs) do
+      local rng = region[1]
+      if rng then parts[i] = (rng[1] or 0) .. ":" .. (rng[4] or 0) end
+    end
+    return table.concat(parts, ",")
   end
-  local sig = table.concat(row_sig, ",")
-  if nb._ts_regions_sig == sig then return end
-  nb._ts_regions_sig = sig
+  local want_sig = row_signature(regions)
+  local ok_cur, current = pcall(parser.included_regions, parser)
+  local have_sig = ok_cur and row_signature(current) or nil
+  if want_sig == have_sig then return end
   pcall(parser.set_included_regions, parser, regions)
+end
+
+-- Indent-guide plugins (snacks.indent, mini.indentscope, indent-blankline)
+-- draw guides from leading whitespace. Our output lines are indented two
+-- spaces, so the blank lines between output blocks pick up stray guide marks
+-- (the "gray dashes between each \n"). A notebook buffer renders its own
+-- structure, so turn those plugins off per-buffer. Each is a no-op if the
+-- plugin isn't installed.
+function M._disable_indent_guides(buf)
+  pcall(function() vim.b[buf].snacks_indent = false end)
+  pcall(function() vim.b[buf].miniindentscope_disable = true end)
+  pcall(function() vim.b[buf].indent_blankline_enabled = false end)
+  pcall(function() require("ibl").setup_buffer(buf, { enabled = false }) end)
 end
 
 function M._attach_autocmds(buf)
@@ -1602,10 +1736,19 @@ function M._attach_autocmds(buf)
         if want_ft == "python" then
           pcall(function() vim.bo[buf].indentexpr = "python#GetIndent(v:lnum)" end)
         end
+        -- Re-setting filetype above (when something knocked it off "python")
+        -- re-fires FileType, which makes nvim-treesitter rebuild the parser
+        -- with the whole buffer as one region — the cells then render as plain
+        -- markdown+code soup. Re-scope to code cells. _sync is self-healing, so
+        -- this is a cheap no-op (a row-signature compare, no re-parse) whenever
+        -- the regions are already correct.
+        local nb_for_ts = Notebook.get(buf)
+        if nb_for_ts then pcall(M._sync_treesitter_ranges, nb_for_ts) end
+        M._disable_indent_guides(buf)  -- snacks/ibl re-enable per event; reassert
         local wins = vim.fn.win_findbuf(buf)
         for _, win in ipairs(wins) do
           vim.api.nvim_win_call(win, function()
-            vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
+            vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
             -- buffer number baked in: the expression can evaluate while
             -- ANOTHER window is current (see _populate_buffer)
             vim.opt_local.statuscolumn =
@@ -1660,6 +1803,17 @@ function M._attach_autocmds(buf)
       if nb and nb.kernel_python_path then
         vim.schedule(function()
           M._sync_lsp_python_path(buf, nb.kernel_python_path, nb.kernel_extra_paths)
+        end)
+      end
+      -- An attaching LSP (and the nvim-treesitter FileType handling it can
+      -- trigger) often resets the parser's included_regions back to the whole
+      -- buffer, so code cells render plain until the next edit — this is the
+      -- "leader-nB too fast renders plain" path, since running cells starts the
+      -- kernel which is what makes the LSP attach. Re-scope once the attach
+      -- settles. _sync is self-healing, so it's a no-op when nothing reset it.
+      if nb then
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(buf) then pcall(M._sync_treesitter_ranges, nb) end
         end)
       end
     end,
@@ -2572,6 +2726,24 @@ function M.setup(opts)
     group = vim.api.nvim_create_augroup("jupynvim_colors", { clear = true }),
     callback = function() pcall(Render.setup_highlights) end,
   })
+  -- Keep indent-guide plugins (snacks.indent etc.) off notebook buffers. This
+  -- catches buffers already open when the plugin (re)loads and re-asserts on
+  -- every notebook display, so it works even on a hot reload without reopening
+  -- (M.open's call only covers fresh opens).
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "BufEnter", "FileType" }, {
+    group = vim.api.nvim_create_augroup("jupynvim_indent_guards", { clear = true }),
+    callback = function(ev)
+      if require("jupynvim.notebook").get(ev.buf) then
+        M._disable_indent_guides(ev.buf)
+        -- nolist on the notebook window: a global `set list` renders the
+        -- trailing spaces of blank output lines as gray `trail` dashes.
+        pcall(function() vim.wo.list = false end)
+      end
+    end,
+  })
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if require("jupynvim.notebook").get(b) then pcall(M._disable_indent_guides, b) end
+  end
   require("jupynvim.diag").setup()
   require("jupynvim.lsp").setup()
   Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols })
@@ -3049,6 +3221,108 @@ function M.setup(opts)
 
   vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
 
+  -- :JupynvimDebugFrames — dump the exact frame state so a broken render can
+  -- be diagnosed without screenshots. Run it right after the breakage.
+  vim.api.nvim_create_user_command("JupynvimDebugFrames", function()
+    local buf = vim.api.nvim_get_current_buf()
+    local nb = Notebook.get(buf)
+    if not nb then print("not a jupynvim buffer"); return end
+    local CellMode = require("jupynvim.cellmode")
+    local win = vim.fn.bufwinid(buf)
+    local info = win ~= -1 and vim.fn.getwininfo(win)[1] or {}
+    local out = {}
+    table.insert(out, string.format("win=%d width=%s textoff=%s win_get_width=%s wins_showing_buf=%s",
+      win, tostring(info.width), tostring(info.textoff),
+      tostring(win ~= -1 and vim.api.nvim_win_get_width(win)), vim.inspect(vim.fn.win_findbuf(buf))))
+    -- collect header/footer extmark widths per row
+    local marks = vim.api.nvim_buf_get_extmarks(buf, nb.border_ns, 0, -1, { details = true })
+    local frames = {}
+    for _, m in ipairs(marks) do
+      for _, vl in ipairs(m[4].virt_lines or {}) do
+        local s = ""
+        for _, c in ipairs(vl) do s = s .. (c[1] or "") end
+        if s:find("#%d") or s:find("Python") or s:find("Markdown") then
+          table.insert(frames, string.format("  row %d  width=%d  %q", m[2], vim.fn.strwidth(s), s:sub(1, 24)))
+        end
+      end
+    end
+    table.insert(out, "frames (want width == win width " .. tostring(info.width) .. "):")
+    vim.list_extend(out, frames)
+    -- statuscolumn sample for the first source line of each cell
+    for i, r in ipairs(CellMode.ranges(buf)) do
+      local sc = CellMode._statuscol_for(buf, r.start + 1, 0):gsub("%%#%w+#", ""):gsub("%%%*", "")
+      table.insert(out, string.format("  cell %d line %d statuscol=%q", i, r.start + 1, sc))
+    end
+    local msg = table.concat(out, "\n")
+    print(msg)
+    -- also stash to a register + a file so it's easy to copy
+    pcall(vim.fn.setreg, "+", msg)
+    pcall(function()
+      local f = io.open(vim.fn.stdpath("cache") .. "/jupynvim_debug.txt", "w")
+      if f then f:write(msg); f:close() end
+    end)
+  end, {})
+
+  -- :JupynvimDebugHl — dump every highlight source at the cursor (treesitter,
+  -- semantic tokens, syntax, jupynvim extmarks) with each group's resolved
+  -- foreground. Put the cursor on a line that looks wrong (e.g. gray output)
+  -- and run this; it tells us exactly which group is painting it instead of
+  -- guessing from a screenshot.
+  vim.api.nvim_create_user_command("JupynvimDebugHl", function()
+    local buf = vim.api.nvim_get_current_buf()
+    local win = vim.api.nvim_get_current_win()
+    local pos = vim.api.nvim_win_get_cursor(win)
+    local row, col = pos[1] - 1, pos[2]
+    local function fg_of(group)
+      local seen = {}
+      local name = group
+      while name and not seen[name] do
+        seen[name] = true
+        local h = vim.api.nvim_get_hl(0, { name = name })
+        if h.fg then return string.format("#%06x", h.fg) end
+        if h.link then name = h.link else break end
+      end
+      return "(no fg" .. (group ~= name and " via " .. tostring(name) or "") .. ")"
+    end
+    local out = {}
+    local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
+    table.insert(out, string.format("row=%d col=%d text=%q", row, col, line:sub(1, 40)))
+    table.insert(out, "Normal fg = " .. fg_of("Normal")
+      .. " | JupynvimOutputText -> " .. fg_of("JupynvimOutputText"))
+    local winhl = vim.wo[win].winhighlight
+    table.insert(out, "winhighlight = " .. (winhl ~= "" and winhl or "(none)"))
+    local info = vim.inspect_pos(buf, row, math.max(col, 0))
+    for _, t in ipairs(info.treesitter or {}) do
+      local g = "@" .. (t.capture or "?") .. "." .. (t.lang or "?")
+      table.insert(out, "  treesitter " .. g .. "  fg=" .. fg_of(g) .. " (hl=" .. tostring(t.hl_group) .. ")")
+    end
+    for _, s in ipairs(info.semantic_tokens or {}) do
+      local g = s.opts and s.opts.hl_group or "?"
+      table.insert(out, "  semantic " .. tostring(g) .. "  fg=" .. fg_of(g)
+        .. " prio=" .. tostring(s.opts and s.opts.priority))
+    end
+    for _, sy in ipairs(info.syntax or {}) do
+      table.insert(out, "  syntax " .. tostring(sy.hl_group) .. "  fg=" .. fg_of(sy.hl_group))
+    end
+    for _, e in ipairs(info.extmarks or {}) do
+      local g = e.opts and (e.opts.hl_group or e.opts.line_hl_group)
+      if g then
+        table.insert(out, "  extmark[" .. tostring(e.ns) .. "] " .. tostring(g)
+          .. "  fg=" .. fg_of(g) .. " prio=" .. tostring(e.opts.priority))
+      end
+    end
+    if #info.treesitter == 0 and #(info.semantic_tokens or {}) == 0 and #(info.syntax or {}) == 0 then
+      table.insert(out, "  (no treesitter / semantic / syntax at this position)")
+    end
+    local msg = table.concat(out, "\n")
+    print(msg)
+    pcall(vim.fn.setreg, "+", msg)
+    pcall(function()
+      local f = io.open(vim.fn.stdpath("cache") .. "/jupynvim_debug.txt", "w")
+      if f then f:write(msg); f:close() end
+    end)
+  end, {})
+
   -- :JupynvimExplorer — open the explorer dispatcher (remote tree if an SSH
   -- session is active, else local). Same as the explorer_keys binding.
   vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
@@ -3181,6 +3455,54 @@ function M.setup(opts)
   -- (resolved servers, probe/install results, root, server/client state).
   vim.api.nvim_create_user_command("JupynvimLspStatus", function()
     require("jupynvim.remote_lsp").status()
+  end, {})
+
+  -- :JupynvimRpcStats — print per-method RPC counts since the last reset, then
+  -- reset. Run once to clear, do the laggy action (e.g. j/k around a big cell),
+  -- run again: the counts are exactly what crossed the link during that window.
+  vim.api.nvim_create_user_command("JupynvimRpcStats", function()
+    local rpc = require("jupynvim.rpc")
+    local function fmt(label, t)
+      local rows = {}
+      for k, v in pairs(t) do rows[#rows + 1] = { k, v } end
+      table.sort(rows, function(a, b) return a[2] > b[2] end)
+      local lines = { label .. ":" }
+      if #rows == 0 then lines[#lines + 1] = "    (none)" end
+      for _, r in ipairs(rows) do lines[#lines + 1] = string.format("    %5d  %s", r[2], r[1]) end
+      return table.concat(lines, "\n")
+    end
+    local out = fmt("outgoing (nvim -> backend)", rpc.stats.out)
+    local inc = fmt("incoming (backend -> nvim)", rpc.stats.inc)
+    rpc.reset_stats()
+    vim.notify("jupynvim RPC since last reset (now reset):\n" .. out .. "\n" .. inc, vim.log.levels.INFO)
+  end, {})
+
+  -- :JupynvimRenderStats — local-render counters (frame re-renders, tty/kitty
+  -- writes and their byte volume) since last reset, then reset. Pairs with
+  -- JupynvimRpcStats: if RPC is zero but these are high during the laggy
+  -- action, the cost is local rendering, not the link.
+  vim.api.nvim_create_user_command("JupynvimRenderStats", function()
+    local img = require("jupynvim.image")
+    local rnd = require("jupynvim.render")
+    local msg = string.format(
+      "jupynvim render since last reset (now reset):\n    renders:   %d\n    tty writes: %d  (%d KB)",
+      rnd._render_n or 0, img._tty_n or 0, math.floor((img._tty_bytes or 0) / 1024))
+    rnd._render_n, img._tty_n, img._tty_bytes = 0, 0, 0
+    vim.notify(msg, vim.log.levels.INFO)
+  end, {})
+
+  -- :JupynvimPauseAnimations — toggle all gif animation timers. A/B test for
+  -- whether animation drives navigation lag over a remote backend, and a
+  -- workaround if it does.
+  vim.api.nvim_create_user_command("JupynvimPauseAnimations", function()
+    local img = require("jupynvim.image")
+    if img.animations_paused() then
+      img.resume_animations()
+      vim.notify("jupynvim: animations resumed", vim.log.levels.INFO)
+    else
+      img.pause_animations()
+      vim.notify("jupynvim: animations paused", vim.log.levels.INFO)
+    end
   end, {})
 
   -- :JupynvimLspRetry [alias] — clear cached LSP provisioning failures and

@@ -451,19 +451,12 @@ local function apply_size(split, alias, slot)
 end
 
 -- Opening/hiding a terminal split resizes the notebook window (a side
--- terminal narrows it), which leaves the cell frames, full-width strings
--- sized for the OLD width, broken until re-rendered. Re-render every
--- visible notebook once the layout settles.
+-- terminal narrows it), leaving the width-sized frames stale. Re-render via
+-- the shared helper (synchronous + scheduled backstop, before the redraw,
+-- so no flash). Covers the :JupynvimTerm path that the <C-/> dispatcher
+-- doesn't go through.
 local function refresh_notebooks()
-  vim.schedule(function()
-    local ok, Notebook = pcall(require, "jupynvim.notebook")
-    if not ok then return end
-    local Render = require("jupynvim.render")
-    for buf, nb in pairs(Notebook.all()) do
-      local win = vim.fn.bufwinid(buf)
-      if win ~= -1 then pcall(Render.refresh, nb, win) end
-    end
-  end)
+  pcall(function() require("jupynvim")._refresh_notebooks_soon() end)
 end
 
 -- ── open / toggle ──────────────────────────────────────────────────────────
