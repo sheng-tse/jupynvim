@@ -5,7 +5,11 @@ borders, inline images, real Jupyter kernels, and an LSP that actually
 understands the file. Built on a Rust backend that talks the Jupyter wire
 protocol directly, with no Python remote-plugin layer.
 
-https://github.com/user-attachments/assets/36bdca18-c964-423c-8c99-6f243d4ac1b2
+It also works over SSH: point it at a remote machine or an HPC cluster and the
+editor stays local while files, kernels, terminals, and search run on the
+remote. The demo below is a remote session.
+
+https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
 
 ## Highlights
 
@@ -47,6 +51,14 @@ https://github.com/user-attachments/assets/36bdca18-c964-423c-8c99-6f243d4ac1b2
   `python -m ipykernel install --user --name foo` per project.
 - Multi-image markdown cells are supported. `<leader>nD` deletes one image
   and `u` brings it back.
+- Remote over SSH. Connect to a machine or HPC cluster and edit notebooks
+  whose files and kernels live there, with a remote file browser, PTY
+  terminals, and ripgrep search, all over one `ssh` connection. Works even
+  where SFTP and inbound ports are blocked (tested on PSC Bridges-2). The
+  Linux backend is cross-built and uploaded on connect.
+- Per-cell execution timing. Each run shows an elapsed-time badge in the
+  cell's footer border, persisted in the notebook so it survives save and
+  reopen. Clearing the output clears it.
 - One Rust binary, one Lua plugin. No `pynvim`, no `jupyter_client`, no
   `image.nvim`, no Node-based notebook server.
 
@@ -149,6 +161,58 @@ opens a picker listing every installed kernelspec.
 flips the `modified` flag on every output event so vim's "unchanged" check
 doesn't skip the save.
 
+## Remote workspace (SSH)
+
+Point jupynvim at a remote machine and the editor runs locally while the
+notebook, its kernel, the file tree, terminals, and search all run on the
+remote. Only `jupynvim-core` runs there; cursor motion and rendering never
+cross the link. It is built on plain `ssh` (one connection, multiplexed), so
+it works on clusters where SFTP/scp are disabled and inbound ports are
+firewalled. It is tested against PSC Bridges-2.
+
+Declare a profile in `setup`:
+
+```lua
+require("jupynvim").setup({
+  remote = {
+    cluster = {
+      host = "user@cluster.example.edu",   -- or an ~/.ssh/config Host alias
+      core_path = "~/.local/bin/jupynvim-core",
+      -- ssh_args = { "-J", "jumpbox" },    -- optional ProxyJump etc.
+    },
+  },
+})
+```
+
+Then connect and open a notebook:
+
+```vim
+:JupynvimConnect cluster
+:JupynvimOpenRemote cluster:~/work/train.ipynb
+```
+
+`:JupynvimConnect` opens a short-lived terminal split for the SSH handshake
+(password, 2FA) and sets up a ControlMaster socket, so it survives `nvim`
+restarts and later opens reuse it without re-authenticating. With no argument
+it shows a picker; a bare `user@host` (or any `~/.ssh/config` Host) connects
+ad hoc. The Linux backend binary is cross-built (`:JupynvimCrossBuild`) and
+uploaded to `core_path` automatically when it is missing or out of date.
+
+Once connected:
+
+- **Files.** Remote paths use the `jupynvim://<alias>/<path>` URI scheme.
+  `:JupynvimExplorer` opens a browser for the remote tree; while a session is
+  active, `<leader>e` and your file/grep pickers target the remote and fall
+  back to local when not.
+- **Terminals.** `:JupynvimTerm` (or `<C-/>`) toggles a PTY shell on the
+  remote, sized to the split and resizable.
+- **Search.** `:JupynvimGrep <alias> <pattern> [<path>]` runs ripgrep on the
+  remote and fills the quickfix list.
+- **Slurm.** `:JupynvimUseJob <alias> [<jobid>]` routes the kernel through an
+  `srun` overlay so it lands on an allocated compute node.
+- **Multiple remotes.** Local and several remotes coexist, each buffer routed
+  to its own connection. `:JupynvimUseLocal` switches back to local.
+
 ## Concepts
 
 A jupynvim buffer is one Neovim buffer per `.ipynb` file. Cells are line
@@ -191,6 +255,15 @@ actually run.
 | `:JupynvimImageMode {placeholder\|kitty\|chafa}` | Switch image renderer at runtime. |
 | `:JupynvimReset` | Close every session, wipe state, reload current buffer. |
 | `:JupynvimDebug` | Print buffer/cell/notebook state. |
+| `:JupynvimConnect [<alias>]` | Connect to a remote (picker, configured profile, or `user@host`). |
+| `:JupynvimOpenRemote <alias>:<path>` | Open a notebook or file on a connected remote. |
+| `:JupynvimExplorer` | File browser for the active remote tree. |
+| `:JupynvimTerm` | Toggle a PTY terminal on the remote (local when not connected). |
+| `:JupynvimGrep <alias> <pattern> [<path>]` | ripgrep the remote into the quickfix list. |
+| `:JupynvimRemoteCd <path>` | Change the remote working directory. |
+| `:JupynvimUseJob <alias> [<jobid>]` | Route the kernel through a Slurm `srun` overlay. |
+| `:JupynvimUseLocal` | Switch the active backend back to local. |
+| `:JupynvimDisconnect [<alias>]` | Tear down a remote connection. |
 
 ## Keymaps
 
@@ -253,11 +326,10 @@ require("jupynvim").setup({
   --                 graphics support.
   image_renderer = "placeholder",
 
-  -- Inline image grid size in terminal cells (rows x cols). Default 32x96
-  -- works for typical matplotlib plots; bump for sharper output on large
-  -- terminals or shrink for compact display.
-  image_rows = 32,
-  image_cols = 96,
+  -- Inline image grid size in terminal cells (rows x cols). Default 16x48;
+  -- bump for sharper output on large terminals or shrink for compact display.
+  image_rows = 16,
+  image_cols = 48,
 
   -- Override the path to the jupynvim-core binary. Auto-detected from the
   -- plugin directory if unset.
@@ -287,6 +359,31 @@ require("jupynvim").setup({
   -- handled correctly via the LSP notebook protocol and don't need to be
   -- listed here.
   lsp_blocklist = {},
+
+  -- Restore animated (smooth) scrolling inside notebook buffers. Off by
+  -- default so cell navigation is one-shot and frames stay aligned. Set true
+  -- if you use snacks.scroll and want it back in notebooks.
+  smooth_scroll = false,
+
+  -- Named remote profiles for :JupynvimConnect / :JupynvimOpenRemote. Key is
+  -- the alias; value is the connection spec.
+  remote = {
+    -- cluster = {
+    --   host = "user@cluster.example.edu",  -- or an ~/.ssh/config Host
+    --   core_path = "~/.local/bin/jupynvim-core",
+    --   -- ssh_args = { "-J", "jumpbox" },
+    -- },
+  },
+
+  -- While a remote session is active these keys target the remote (and fall
+  -- back to your local mapping when not connected). Set a group to {} to
+  -- leave those keys alone.
+  explorer_keys = { "<leader>e", "<leader>E" },   -- remote file tree
+  terminal_keys = { "<c-/>", "<c-_>" },           -- toggle a remote PTY
+  pick_keys = {
+    files = { "<leader>ff", "<leader><space>" },
+    grep  = { "<leader>/", "<leader>sg" },
+  },
 })
 ```
 
@@ -363,6 +460,25 @@ serializes `.ipynb` (nbformat v4) preserving unknown fields, routes
 iopub events to cells via `parent_msg_id`, and decomposes animated
 GIFs into a frame sequence with ImageMagick.
 
+### Remote (SSH)
+
+When connected to a remote, the same picture splits across the link. Neovim
+and the Lua frontend stay local; only `jupynvim-core` runs on the remote,
+spawned over `ssh` with msgpack-RPC tunneled through its stdio.
+
+```
+  Neovim + Lua frontend (local)
+           |
+           |  msgpack-rpc over ssh stdio (one multiplexed connection)
+           v
+  jupynvim-core (remote)  ->  ZMQ  ->  ipykernel (remote)
+```
+
+Files are read and written through the backend over the same channel
+(`jupynvim://<alias>/<path>`). Kitty image bytes are encoded locally from
+output already on this side, so plot data never crosses the link more than
+once.
+
 ## Logs
 
 Backend logs to `~/Library/Caches/jupynvim/core.log` on macOS and
@@ -381,6 +497,10 @@ everywhere, but consumes a small amount of CPU while playing.
 
 One backend instance is shared across all open notebooks. Restarting it
 with `:JupynvimReset` restarts every kernel.
+
+Remote LSP is partial. Kernel-driven completion and hover work over SSH, but
+running a full editor language server on the remote and relaying it is still
+in progress; editor-side LSP features are most complete on local notebooks.
 
 ## Thanks
 
