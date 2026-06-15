@@ -199,22 +199,24 @@ test_pcall("markdown header has no vim.NIL", function()
   local buf = J.open(p)
   vim.wait(500)
   local nb = NB.get(buf)
+  -- markdown cells render FRAMELESS now (no "Markdown" label/box, see render.lua
+  -- and cellui_spec E). Guard the real bug: vim.NIL must not leak into ANY mark
+  -- on the markdown line, and the cell must still render something.
   local marks = vim.api.nvim_buf_get_extmarks(buf, nb.border_ns, 0, 0, { details = true })
   local found_bad = false
-  local found_good = false
   for _, m in ipairs(marks) do
-    local virt_lines = m[4] and m[4].virt_lines
-    if virt_lines then
-      for _, vl in ipairs(virt_lines) do
-        for _, chunk in ipairs(vl) do
-          if chunk[1]:find("vim%.NIL") then found_bad = true end
-          if chunk[1]:find("Markdown") then found_good = true end
-        end
+    local d = m[4] or {}
+    for _, vl in ipairs(d.virt_lines or {}) do
+      for _, chunk in ipairs(vl) do
+        if tostring(chunk[1]):find("vim%.NIL") then found_bad = true end
       end
     end
+    for _, vt in ipairs(d.virt_text or {}) do
+      if tostring(vt[1]):find("vim%.NIL") then found_bad = true end
+    end
   end
-  report("markdown header has no vim.NIL", not found_bad and found_good,
-         (found_bad and "vim.NIL leaked" or (not found_good and "no Markdown header found" or "")))
+  report("markdown header has no vim.NIL", not found_bad and #marks > 0,
+         (found_bad and "vim.NIL leaked" or (#marks == 0 and "markdown line rendered no marks" or "")))
   os.remove(p)
 end)
 
@@ -297,19 +299,19 @@ test_pcall("repeated :e on same path doesn't accumulate cells", function()
   vim.wait(5000)
   J._save(NB.get(buf))
   vim.wait(500)
-  -- Simulate :e on the same file (without :e!) — should idempotent-noop
-  J.open(p)
-  vim.wait(300)
-  J.open(p)
-  vim.wait(300)
-  J.open(p)
-  vim.wait(300)
+  -- Simulate :e on the same file (without :e!) — idempotent-noop. Outputs are
+  -- real buffer lines now, so the absolute count depends on output; the
+  -- invariant is that repeated opens do NOT accumulate (stable count) and the
+  -- cell count stays at 3.
+  J.open(p); vim.wait(300)
+  local base = #vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  J.open(p); vim.wait(300)
+  J.open(p); vim.wait(300)
   local nb = NB.get(buf)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  -- 3 cells × source lines = 1 + 2 + 2 = 5 + 2 separators = 7 lines
+  local lines = #vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   report("repeated :e on same path doesn't accumulate cells",
-         #nb.cells == 3 and #lines == 7,
-         string.format("cells=%d lines=%d", #nb.cells, #lines))
+         #nb.cells == 3 and lines == base,
+         string.format("cells=%d lines %d->%d", #nb.cells, base, lines))
   os.remove(p)
 end)
 
@@ -323,15 +325,16 @@ test_pcall("repeated :e! on same path stays at expected cell count", function()
   vim.wait(5000)
   J._save(NB.get(buf))
   vim.wait(500)
-  -- Force reload three times
-  J.open(p, { force = true }); vim.wait(300)
-  J.open(p, { force = true }); vim.wait(300)
-  J.open(p, { force = true }); vim.wait(300)
+  -- Force reload: first one settles the baseline, the rest must not accumulate.
+  J.open(p, { force = true }); vim.wait(400)
+  local base = #vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  J.open(p, { force = true }); vim.wait(400)
+  J.open(p, { force = true }); vim.wait(400)
   local nb = NB.get(buf)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local lines = #vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   report("repeated :e! on same path stays at expected cell count",
-         #nb.cells == 3 and #lines == 7,
-         string.format("cells=%d lines=%d", #nb.cells, #lines))
+         #nb.cells == 3 and lines == base,
+         string.format("cells=%d lines %d->%d", #nb.cells, base, lines))
   os.remove(p)
 end)
 

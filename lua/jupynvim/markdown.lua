@@ -26,6 +26,10 @@ local HL = {
   HR    = "JupynvimMdHR",
   Math  = "JupynvimMdMath",
   MathBlock = "JupynvimMdMathBlock",
+  Strike = "JupynvimMdStrike",
+  Check = "JupynvimMdCheck",
+  TableBorder = "JupynvimMdTableBorder",
+  TableHead = "JupynvimMdTableHead",
 }
 
 function M.setup_hl()
@@ -46,6 +50,10 @@ function M.setup_hl()
   hl(0, HL.HR,   { fg = "#414868" })
   hl(0, HL.Math, { fg = "#7dcfff", italic = true })
   hl(0, HL.MathBlock, { fg = "#7dcfff", bold = true, bg = "#1f2335" })
+  hl(0, HL.Strike, { strikethrough = true, fg = "#565f89" })
+  hl(0, HL.Check, { fg = "#9ece6a", bold = true })
+  hl(0, HL.TableBorder, { fg = "#414868" })
+  hl(0, HL.TableHead, { bold = true, fg = "#7aa2f7" })
 end
 
 -- Replace common LaTeX commands with Unicode equivalents for visual rendering.
@@ -146,14 +154,111 @@ local function conceal_range(buf, ns, lnum, start_col, end_col, char)
   })
 end
 
+-- Scan a line for [text](url) links with BALANCED brackets, so link text
+-- like "[[link]]" (brackets inside the label) parses. Returns a list of
+-- { start, text_close, stop, text, url } with 1-based byte positions of
+-- the opening '[', the closing ']' and the closing ')'.
+local function find_links(line)
+  local links = {}
+  local i = 1
+  while i <= #line do
+    if line:sub(i, i) == "[" then
+      local depth, j = 1, i + 1
+      while j <= #line and depth > 0 do
+        local cj = line:sub(j, j)
+        if cj == "[" then depth = depth + 1
+        elseif cj == "]" then depth = depth - 1 end
+        j = j + 1
+      end
+      if depth == 0 and line:sub(j, j) == "(" then
+        local pdepth, k = 1, j + 1
+        while k <= #line and pdepth > 0 do
+          local ck = line:sub(k, k)
+          if ck == "(" then pdepth = pdepth + 1
+          elseif ck == ")" then pdepth = pdepth - 1 end
+          k = k + 1
+        end
+        if pdepth == 0 then
+          table.insert(links, {
+            start = i, text_close = j - 1, stop = k - 1,
+            text = line:sub(i + 1, j - 2),
+            url = line:sub(j + 1, k - 2),
+          })
+          i = k
+        else
+          i = i + 1
+        end
+      else
+        i = i + 1
+      end
+    else
+      i = i + 1
+    end
+  end
+  return links
+end
+M.find_links = find_links
+
+-- The link under byte column `col` (1-based) in `line`, or the first link
+-- on the line as a fallback. Used by the gx mapping.
+function M.link_at(line, col)
+  local links = find_links(line)
+  for _, l in ipairs(links) do
+    if col >= l.start and col <= l.stop then return l end
+  end
+  -- autolink <http://...>
+  for a, url, b in line:gmatch("()<(%a[%w+.-]*://[^>%s]+)>()") do
+    if col >= a and col < b then return { url = url } end
+  end
+  -- bare URL under cursor
+  for a, url in line:gmatch("()(%a[%w+.-]*://[%w%-._~:/?#%[%]@!$&'()*+,;=%%]+)") do
+    if col >= a and col < a + #url then return { url = url } end
+  end
+  return links[1]
+end
+
 local function inline_styling(buf, ns, lnum, line)
-  -- Bold **text**
+  -- Links FIRST (balanced-bracket scan), marking their spans so emphasis
+  -- regexes don't fire inside URLs.
+  for _, l in ipairs(find_links(line)) do
+    local img = l.start > 1 and line:sub(l.start - 1, l.start - 1) == "!"
+    -- conceal "[", show text as link, conceal "](url)"
+    conceal_range(buf, ns, lnum, l.start - 1, l.start, "")
+    set_mark(buf, ns, lnum, l.start, { end_col = l.text_close - 1, hl_group = HL.Link, hl_mode = "combine" })
+    set_mark(buf, ns, lnum, l.text_close - 1, {
+      end_col = l.stop,
+      conceal = "",
+      virt_text = { { img and " 🖼" or " ↗", HL.Link } },
+      virt_text_pos = "inline",
+      hl_mode = "combine",
+      priority = 105,
+    })
+  end
+  -- Autolinks <http://...>
+  for a, url in line:gmatch("()<(%a[%w+.-]*://[^>%s]+)>") do
+    conceal_range(buf, ns, lnum, a - 1, a, "")
+    set_mark(buf, ns, lnum, a, { end_col = a + #url, hl_group = HL.Link, hl_mode = "combine" })
+    conceal_range(buf, ns, lnum, a + #url, a + #url + 1, "")
+  end
+  -- Bold **text** and __text__
+  for _, pat in ipairs({ "%*%*[^%*]+%*%*", "__[^_]+__" }) do
+    local s = 1
+    while true do
+      local a, b = line:find(pat, s)
+      if not a then break end
+      conceal_range(buf, ns, lnum, a - 1, a + 1, "")
+      set_mark(buf, ns, lnum, a + 1, { end_col = b - 2, hl_group = HL.Bold, hl_mode = "combine" })
+      conceal_range(buf, ns, lnum, b - 2, b, "")
+      s = b + 1
+    end
+  end
+  -- Strikethrough ~~text~~
   local s = 1
   while true do
-    local a, b = line:find("%*%*[^%*]+%*%*", s)
+    local a, b = line:find("~~[^~]+~~", s)
     if not a then break end
     conceal_range(buf, ns, lnum, a - 1, a + 1, "")
-    set_mark(buf, ns, lnum, a + 1, { end_col = b - 2, hl_group = HL.Bold, hl_mode = "combine" })
+    set_mark(buf, ns, lnum, a + 1, { end_col = b - 2, hl_group = HL.Strike, hl_mode = "combine" })
     conceal_range(buf, ns, lnum, b - 2, b, "")
     s = b + 1
   end
@@ -167,6 +272,20 @@ local function inline_styling(buf, ns, lnum, line)
     conceal_range(buf, ns, lnum, star1 - 1, star1, "")
     set_mark(buf, ns, lnum, star1, { end_col = inner_end - 1, hl_group = HL.Em, hl_mode = "combine" })
     conceal_range(buf, ns, lnum, inner_end - 1, inner_end, "")
+    s = b + 1
+  end
+  -- Italic _text_ (word-boundary guarded so snake_case identifiers survive)
+  s = 1
+  while true do
+    local a, b = line:find("_[^_%s][^_]-_", s)
+    if not a then break end
+    local prev = a > 1 and line:sub(a - 1, a - 1) or " "
+    local nxt = line:sub(b + 1, b + 1)
+    if not prev:match("[%w_]") and not nxt:match("[%w_]") then
+      conceal_range(buf, ns, lnum, a - 1, a, "")
+      set_mark(buf, ns, lnum, a, { end_col = b - 1, hl_group = HL.Em, hl_mode = "combine" })
+      conceal_range(buf, ns, lnum, b - 1, b, "")
+    end
     s = b + 1
   end
   -- Inline code `text`
@@ -189,7 +308,6 @@ local function inline_styling(buf, ns, lnum, line)
     if prev ~= "$" and next_ ~= "$" then
       local raw_inner = line:sub(a + 1, b - 1)
       local pretty = unicodify_math(raw_inner)
-      -- Replace whole $...$ span with the unicode-rendered text
       set_mark(buf, ns, lnum, a - 1, {
         end_col = b,
         conceal = "",
@@ -199,19 +317,6 @@ local function inline_styling(buf, ns, lnum, line)
         priority = 105,
       })
     end
-    s = b + 1
-  end
-  -- Links [text](url)
-  s = 1
-  while true do
-    local a, b = line:find("(%[)([^%]]+)(%]%()[^%)]+(%))", s)
-    if not a then break end
-    local text_open = a
-    local text_close = a + #line:sub(a, b):match("^%[[^%]]+%]") - 1
-    local link_close = b
-    conceal_range(buf, ns, lnum, text_open - 1, text_open, "")
-    set_mark(buf, ns, lnum, text_open, { end_col = text_close - 1, hl_group = HL.Link, hl_mode = "combine" })
-    conceal_range(buf, ns, lnum, text_close - 1, link_close, "")
     s = b + 1
   end
 end
@@ -251,6 +356,11 @@ local function apply_line(buf, ns, lnum, raw)
       priority = 105,
     })
     set_mark(buf, ns, lnum, 0, { line_hl_group = hl, priority = 100 })
+    -- breathing room above headings, like VSCode's vertical rhythm
+    set_mark(buf, ns, lnum, 0, {
+      virt_lines = { { { " ", "Normal" } } },
+      virt_lines_above = true,
+    })
     inline_styling(buf, ns, lnum, raw)
     return
   end
@@ -270,16 +380,32 @@ local function apply_line(buf, ns, lnum, raw)
     inline_styling(buf, ns, lnum, raw)
     return
   end
-  -- Bullet list
+  -- Bullet list (with GitHub task-list checkboxes). Overlay WITHOUT
+  -- conceal: concealing the marker shifted the text left one cell and
+  -- glued the bullet to the word.
   local indent, marker = raw:match("^(%s*)([%-%*%+])%s+")
   if marker then
     set_mark(buf, ns, lnum, #indent, {
       end_col = #indent + 1,
       virt_text = { { "•", HL.Bullet } },
       virt_text_pos = "overlay",
-      conceal = "",
       hl_mode = "combine",
     })
+    local box_s, box_e, state = raw:find("^%s*[%-%*%+]%s+%[([ xX])%]")
+    if box_s then
+      local glyph = (state == " ") and "☐" or "☑"
+      set_mark(buf, ns, lnum, box_e - 3, {
+        end_col = box_e,
+        conceal = "",
+        virt_text = { { glyph, HL.Check } },
+        virt_text_pos = "inline",
+        hl_mode = "combine",
+        priority = 105,
+      })
+      if state ~= " " then
+        set_mark(buf, ns, lnum, box_e, { end_col = #raw, hl_group = HL.Strike, hl_mode = "combine", priority = 90 })
+      end
+    end
     inline_styling(buf, ns, lnum, raw)
     return
   end
@@ -305,6 +431,200 @@ local function apply_line(buf, ns, lnum, raw)
   inline_styling(buf, ns, lnum, raw)
 end
 
+-- ---------- tables ----------
+
+local function dw(s) return vim.fn.strdisplaywidth(s) end
+
+-- A pipe-table separator row: only |, -, :, spaces, with at least one dash.
+local function is_table_sep(line)
+  if not (line:find("|") and line:find("%-")) then return false end
+  return line:match("^[|: %-%s]+$") ~= nil
+end
+
+local function split_row(raw)
+  local inner = raw:gsub("^%s*|", ""):gsub("|%s*$", "")
+  local cells = {}
+  for cell in (inner .. "|"):gmatch("([^|]*)|") do
+    table.insert(cells, vim.trim(cell))
+  end
+  return cells
+end
+
+-- Word-wrap one cell's text to `width` display columns (hard-breaking
+-- words longer than the column, multi-byte safe).
+local function wrap_cell(text, width)
+  if dw(text) <= width then return { text } end
+  local out, cur = {}, ""
+  for word in text:gmatch("%S+") do
+    while dw(word) > width do
+      if cur ~= "" then table.insert(out, cur); cur = "" end
+      local taken, rest, w = "", "", 0
+      for ch in word:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        local cw = dw(ch)
+        if rest ~= "" or w + cw > width then
+          rest = rest .. ch
+        else
+          taken = taken .. ch
+          w = w + cw
+        end
+      end
+      if taken == "" then break end
+      table.insert(out, taken)
+      word = rest
+    end
+    if word ~= "" then
+      local cand = cur == "" and word or (cur .. " " .. word)
+      if dw(cand) > width and cur ~= "" then
+        table.insert(out, cur)
+        cur = word
+      else
+        cur = cand
+      end
+    end
+  end
+  if cur ~= "" then table.insert(out, cur) end
+  if #out == 0 then out = { "" } end
+  return out
+end
+
+-- Pure layout (testable): logical rows -> boxed physical lines that fit
+-- max_w display columns. Wide columns shrink and their text wraps INSIDE
+-- the cell (VSCode behavior for dataframe-style tables), so the box never
+-- overflows the window. rows[1] is the header.
+function M._layout_table(rows, max_w)
+  local ncols = 0
+  for _, cells in ipairs(rows) do ncols = math.max(ncols, #cells) end
+  if ncols == 0 then return nil end
+  local wid = {}
+  for c = 1, ncols do
+    local w = 3
+    for _, cells in ipairs(rows) do w = math.max(w, dw(cells[c] or "")) end
+    wid[c] = w
+  end
+  local MIN = 8
+  local function total()
+    local t = ncols + 1
+    for c = 1, ncols do t = t + wid[c] + 2 end
+    return t
+  end
+  for _ = 1, 256 do
+    if total() <= max_w then break end
+    local bi, bw = nil, MIN
+    for c = 1, ncols do
+      if wid[c] > bw then bi, bw = c, wid[c] end
+    end
+    if not bi then break end  -- every column already at MIN: give up
+    wid[bi] = math.max(MIN, wid[bi] - math.max(1, total() - max_w))
+  end
+  local function border(l, m, r)
+    local parts = {}
+    for c = 1, ncols do parts[c] = string.rep("─", wid[c] + 2) end
+    return l .. table.concat(parts, m) .. r
+  end
+  local function fmt_row(cells)
+    local wrapped, height = {}, 1
+    for c = 1, ncols do
+      wrapped[c] = wrap_cell(cells[c] or "", wid[c])
+      height = math.max(height, #wrapped[c])
+    end
+    local phys = {}
+    for i = 1, height do
+      local parts = {}
+      for c = 1, ncols do
+        local t = wrapped[c][i] or ""
+        parts[c] = " " .. t .. string.rep(" ", math.max(wid[c] - dw(t), 0)) .. " "
+      end
+      phys[i] = "│" .. table.concat(parts, "│") .. "│"
+    end
+    return phys
+  end
+  local body = {}
+  for ri = 2, #rows do body[ri - 1] = fmt_row(rows[ri]) end
+  return {
+    header = fmt_row(rows[1]),
+    top = border("┌", "┬", "┐"),
+    mid = border("├", "┼", "┤"),
+    bot = border("└", "┴", "┘"),
+    body = body,
+  }
+end
+
+-- Render a pipe table as a proper box: raw rows are fully concealed and a
+-- laid-out version is drawn in their place. Robust to ragged sources and
+-- rows wider than the window (the old renderer assumed monospace-aligned
+-- pipes and overflowed past the border).
+--
+-- Two placements, because conceal hides TEXT but does not collapse a long
+-- line's WRAP ROWS (they stay as blank screen rows):
+--   • every raw row fits the width  -> overlay each row 1:1 (no gaps)
+--   • some raw row would wrap       -> the whole boxed table renders as
+--     one contiguous virt-line block above the concealed source rows;
+--     the leftover blank rows fall BELOW the box as plain spacing
+local function render_table(buf, ns, base, lines, first, last, max_w)
+  max_w = math.max(max_w or 80, 24)
+  local rows = { split_row(lines[first]) }
+  for i = first + 2, last do
+    table.insert(rows, split_row(lines[i]))
+  end
+  local layout = M._layout_table(rows, max_w)
+  if not layout then return end
+
+  local function conceal_row(lnum)
+    local raw = lines[lnum - base + 1] or ""
+    set_mark(buf, ns, lnum, 0, { end_col = #raw, conceal = "", priority = 150 })
+  end
+
+  local fits = true
+  for i = first, last do
+    if dw(lines[i]) > max_w then fits = false; break end
+  end
+
+  if not fits then
+    local vls = { { { layout.top, HL.TableBorder } } }
+    for _, h in ipairs(layout.header) do table.insert(vls, { { h, HL.TableHead } }) end
+    table.insert(vls, { { layout.mid, HL.TableBorder } })
+    for _, phys in ipairs(layout.body) do
+      for _, p in ipairs(phys) do table.insert(vls, { { p, "Normal" } }) end
+    end
+    table.insert(vls, { { layout.bot, HL.TableBorder } })
+    set_mark(buf, ns, base + first - 1, 0, {
+      virt_lines = vls,
+      virt_lines_above = true,
+    })
+    for i = first, last do conceal_row(base + i - 1) end
+    return
+  end
+
+  local function put(lnum, phys, hl, extra_below)
+    conceal_row(lnum)
+    set_mark(buf, ns, lnum, 0, {
+      virt_text = { { phys[1], hl } },
+      virt_text_pos = "overlay",
+      hl_mode = "combine",
+      priority = 160,
+    })
+    local below = {}
+    for i = 2, #phys do table.insert(below, { { phys[i], hl } }) end
+    for _, b in ipairs(extra_below or {}) do table.insert(below, b) end
+    if #below > 0 then
+      set_mark(buf, ns, lnum, 0, { virt_lines = below })
+    end
+  end
+
+  set_mark(buf, ns, base + first - 1, 0, {
+    virt_lines = { { { layout.top, HL.TableBorder } } },
+    virt_lines_above = true,
+  })
+  local bot_row = { { { layout.bot, HL.TableBorder } } }
+  put(base + first - 1, layout.header, HL.TableHead)
+  put(base + first, { layout.mid }, HL.TableBorder,
+    #layout.body == 0 and bot_row or nil)
+  for bi, phys in ipairs(layout.body) do
+    put(base + first + 1 + bi - 1, phys, "Normal",
+      bi == #layout.body and bot_row or nil)
+  end
+end
+
 -- ---------- public API ----------
 
 -- Apply markdown extmarks to lines [start_line, end_line] (0-based, inclusive)
@@ -318,11 +638,41 @@ function M.render(buf, ns, start_line, end_line, render_width)
   local lines = vim.api.nvim_buf_get_lines(buf, start_line, end_line + 1, false)
   local heading_width = render_width or 60
 
+  -- Pre-pass: pipe tables (outside fences). Rows claimed by a table are
+  -- rendered here and skipped by the per-line pass below.
+  local claimed = {}
+  do
+    local fence = false
+    local i = 1
+    while i <= #lines do
+      local raw = lines[i]
+      if raw:match("^%s*```") then fence = not fence end
+      if not fence and raw:find("|") and not is_table_sep(raw)
+         and lines[i + 1] and is_table_sep(lines[i + 1]) then
+        local first, last = i, i + 1
+        local j = i + 2
+        while j <= #lines and lines[j]:find("|") and not lines[j]:match("^%s*```") do
+          last = j
+          j = j + 1
+        end
+        render_table(buf, ns, start_line, lines, first, last, render_width)
+        for r = first, last do claimed[r] = true end
+        i = last + 1
+      else
+        i = i + 1
+      end
+    end
+  end
+
   local in_fence = false
   local in_math_block = false
 
   for i, raw in ipairs(lines) do
     local lnum = start_line + i - 1
+    if claimed[i] then
+      -- table row: already rendered by the pre-pass
+      goto continue
+    end
     -- Fenced code blocks ```...```
     if raw:match("^%s*```") then
       in_fence = not in_fence
@@ -371,6 +721,7 @@ function M.render(buf, ns, start_line, end_line, render_width)
         -- ATX heading: NO underline virt_line. The styled heading text speaks for itself.
       end
     end
+    ::continue::
   end
 end
 

@@ -1,20 +1,22 @@
--- Render a Notebook into its buffer using extmarks.
+-- Render a Notebook into its buffer using extmarks, VSCode-notebook style.
 --
--- Visual layout per cell:
---   ╭─ [3] Code ──────── (idle)
---   <cell source line 1>
---   <cell source line 2>
---   ├─ Out[3] ──────────
---   <output text as virt_lines>
---   <inline image placement>
---   ╰────────────────────
+-- Visual layout per CODE cell:
+--   ╭─ Python ────────────────── #3 ─╮     input editor box (rounded)
+--   │ <cell source line 1>           │     (statuscolumn numbers each cell
+--   │ <cell source line 2>           │      from 1, like a private gutter)
+--   ╰────────────────────────────────╯
+--     [1] ✓ 0.1s                           execution bar (live while busy)
+--     <output lines, frameless,            outputs are a linked chunk under
+--      clamped at output_max_lines>         the editor, not boxed
+--
+-- MARKDOWN cells render frameless: just the styled text/images flowing like
+-- a document (VSCode never frames rendered markdown).
 --
 -- Implementation:
---   • One extmark per cell on its first line:
---       virt_lines_above = header
---       (separate extmark for footer/outputs anchored to last line)
---   • One extmark on each separator line: hide the "# %%" via virt_text replacement
---   • Output extmarks store images via Kitty graphics protocol (image.lua)
+--   • One extmark per cell on its first line: virt_lines_above = header
+--   • One extmark on the last line: footer box edge + exec bar + outputs
+--   • Side bars via virt_text marks per source line (code cells only)
+--   • Output images via Kitty graphics protocol (image.lua)
 
 local Notebook = require("jupynvim.notebook")
 local image = require("jupynvim.image")
@@ -22,41 +24,57 @@ local log = require("jupynvim.log")
 
 local M = {}
 
--- Highlight groups (defined in init)
-local HL_BORDER  = "JupynvimBorder"
-local HL_HEADER  = "JupynvimCellHeader"
-local HL_BUSY    = "JupynvimBusy"
-local HL_OUTPUT  = "JupynvimOutput"
-local HL_ERROR   = "JupynvimError"
-local HL_STREAM  = "JupynvimStream"
-local HL_RESULT  = "JupynvimResult"
-local HL_MARKDOWN = "JupynvimMarkdown"
+-- Highlight groups (defined in setup_highlights)
+local HL_BORDER     = "JupynvimBorder"
+local HL_BORDER_SEL = "JupynvimBorderSel"
+local HL_HEADER     = "JupynvimCellHeader"
+local HL_BUSY       = "JupynvimBusy"
+local HL_OUTPUT     = "JupynvimOutput"
+local HL_ERROR      = "JupynvimError"
+local HL_STREAM     = "JupynvimStream"
+local HL_RESULT     = "JupynvimResult"
+local HL_OK         = "JupynvimExecOk"
+local HL_MORE       = "JupynvimOutputMore"
 
 local function repeat_char(ch, n)
   if n <= 0 then return "" end
   return string.rep(ch, n)
 end
 
-local function dw(s) return vim.fn.strdisplaywidth(s) end
+-- Display width for frame/layout math. Use strwidth, NOT strdisplaywidth:
+-- strdisplaywidth expands tabs and, in practice, returned an inflated and
+-- UNSTABLE width for box-drawing strings (e.g. 86-88 for an 80-cell line,
+-- varying by call), which made the header/footer fill overshoot the window
+-- and the frame wrap into a broken border. strwidth is the true cell width
+-- (tabs are pre-expanded via expand_tabs before any wrapping).
+local function dw(s) return vim.fn.strwidth(s) end
 
--- Closed box drawing — top/bottom/divider virt_lines start with ┌/└/├ and
--- end with ┐/┘/┤. Each source line gets `│ ` inline at col 0 and `│`
--- right_align so the corners VISUALLY connect with the side bars.
-local function header_line(width, badge, label, state)
-  local mid_state = state and (" (" .. state .. ")") or ""
-  local main = "┌─ [" .. badge .. "] " .. label .. mid_state .. " "
-  local pad = width - dw(main) - 1
-  return main .. repeat_char("─", math.max(pad, 0)) .. "┐"
+-- Input-box edges. The box's LEFT side lives in the statuscolumn (drawn by
+-- cellmode.statuscol); header/footer are full-window virt lines
+-- (virt_lines_leftcol) prefixed so the corners line up with that gutter
+-- border column. Selection is shown by the far-left gutter bar, NOT the
+-- frame: every box stays the same calm thin style.
+local function box_chars(_)
+  return { tl = "╭", tr = "╮", bl = "╰", br = "╯", h = "─", v = "│" }
 end
 
-local function footer_line(width)
-  return "└" .. repeat_char("─", math.max(width - 2, 0)) .. "┘"
+-- VSCode layout: the top edge carries only the cell number badge; the
+-- language label sits at the BOTTOM-RIGHT of the cell (see VSCode's
+-- notebook editor), right above the "[n] ✓ 0.1s" execution bar.
+local function header_line(total_w, gut, cellno, busy, bc)
+  local prefix = repeat_char(" ", math.max(gut - 2, 0))
+  local main = prefix .. bc.tl .. (busy and (bc.h .. " (running) ") or "")
+  local tail = bc.h .. " #" .. cellno .. " " .. bc.h .. bc.tr
+  local pad = total_w - dw(main) - dw(tail)
+  return main .. repeat_char(bc.h, math.max(pad, 0)) .. tail
 end
 
-local function divider_line(width, label)
-  local main = "├─ " .. label .. " "
-  local pad = width - dw(main) - 1
-  return main .. repeat_char("─", math.max(pad, 0)) .. "┤"
+local function footer_line(total_w, gut, bc, label)
+  local prefix = repeat_char(" ", math.max(gut - 2, 0))
+  local main = prefix .. bc.bl
+  local tail = label and (bc.h .. " " .. label .. " " .. bc.h .. bc.br) or bc.br
+  local pad = total_w - dw(main) - dw(tail)
+  return main .. repeat_char(bc.h, math.max(pad, 0)) .. tail
 end
 
 -- Wrap a single line to `width` DISPLAY COLUMNS, breaking at space
@@ -92,30 +110,6 @@ local function wrap(line, width)
   return out
 end
 
--- Build the virt_lines for a cell's outputs.
---
--- For images, instead of reserving blank lines, we produce Kitty Unicode
--- placeholder rows. These are emitted as virt_lines and the terminal renders
--- the image where the placeholders are.
---
--- The image_id is fetched lazily via image.ensure_transmitted; until ready,
--- a "loading…" placeholder is shown.
--- Wrap inner content with the box sides: "│ <content padded to width-3> │"
-local function with_sides(text, hl, width)
-  local inner = dw(text)
-  -- If text is somehow wider than the cell box, truncate to keep borders intact
-  if inner > width - 4 then
-    text = vim.fn.strcharpart(text, 0, math.max(width - 5, 1))
-    inner = dw(text)
-  end
-  local pad = math.max(width - 4 - inner, 0)
-  return {
-    { "│ ", HL_BORDER },
-    { text, hl },
-    { string.rep(" ", pad) .. " │", HL_BORDER },
-  }
-end
-
 -- nbformat stores text fields as either a single string or an array of
 -- strings (lines). Normalize to one string.
 local function as_str(v)
@@ -132,12 +126,8 @@ local function strip_ansi(s)
   return s
 end
 
--- Expand tabs to spaces so wrap and with_sides compute the same width
--- that virt_text actually renders. virt_text doesn't honour tabstop,
--- so a literal "\t" in chunk text shows as one cell while strdisplaywidth
--- reports eight, leaving the right border shifted left by seven cells
--- on every tab. This is what made the !ls output rows in code cells
--- have a ragged right edge.
+-- Expand tabs to spaces so wrap computes the same width that virt_text
+-- actually renders (virt_text doesn't honour tabstop).
 local function expand_tabs(s, tabstop)
   tabstop = tabstop or 8
   local out, col = {}, 0
@@ -163,7 +153,13 @@ end
 -- Apply tqdm/progress-bar carriage-return semantics: \r OVERWRITES the
 -- current line. Each \r-terminated chunk is replaced; only the LAST chunk
 -- per logical line is kept. Then split by real newlines.
+--
+-- Normalize CRLF → LF first: shell output (e.g. IPython's `!cmd`) sends
+-- `\r\n` as a regular line ending. Without the normalize the bare-\r path
+-- below treats the \r as a tqdm overwrite, takes the empty segment after
+-- it, and the entire output renders as blank.
 local function process_cr(s)
+  s = s:gsub("\r\n", "\n")
   local out = {}
   for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
     local segments = {}
@@ -177,10 +173,7 @@ local function process_cr(s)
 end
 
 -- Compact a tqdm progress bar: shorten the long block-char run while
--- preserving the actual progress fraction. Matches `[NUM]%|<bar>| ...`
--- and uses the n/m count from the rest of the line when available
--- (the percentage rounds to 0% well past 1% of progress on huge
--- denominators, so n/m is more accurate).
+-- preserving the actual progress fraction.
 local PARTIAL_BLOCKS = { "▏", "▎", "▍", "▌", "▋", "▊", "▉" }
 
 local function compact_tqdm(line)
@@ -220,197 +213,233 @@ local function compact_tqdm(line)
   return prefix .. "|" .. short .. "|" .. rest
 end
 
-local function build_output_virt_lines(cell, width, nb)
+-- Indent every output row slightly so outputs read as the linked chunk
+-- under the input editor (VSCode's output gutter).
+local OUT_INDENT = "  "
+
+-- Output IMAGES as virt rows. Text outputs are REAL buffer lines now (the
+-- OUT_SEP region emitted by Notebook:to_lines), so only kitty/ascii image
+-- rows remain virtual. `lead` prefixes every row (these rows render with
+-- virt_lines_leftcol).
+local function build_image_virt_lines(cell, width, nb, lead)
+  lead = (lead or "") .. OUT_INDENT
   local rows = {}
+  local b64
   for _, o in ipairs(cell.outputs or {}) do
-    if o.output_type == "stream" then
-      -- stderr is rendered in subdued gray (HL_OUTPUT) instead of bright red
-      -- so tqdm/wandb output (most common stderr) doesn't visually scream.
-      local hl = (o.name == "stderr") and HL_OUTPUT or HL_STREAM
-      local text = expand_tabs(strip_ansi(process_cr(as_str(o.text))))
-      for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-        line = compact_tqdm(line)
-        for _, w in ipairs(wrap(line, width - 4)) do
-          table.insert(rows, with_sides(w, hl, width))
-        end
-      end
-    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
+    if o.output_type == "execute_result" or o.output_type == "display_data" then
       local data = o.data or {}
-      local has_img = (data["image/png"] ~= nil) or (data["image/gif"] ~= nil) or (data["image/jpeg"] ~= nil)
-      local text = as_str(data["text/plain"])
-      -- Hide the boring repr when the actual image is rendered alongside:
-      --   `<Figure size NxM with K Axes>`     — matplotlib figure
-      --   `<IPython.core.display.Image object>` and similar — explicit Image()
-      -- The `^<...object>$` pattern covers anything that's just a Python repr.
-      if has_img and (text == ""
-          or text:match("^<[Ff]igure ")
-          or text:match("^<[%w._]+ object>$")
-          or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
-        text = ""
-      end
-      -- If text/plain is just the boring object repr, try extracting visible
-      -- text from text/html (used by wandb, tqdm widgets, etc.)
-      if text == "" or text:match("^<[A-Za-z._]+ object>$") then
-        local html = as_str(data["text/html"])
-        if html ~= "" then
-          -- Strip tags, preserve text and href attributes for links
-          local plain = html
-            :gsub("<a[^>]*href=\"([^\"]*)\"[^>]*>(.-)</a>", "%2 (%1)")
-            :gsub("<br%s*/?>", "\n")
-            :gsub("</p>", "\n")
-            :gsub("<[^>]+>", "")
-            :gsub("&nbsp;", " ")
-            :gsub("&amp;", "&")
-            :gsub("&lt;", "<")
-            :gsub("&gt;", ">")
-            :gsub("&#x?%w+;", "")
-            :gsub("\n\n+", "\n")
-          text = plain:gsub("^%s+", ""):gsub("%s+$", "")
-        end
-      end
-      if text ~= "" then
-        text = expand_tabs(text)
-        for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-          for _, w in ipairs(wrap(line, width - 4)) do
-            table.insert(rows, with_sides(w, HL_RESULT, width))
-          end
-        end
-      end
-      local b64
       for _, m in ipairs({ "image/gif", "image/png", "image/jpeg" }) do
         local v = data[m]
         if type(v) == "table" then v = table.concat(v, "") end
         if type(v) == "string" and v ~= "" then b64 = v; break end
       end
-      if b64 then
-        local ph = image.placeholder_virt_lines(cell.id)
-        if ph then
-          local cols = image.placement_cols(cell.id) or 56
-          for _, line in ipairs(ph) do
-            local inner_text = line[1][1]
-            local inner_hl = line[1][2]
-            local pad = math.max(width - 4 - cols, 0)
-            table.insert(rows, {
-              { "│ ", HL_BORDER },
-              { inner_text, inner_hl },
-              { string.rep(" ", pad) .. " │", HL_BORDER },
-            })
-          end
-        else
-          local ascii = image.ascii_lines_for(cell.id)
-          if ascii then
-            for _, line in ipairs(ascii) do
-              table.insert(rows, with_sides(line, "Normal", width))
-            end
-          elseif image.supported() then
-            for _ = 1, 14 do
-              table.insert(rows, with_sides(string.rep(" ", math.max(width - 4, 0)), HL_OUTPUT, width))
-            end
-          end
+      if b64 then break end
+    end
+  end
+  if b64 then
+    local ph = image.placeholder_virt_lines(cell.id)
+    if ph then
+      for _, line in ipairs(ph) do
+        table.insert(rows, { { lead, "Normal" }, { line[1][1], line[1][2] } })
+      end
+    else
+      local ascii = image.ascii_lines_for(cell.id)
+      if ascii then
+        for _, line in ipairs(ascii) do
+          table.insert(rows, { { lead .. line, "Normal" } })
         end
-      end
-    elseif o.output_type == "error" then
-      local msg = as_str(o.ename) .. ": " .. as_str(o.evalue)
-      if msg == ": " then msg = "Error" end
-      for _, w in ipairs(wrap(msg, width - 4)) do
-        table.insert(rows, with_sides(w, HL_ERROR, width))
-      end
-      for _, tb in ipairs(o.traceback or {}) do
-        local plain = expand_tabs(as_str(tb):gsub("\27%[[%d;]*m", ""))
-        for _, line in ipairs(vim.split(plain, "\n", { plain = true })) do
-          for _, w in ipairs(wrap(line, width - 4)) do
-            table.insert(rows, with_sides(w, HL_ERROR, width))
-          end
+      elseif image.supported() then
+        local rrows = (require("jupynvim").config or {}).image_rows or 16
+        for _ = 1, rrows do
+          table.insert(rows, { { lead, HL_OUTPUT } })
         end
       end
     end
   end
   return rows
 end
+M._build_image_virt_lines = build_image_virt_lines
 
--- Render a single cell. Returns the number of image lines we reserved (for image placement).
-local function render_cell(nb, cell, range, width, win)
-  local buf = nb.buf
-  -- Normalize execution_count: vim.NIL or nil → blank
-  local ec_raw = cell.execution_count
-  if ec_raw == vim.NIL or ec_raw == nil then ec_raw = nil end
-  local exec = ec_raw and tostring(ec_raw) or " "
-  local state = nb.cell_state[cell.id] and nb.cell_state[cell.id].exec_state
-  local badge
-  if state == "busy" then badge = "*" else badge = exec end
+-- VSCode's execution bar: "[1] ✓ 0.1s" under the input box. Live elapsed
+-- time with a spinner glyph while running; ✗ on error.
+local function fmt_duration(ns)
+  local s = ns / 1e9
+  if s < 10 then return string.format("%.1fs", s) end
+  if s < 60 then return string.format("%.0fs", s) end
+  return string.format("%dm %ds", math.floor(s / 60), math.floor(s % 60))
+end
+M._fmt_duration = fmt_duration
 
-  local label
-  if cell.cell_type == "code" then
-    label = "Code"
-  elseif cell.cell_type == "markdown" then
-    label = "Markdown"
-    badge = " "  -- markdown has no exec count
-  else
-    label = cell.cell_type or "Cell"
-    badge = " "
+local function exec_status_chunks(cell, st)
+  local ec = cell.execution_count
+  if ec == vim.NIL then ec = nil end
+  st = st or {}
+  if st.exec_state == "busy" then
+    local el = st.started_ns and (vim.uv.hrtime() - st.started_ns) or 0
+    return { { " [*] ", HL_BUSY }, { "● " .. fmt_duration(el), HL_BUSY } }
   end
+  local badge = " [" .. (ec or " ") .. "] "
+  if st.failed then
+    return { { badge, HL_HEADER },
+             { "✗" .. (st.duration_ns and (" " .. fmt_duration(st.duration_ns)) or ""), HL_ERROR } }
+  end
+  if st.duration_ns then
+    return { { badge, HL_HEADER }, { "✓ " .. fmt_duration(st.duration_ns), HL_OK } }
+  end
+  if ec then
+    return { { badge, HL_HEADER }, { "✓", HL_OK } }
+  end
+  return { { " [ ]", HL_HEADER } }
+end
+M._exec_status_chunks = exec_status_chunks
 
+-- Bottom border WITH the execution status embedded inline on the left, so the
+-- "[n] ✓ 0.1s" badge rides in the frame instead of floating on its own line
+-- below the box. Returns a virt_line chunk array (the exec badge keeps its own
+-- highlights; the dashes/corners use HL_BORDER). Layout:
+--   ╰─ [n] ✓ 0.1s ───────────────────────────────────── Python ─╯
+local function footer_chunks(total_w, gut, bc, label, cell, st)
+  local prefix = repeat_char(" ", math.max(gut - 2, 0))
+  local left = prefix .. bc.bl                                   -- "     ╰"
+  local tail = label and (bc.h .. " " .. label .. " " .. bc.h .. bc.br) or bc.br
+  local chunks = { { left, HL_BORDER } }
+  local mid_w = 0
+  if cell and cell.cell_type == "code" then
+    local exec = exec_status_chunks(cell, st)   -- {{" [n] ", hl}, {"✓ 0.1s", hl}}
+    local lead = bc.h                            -- "─" (exec badge already starts with a space)
+    chunks[#chunks + 1] = { lead, HL_BORDER }
+    mid_w = mid_w + dw(lead)
+    for _, c in ipairs(exec) do
+      chunks[#chunks + 1] = c
+      mid_w = mid_w + dw(c[1])
+    end
+    local sep = " " .. bc.h                       -- " ─" after the badge
+    chunks[#chunks + 1] = { sep, HL_BORDER }
+    mid_w = mid_w + dw(sep)
+  end
+  local pad = total_w - dw(left) - mid_w - dw(tail)
+  chunks[#chunks + 1] = { repeat_char(bc.h, math.max(pad, 0)), HL_BORDER }
+  chunks[#chunks + 1] = { tail, HL_BORDER }
+  return chunks
+end
+M._footer_chunks = footer_chunks
+
+-- Render a single cell. `geom` = { gut, width, total_w }: statuscolumn
+-- width, text-area width, full window width. `editing` = this cell is the
+-- one being edited (markdown cells get a source-editor box while edited,
+-- like VSCode's markdown edit view).
+local function render_cell(nb, cell, range, geom, win, cellno, selected, editing)
+  local buf = nb.buf
+  local st = nb.cell_state[cell.id]
+  local busy = st and st.exec_state == "busy"
   local total = vim.api.nvim_buf_line_count(buf)
-  if range.start >= total then return end -- buffer shorter than expected; skip safely
+  if range.start >= total then return end
 
-  local hdr = header_line(width, badge, label, state == "busy" and "running" or nil)
-  vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
-    virt_lines = { { { hdr, state == "busy" and HL_BUSY or HL_HEADER } } },
-    virt_lines_above = true,
-  })
+  local gut, width, total_w = geom.gut, geom.width, geom.total_w
+  local boxed = cell.cell_type == "code" or editing
 
-  -- Output region under the cell's last line
-  local lines_below = {}
-  if cell.cell_type == "code" then
-    local has_outputs = #(cell.outputs or {}) > 0
-    if has_outputs then
-      table.insert(lines_below, { { divider_line(width, "Out[" .. (ec_raw or " ") .. "]"), HL_HEADER } })
-      for _, l in ipairs(build_output_virt_lines(cell, width, nb)) do
-        table.insert(lines_below, l)
-      end
-    end
-    table.insert(lines_below, { { footer_line(width), HL_BORDER } })
-  elseif cell.cell_type == "markdown" then
-    -- Render embedded markdown images (placeholder mode supported).
-    -- Filter to images whose `jupynvim-img:N` token is actually present in
-    -- the current cell source. This way `<leader>nD` (which strips the
-    -- placeholder line but keeps the side-table entry so `u` can restore)
-    -- visually removes the image immediately, and `u` brings it back.
-    local Embedded = require("jupynvim.embedded")
-    local src = cell.source or ""
-    local imgs = {}
-    for _, img in ipairs(Embedded.list_images(cell.id) or {}) do
-      if src:find("jupynvim%-img:" .. img.idx, 1, false) then
-        table.insert(imgs, img)
-      end
-    end
-    for _, img in ipairs(imgs) do
-      local key = cell.id .. "_md_" .. img.idx
-      local ph = image.placeholder_virt_lines(key)
-      if ph then
-        local cols = image.placement_cols(key) or 56
-        for _, line in ipairs(ph) do
-          local inner_text = line[1][1]
-          local inner_hl = line[1][2]
-          local pad = math.max(width - 4 - cols, 0)
-          table.insert(lines_below, {
-            { "│ ", HL_BORDER },
-            { inner_text, inner_hl },
-            { string.rep(" ", pad) .. " │", HL_BORDER },
-          })
-        end
-      else
-        local ascii = image.ascii_lines_for(key)
-        if ascii then
-          for _, line in ipairs(ascii) do
-            table.insert(lines_below, with_sides(line, "Normal", width))
+  -- ── markdown / raw, not being edited: frameless document flow ──
+  if not boxed then
+    -- NOTE: no selection bar in any extmark row. Bars are drawn ONLY by
+    -- the statuscolumn (live per redraw), so selection changes never wait
+    -- on an extmark re-render and can never linger over the gif/image.
+    local md_lead = repeat_char(" ", gut)
+    local lines_below = {}
+    if cell.cell_type == "markdown" then
+      local Embedded = require("jupynvim.embedded")
+      local src = cell.source or ""
+      for _, img in ipairs(Embedded.list_images(cell.id) or {}) do
+        if src:find("jupynvim%-img:" .. img.idx, 1, false) then
+          local key = cell.id .. "_md_" .. img.idx
+          local ph = image.placeholder_virt_lines(key)
+          if ph then
+            for _, line in ipairs(ph) do
+              table.insert(lines_below, { { md_lead, "Normal" }, { line[1][1], line[1][2] } })
+            end
+          else
+            local ascii = image.ascii_lines_for(key)
+            if ascii then
+              for _, line in ipairs(ascii) do
+                table.insert(lines_below, { { md_lead .. line, "Normal" } })
+              end
+            end
           end
         end
       end
     end
-    table.insert(lines_below, { { footer_line(width), HL_BORDER } })
+    -- breathing room between a markdown cell and whatever follows
+    table.insert(lines_below, { { " ", "Normal" } })
+    local last = math.max(range.stop - 1, range.start)
+    if last >= total then last = total - 1 end
+    if last >= 0 then
+      vim.api.nvim_buf_set_extmark(buf, nb.border_ns, last, 0, {
+        virt_lines = lines_below,
+        virt_lines_leftcol = true,
+      })
+    end
+    if cell.cell_type == "markdown" then
+      require("jupynvim.markdown").render(buf, nb.border_ns,
+        range.start, math.min(range.stop - 1, total - 1), width)
+      local Embedded = require("jupynvim.embedded")
+      local imgs = Embedded.list_images(cell.id)
+      if imgs and #imgs > 0 then
+        nb.image_ids = nb.image_ids or {}
+        for _, img in ipairs(imgs) do
+          local key = cell.id .. "_md_" .. img.idx
+          local renderer = (require("jupynvim").config.image_renderer) or "chafa"
+          if not nb.image_ids[key] then
+            image.ensure_transmitted(key, img.b64, function(id)
+              if id then
+                nb.image_ids[key] = id
+                vim.schedule(function() M.refresh(nb, win) end)
+              end
+            end, { renderer = renderer, mime = img.mime })
+          end
+        end
+      end
+    end
+    return
+  end
+
+  -- ── boxed editor: code cells always; markdown while being edited ──
+  local bc = box_chars(selected)
+  local border_hl = HL_BORDER
+  local label = cell.cell_type == "code" and "Python" or "Markdown"
+  local hdr = header_line(total_w, gut, cellno, busy, bc)
+  vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
+    virt_lines = { { { hdr, busy and HL_BUSY or border_hl } } },
+    virt_lines_above = true,
+    virt_lines_leftcol = true,
+  })
+
+  -- one leftcol extmark for everything under the source: row order inside
+  -- a single extmark is guaranteed (footer, exec bar, images, spacer).
+  -- No selection bars here: bars are statuscolumn-only (live), so these
+  -- rows are selection-independent and never re-render on j/k.
+  local lines_below = {}
+  -- Bottom border carries the exec status inline (see footer_chunks); no
+  -- separate "[n] ✓ 0.1s" line below the box anymore.
+  table.insert(lines_below, footer_chunks(total_w, gut, bc, label, cell, st))
+  local sub_lead = repeat_char(" ", gut)
+  if cell.cell_type == "code" then
+    if #(cell.outputs or {}) > 0 then
+      for _, l in ipairs(build_image_virt_lines(cell, width, nb, sub_lead)) do
+        table.insert(lines_below, l)
+      end
+    end
+  end
+  -- spacer so the next cell's top border doesn't glue to our outputs;
+  -- when the cell has a real output region it goes after THOSE lines
+  if range.out_sep and range.out_stop then
+    local last_out = math.min(range.out_stop, total) - 1
+    if last_out >= 0 then
+      pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, last_out, 0, {
+        virt_lines = { { { " ", "Normal" } } },
+        virt_lines_leftcol = true,
+      })
+    end
   else
-    table.insert(lines_below, { { footer_line(width), HL_BORDER } })
+    table.insert(lines_below, { { " ", "Normal" } })
   end
 
   local last = math.max(range.stop - 1, range.start)
@@ -418,73 +447,60 @@ local function render_cell(nb, cell, range, width, win)
   if last < 0 then return end
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, last, 0, {
     virt_lines = lines_below,
+    virt_lines_leftcol = true,
   })
 
-  -- Borders. Both bars use virt_text_repeat_linebreak so they appear on
-  -- every visual row of a wrapped line, independent of wrap row count.
-  -- Left bar: virt_text_win_col=0 (text area col 0) with `│ `. To keep
-  -- the bar from overlaying source text on continuation rows, init.lua
-  -- sets breakindent + breakindentopt=min:2 which gives continuation
-  -- rows 2 cells of empty indent at col 0. The inline mark provides the
-  -- same 2-cell shift on the first row by inserting `│ ` before source.
-  -- Right bar: virt_text_pos=right_align with repeat_linebreak. Both
-  -- are documented to repeat per drawline.c lines 370-372.
+  -- RIGHT border on each source line; the LEFT border is part of the
+  -- statuscolumn (so the insert cursor aligns even on empty lines).
+  -- Repeats on wrapped rows via virt_text_repeat_linebreak. Each source
+  -- line also gets the darker editor background, like VSCode's cells.
   for ln = range.start, math.min(range.stop - 1, total - 1) do
     pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
-      virt_text = { { "│ ", HL_BORDER } },
-      virt_text_pos = "inline",
-      hl_mode = "combine",
-      priority = 100,
-    })
-    pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
-      virt_text = { { "│ ", HL_BORDER } },
-      virt_text_win_col = 0,
-      virt_text_repeat_linebreak = true,
-      hl_mode = "combine",
-      priority = 95,
-    })
-    pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, ln, 0, {
-      virt_text = { { "│", HL_BORDER } },
+      virt_text = { { bc.v, border_hl } },
       virt_text_pos = "right_align",
       virt_text_repeat_linebreak = true,
       hl_mode = "combine",
       priority = 100,
     })
+    -- No cell-background fill. The VSCode-style dark fill reads as gray bands
+    -- on a transparent colorscheme (and stale paint smears it onto output rows
+    -- on scroll); the borders alone mark the cell. Dropping it also saves one
+    -- extmark per source line. Reintroduce as a configurable color later.
   end
 
-  -- Markdown cells: render styling + transmit embedded images
-  if cell.cell_type == "markdown" then
-    require("jupynvim.markdown").render(buf, nb.border_ns,
-      range.start, math.min(range.stop - 1, total - 1), width)
-    local Embedded = require("jupynvim.embedded")
-    local imgs = Embedded.list_images(cell.id)
-    if imgs and #imgs > 0 then
-      nb.image_ids = nb.image_ids or {}
-      for _, img in ipairs(imgs) do
-        local key = cell.id .. "_md_" .. img.idx
-        local renderer = (require("jupynvim").config.image_renderer) or "chafa"
-        if not nb.image_ids[key] then
-          image.ensure_transmitted(key, img.b64, function(id)
-            if id then
-              nb.image_ids[key] = id
-              vim.schedule(function() M.refresh(nb, win) end)
-            end
-          end, { renderer = renderer, mime = img.mime })
-        end
-      end
+  -- Output regions are real buffer lines in a python-filetype buffer, so
+  -- treesitter/semantic tokens would paint them like code. Mask the whole
+  -- region with a high-priority plain foreground: outputs read as TEXT.
+  if range.out_sep and range.out_stop then
+    local out_last = math.min(range.out_stop, total) - 1
+    if out_last > range.out_sep then
+      local ltxt = vim.api.nvim_buf_get_lines(buf, out_last, out_last + 1, false)[1] or ""
+      pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, range.out_sep, 0, {
+        end_row = out_last,
+        end_col = #ltxt,
+        hl_group = "JupynvimOutputText",
+        -- REPLACE, not combine: Vim's regex syntax (when active alongside
+        -- treesitter) colors any output line starting with "#" as
+        -- pythonComment, which bled through a combine mask and made printed
+        -- output like `# transpose` render gray. replace ignores the
+        -- underlying syntax/treesitter entirely so output is pure plain text.
+        hl_mode = "replace",
+        -- Win over treesitter (100), LSP semantic tokens (125) and anything
+        -- else. 250 was not always enough in real configs.
+        priority = 5000,
+      })
     end
   end
 
   -- Schedule image placements for image outputs
   if cell.cell_type == "code" and image.supported() then
-    M.place_images(nb, cell, range, win)
+    M.place_images(nb, cell, range, win, gut)
   end
 end
 
--- For each image/png in a cell's outputs, register the image_id and place it
+-- For each image in a cell's outputs, register the image_id and place it
 -- directly at the correct screen row using Kitty's a=T (transmit-and-place).
--- This bypasses Unicode placeholder support which is incomplete in Ghostty 1.3.
-function M.place_images(nb, cell, range, win)
+function M.place_images(nb, cell, range, win, gut)
   nb.image_ids = nb.image_ids or {}
   local b64, mime
   for _, o in ipairs(cell.outputs or {}) do
@@ -504,7 +520,6 @@ function M.place_images(nb, cell, range, win)
     return
   end
   local renderer = (require("jupynvim").config.image_renderer) or "chafa"
-  -- Track if cache was already populated for this cell with this renderer
   local was_cached = (image._placements and image._placements[cell.id]
     and image._placements[cell.id].renderer == renderer)
   image.ensure_transmitted(cell.id, b64, function(id)
@@ -520,13 +535,13 @@ function M.place_images(nb, cell, range, win)
         local pos = vim.fn.screenpos(win, anchor_lnum, 1)
         if pos and pos.row and pos.row > 0 then
           local img_row = pos.row + 2
-          local img_col = 5
-          image.place_at_screen_row(cell.id, img_row, img_col, 14, 56)
+          local img_col = (gut or 7) + 3
+          local cfg = require("jupynvim").config or {}
+          image.place_at_screen_row(cell.id, img_row, img_col,
+            cfg.image_rows or 10, cfg.image_cols or 44)
         end
       end)
     end
-    -- If the cache was just populated (or replaced), schedule another
-    -- render so build_output_virt_lines picks up the new placement.
     if not was_cached then
       vim.schedule(function() M.refresh(nb, win) end)
     end
@@ -537,125 +552,189 @@ local function clear_separators(nb, ranges)
   local buf = nb.buf
   local total = vim.api.nvim_buf_line_count(buf)
   for i = 1, #ranges - 1 do
-    local sep_line = ranges[i].stop
+    local sep_line = ranges[i].out_stop or ranges[i].stop
     if sep_line < total then
       local line_text = vim.api.nvim_buf_get_lines(buf, sep_line, sep_line + 1, false)[1] or ""
-      -- Conceal the ENTIRE separator line (not just first few chars)
       vim.api.nvim_buf_set_extmark(buf, nb.border_ns, sep_line, 0, {
         end_col = #line_text,
         conceal = "",
         priority = 200,
       })
-      -- Show a thin "····" decoration as overlay
-      vim.api.nvim_buf_set_extmark(buf, nb.border_ns, sep_line, 0, {
-        virt_text = { { "····", "JupynvimSeparator" } },
-        virt_text_pos = "overlay",
-        hl_mode = "combine",
-        priority = 199,
+    end
+  end
+  -- conceal every OUT_SEP marker line as well
+  for _, r in ipairs(ranges) do
+    if r.out_sep and r.out_sep < total then
+      local t = vim.api.nvim_buf_get_lines(buf, r.out_sep, r.out_sep + 1, false)[1] or ""
+      pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, r.out_sep, 0, {
+        end_col = #t,
+        conceal = "",
+        priority = 200,
       })
     end
   end
 end
 
--- Refresh is debounced and serialized to avoid concurrent renders racing
--- (which produces stacked phantom extmarks).
+-- While any cell is busy, refresh ~2×/s so the execution bar's elapsed
+-- time ticks like VSCode's.
+local function manage_busy_ticker(nb)
+  local any_busy = false
+  for _, c in ipairs(nb.cells) do
+    local st = nb.cell_state[c.id]
+    if st and st.exec_state == "busy" then any_busy = true; break end
+  end
+  if any_busy and not nb._tick_timer then
+    nb._tick_timer = vim.uv.new_timer()
+    nb._tick_timer:start(500, 500, vim.schedule_wrap(function()
+      if not vim.api.nvim_buf_is_valid(nb.buf) then
+        if nb._tick_timer then nb._tick_timer:stop(); nb._tick_timer:close(); nb._tick_timer = nil end
+        return
+      end
+      M.refresh(nb, vim.fn.bufwinid(nb.buf), { exec_tick = true })
+    end))
+  elseif not any_busy and nb._tick_timer then
+    nb._tick_timer:stop()
+    nb._tick_timer:close()
+    nb._tick_timer = nil
+  end
+end
+
+-- The actual render: clear the frame extmarks and rebuild them at the
+-- window's CURRENT width. Synchronous, so callers can run it before a
+-- redraw (no flash). Idempotent: it always reads live geometry.
+local function do_render(nb, win, opts)
+  local buf = nb.buf
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  M._render_n = (M._render_n or 0) + 1
+
+  -- Geometry must come from a window CURRENTLY showing this buffer (not a
+  -- float, and not a stale handle captured while a transient split briefly
+  -- showed it). textoff = the statuscolumn gutter; width = full window.
+  local CellMode = require("jupynvim.cellmode")
+  local function is_float(w)
+    local ok, cfg = pcall(vim.api.nvim_win_get_config, w)
+    return ok and cfg.relative ~= nil and cfg.relative ~= ""
+  end
+  local function shows_buf(w)
+    return vim.api.nvim_win_is_valid(w) and not is_float(w)
+      and vim.api.nvim_win_get_buf(w) == buf
+  end
+  if not (win and shows_buf(win)) then
+    win = nil
+    for _, w in ipairs(vim.fn.win_findbuf(buf)) do
+      if not is_float(w) then win = w; break end
+    end
+    win = win or vim.api.nvim_get_current_win()
+  end
+  -- gut = the statuscolumn (left frame) width. jupynvim FIXES this at
+  -- CellMode.GUTTER and forces signcolumn=no for notebook windows, so the
+  -- gutter is always exactly GUTTER cells. Do NOT read info.textoff: right
+  -- after a layout change (terminal split, explorer, popup) it transiently
+  -- reports the bare numberwidth before the statuscolumn is re-evaluated, which
+  -- drew the header/footer ~3 columns too far left and left them misaligned
+  -- with the source rows' │ edge (reproduced via a terminal-split capture).
+  -- GUTTER is the true, stable width and never moves under us.
+  local geom = { gut = CellMode.GUTTER, width = 80, total_w = 87 }
+  if win and vim.api.nvim_win_is_valid(win) then
+    local info = vim.fn.getwininfo(win)[1]
+    if info then
+      geom.total_w = info.width
+      geom.width = math.max(info.width - geom.gut, 30)
+    end
+  end
+
+  local ranges = CellMode.ranges(buf)
+  local sel_idx = CellMode.selected_idx(buf)
+  local edit_idx = (not CellMode.is_command(buf)) and sel_idx or nil
+
+  -- Clear + rebuild in one synchronous pass so no half-state is ever shown.
+  vim.api.nvim_buf_clear_namespace(buf, nb.border_ns, 0, -1)
+  for i, r in ipairs(ranges) do
+    local cell = nb.cells[i]
+    if cell then
+      local ok, err = pcall(render_cell, nb, cell, r, geom, win, i,
+        i == sel_idx, i == edit_idx)
+      if not ok then
+        require("jupynvim.log").warn("render_cell failed for cell " .. tostring(i) .. ": " .. tostring(err))
+      end
+    end
+  end
+  clear_separators(nb, ranges)
+  manage_busy_ticker(nb)
+  -- heal any static image whose virtual placement the terminal lost. Skip on
+  -- the busy-ticker tick: that fires every 500ms only to advance the live
+  -- "[*] 0.3s" timer, and re-asserting placements that often visibly flashes
+  -- the image. Placements only get lost on layout changes, which refresh
+  -- through the normal (non-tick) path.
+  if not (opts and (opts.exec_tick or opts.no_image)) then
+    pcall(image.reassert_virtual_placements)
+  end
+end
+
+-- Debounced/serialized refresh: coalesces bursts and runs on vim.schedule
+-- (after the current change settles, before the next redraw). Use for
+-- content changes (output, edits, selection) where a tick of latency is
+-- fine.
 local _refresh_pending = {}  -- buf -> true
-function M.refresh(nb, win)
+function M.refresh(nb, win, opts)
   local buf = nb.buf
   if not vim.api.nvim_buf_is_valid(buf) then return end
   if _refresh_pending[buf] then return end
   _refresh_pending[buf] = true
   vim.schedule(function()
     _refresh_pending[buf] = nil
-    if not vim.api.nvim_buf_is_valid(buf) then return end
-
-    vim.api.nvim_buf_clear_namespace(buf, nb.border_ns, 0, -1)
-
-    -- Compute cell ranges DIRECTLY from buffer text — so newly typed lines
-    -- are picked up immediately without waiting for sync_from_buffer.
-    local Notebook = require("jupynvim.notebook")
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local ranges = {}
-    local cur_start = 0
-    local cell_idx = 1
-    for i, line in ipairs(lines) do
-      if line == Notebook.CELL_SEP then
-        table.insert(ranges, { start = cur_start, stop = i - 1, idx = cell_idx })
-        cell_idx = cell_idx + 1
-        cur_start = i
-      end
-    end
-    table.insert(ranges, { start = cur_start, stop = #lines, idx = cell_idx })
-    -- Compute text-area width by reading the actual window options.
-    -- Fall back to ANY visible window for this buffer, then current win.
-    if not win or not vim.api.nvim_win_is_valid(win) then
-      local wins = vim.fn.win_findbuf(buf)
-      win = (wins and wins[1]) or vim.api.nvim_get_current_win()
-    end
-    local width = 80
-    if win and vim.api.nvim_win_is_valid(win) then
-      local total = vim.api.nvim_win_get_width(win)
-      -- signcolumn: yes:N or auto:N → 2*N cells, plain yes/auto → 2.
-      local sc = vim.api.nvim_get_option_value("signcolumn", { win = win })
-      local sc_w = 0
-      if type(sc) == "string" then
-        local m = sc:match("^yes:(%d+)$") or sc:match("^auto:(%d+)$")
-        if m then sc_w = 2 * tonumber(m)
-        elseif sc == "yes" or sc == "auto" then sc_w = 2 end
-      end
-      -- numbercolumn. numberwidth is the minimum, but the displayed
-      -- column auto-expands to fit the largest line number plus a
-      -- trailing space. for a 1014-line buffer that is 5 even though
-      -- numberwidth is 4. relying on numberwidth alone puts the right
-      -- border one cell past the visible window edge.
-      local has_num = vim.api.nvim_get_option_value("number", { win = win })
-      local has_rnum = vim.api.nvim_get_option_value("relativenumber", { win = win })
-      local nu_w = 0
-      if has_num or has_rnum then
-        local nuw_opt = vim.api.nvim_get_option_value("numberwidth", { win = win })
-        local min_nuw = (type(nuw_opt) == "number") and nuw_opt or 4
-        local digits = #tostring(vim.api.nvim_buf_line_count(buf))
-        nu_w = math.max(min_nuw, digits + 1)
-      end
-      -- foldcolumn can be "0", "1"..."9", "auto", or "auto:N".
-      local fc = vim.api.nvim_get_option_value("foldcolumn", { win = win })
-      local fc_w = 0
-      if type(fc) == "string" then
-        local m = fc:match("^auto:(%d+)$") or fc:match("^(%d+)$")
-        if m then fc_w = tonumber(m)
-        elseif fc == "auto" then fc_w = 1 end
-      end
-      width = math.max(total - sc_w - nu_w - fc_w, 40)
-    end
-
-    for i, r in ipairs(ranges) do
-      local cell = nb.cells[i]
-      if cell then
-        local ok, err = pcall(render_cell, nb, cell, r, width, win)
-        if not ok then
-          require("jupynvim.log").warn("render_cell failed for cell " .. tostring(i) .. ": " .. tostring(err))
-        end
-      end
-    end
-    clear_separators(nb, ranges)
+    do_render(nb, win, opts)
   end)
+end
+
+-- SYNCHRONOUS refresh: rebuilds frames right now. Use when the layout has
+-- just changed and the caller wants the correct frames on the very next
+-- redraw with no intermediate stale frame (the explorer/terminal toggles).
+function M.refresh_sync(nb, win, opts)
+  pcall(do_render, nb, win, opts)
 end
 
 function M.setup_highlights()
   local hl = vim.api.nvim_set_hl
-  hl(0, HL_BORDER,    { fg = "#7aa2f7" })
-  hl(0, HL_HEADER,    { fg = "#7aa2f7", bold = true })
-  hl(0, HL_BUSY,      { fg = "#e0af68", bold = true })
-  hl(0, HL_OUTPUT,    { fg = "#a9b1d6" })
-  hl(0, HL_ERROR,     { fg = "#f7768e", bold = true })
-  hl(0, HL_STREAM,    { fg = "#9ece6a" })
-  hl(0, HL_RESULT,    { fg = "#bb9af7" })
-  hl(0, HL_MARKDOWN,  { bg = "#1a1b26" })
-  hl(0, "JupynvimCellBg", { bg = "#16161e" })
+  -- Visible borders; the selected cell's border goes bright + heavy glyphs.
+  hl(0, HL_BORDER,     { fg = "#7aa2f7" })
+  hl(0, HL_BORDER_SEL, { fg = "#7dcfff", bold = true })
+  hl(0, HL_HEADER,     { fg = "#565f89" })
+  hl(0, HL_BUSY,       { fg = "#e0af68", bold = true })
+  hl(0, HL_OUTPUT,     { fg = "#a9b1d6" })
+  hl(0, HL_ERROR,      { fg = "#f7768e", bold = true })
+  hl(0, HL_STREAM,     { fg = "#c0caf5" })
+  hl(0, HL_RESULT,     { fg = "#bb9af7" })
+  hl(0, HL_OK,         { fg = "#9ece6a" })
+  hl(0, HL_MORE,       { fg = "#565f89", italic = true })
   hl(0, "JupynvimSeparator", { fg = "#414868" })
-  -- Define the sign used for the left cell-border bar.
+  -- Output regions render as plain TEXT (mask treesitter/LSP code colors).
+  -- A whole block of output drawn in the theme's plain Normal can read as
+  -- "gray" sitting next to syntax-highlighted code. So by default lift the
+  -- color a bit above Normal toward white on dark themes (kept theme-adaptive
+  -- by deriving from the live Normal, and recomputed on ColorScheme). On light
+  -- themes, or when the user sets `output_color`, use the explicit value.
+  -- setup({ output_color = "#rrggbb" }) overrides entirely. This runs again on
+  -- ColorScheme, so it always reflects the active Normal, never a stale snap.
+  local out_color = (require("jupynvim").config or {}).output_color
+  if type(out_color) == "string" and out_color ~= "" then
+    hl(0, "JupynvimOutputText", { fg = out_color })
+  else
+    local nrm = vim.api.nvim_get_hl(0, { name = "Normal" })
+    if vim.o.background ~= "light" and type(nrm.fg) == "number" then
+      local r = math.floor(nrm.fg / 65536) % 256
+      local g = math.floor(nrm.fg / 256) % 256
+      local b = nrm.fg % 256
+      local function lift(c) return math.floor(c + (255 - c) * 0.45) end
+      hl(0, "JupynvimOutputText",
+        { fg = string.format("#%02x%02x%02x", lift(r), lift(g), lift(b)) })
+    else
+      hl(0, "JupynvimOutputText", { link = "Normal" })
+    end
+  end
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
   require("jupynvim.markdown").setup_hl()
+  require("jupynvim.cellmode").setup_hl()
 end
 
 return M

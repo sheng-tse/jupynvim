@@ -11,6 +11,21 @@ local M = {}
 local Client = {}
 Client.__index = Client
 
+-- Lightweight per-method RPC counters for diagnosing what crosses the link.
+-- Always on (a table increment per call is free); :JupynvimRpcStats prints and
+-- resets. lsp_send / lsp_message are broken out by the inner JSON-RPC method so
+-- a flood shows up as e.g. "lsp_send:textDocument/documentHighlight".
+M.stats = { out = {}, inc = {} }
+local function bump(t, k) t[k] = (t[k] or 0) + 1 end
+local function stat_out(method, params)
+  if method == "lsp_send" and type(params) == "table" and type(params.message) == "table" then
+    bump(M.stats.out, "lsp_send:" .. tostring(params.message.method or "<response>"))
+  else
+    bump(M.stats.out, method)
+  end
+end
+function M.reset_stats() M.stats = { out = {}, inc = {} } end
+
 function M.spawn(opts)
   local stdin = uv.new_pipe(false)
   local stdout = uv.new_pipe(false)
@@ -45,7 +60,20 @@ function M.spawn(opts)
     env = env_list,
   }, function(code, signal)
     log.warn("jupynvim-core exited code=" .. tostring(code) .. " signal=" .. tostring(signal))
-    if c.on_exit then vim.schedule(function() c.on_exit(code) end) end
+    c.dead = true
+    c.job = nil
+    -- Fail every in-flight call NOW. Without this, a backend that dies on
+    -- spawn (e.g. ssh BatchMode refused because no auth master is up yet)
+    -- leaves callers hanging until their own timeouts (the explorer waited
+    -- 35s on a process that exited in 200ms).
+    vim.schedule(function()
+      local pending = c.pending
+      c.pending = {}
+      for _, cb in pairs(pending) do
+        pcall(cb, "backend exited (code=" .. tostring(code) .. ") - not connected? :JupynvimConnect", nil)
+      end
+      if c.on_exit then c.on_exit(code) end
+    end)
     pcall(function() if not stdin:is_closing() then stdin:close() end end)
     pcall(function() if not stdout:is_closing() then stdout:close() end end)
     pcall(function() if not stderr:is_closing() then stderr:close() end end)
@@ -114,6 +142,7 @@ function Client:_dispatch(val)
   end
   local kind = val[1]
   if kind == 1 then
+    bump(M.stats.inc, "<response>")
     local msgid, err, result = val[2], val[3], val[4]
     err = denil(err)
     result = denil(result)
@@ -122,6 +151,13 @@ function Client:_dispatch(val)
     if cb then vim.schedule(function() cb(err, result) end) end
   elseif kind == 2 then
     local method, params = val[2], val[3]
+    if method == "lsp_message" then
+      local e = (type(params) == "table" and (params[1] or params)) or {}
+      local m = type(e) == "table" and type(e.message) == "table" and e.message.method
+      bump(M.stats.inc, "lsp_message:" .. tostring(m or "<response>"))
+    else
+      bump(M.stats.inc, method)
+    end
     local h = self.handlers[method]
     if h then
       vim.schedule(function() h(params) end)
@@ -147,9 +183,18 @@ function Client:_write(payload)
 end
 
 function Client:call(method, params, cb)
+  cb = cb or function() end
+  stat_out(method, params)
+  if self.dead then
+    -- Dead transport: fail immediately instead of queueing forever.
+    vim.schedule(function()
+      cb("backend not running - :JupynvimConnect first", nil)
+    end)
+    return
+  end
   local id = self.next_id
   self.next_id = self.next_id + 1
-  self.pending[id] = cb or function() end
+  self.pending[id] = cb
   local payload = mpack.encode({ 0, id, method, { params or vim.empty_dict() } })
   self:_write(payload)
 end
@@ -167,6 +212,7 @@ function Client:call_sync(method, params, timeout_ms)
 end
 
 function Client:notify(method, params)
+  stat_out(method, params)
   local payload = mpack.encode({ 2, method, { params or vim.empty_dict() } })
   self:_write(payload)
 end

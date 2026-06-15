@@ -14,6 +14,101 @@ local M = {}
 -- Cell separator: a string very unlikely to appear in real source code.
 -- (Plain `# %%` collides with jupytext-formatted notebooks.)
 M.CELL_SEP = "# %%[jupynvim:cell-sep]"
+-- Output-region marker: lines between OUT_SEP and the next CELL_SEP are
+-- the cell's rendered output as REAL buffer text (navigable/yankable with
+-- plain vim motions), excluded from the cell source on sync/save.
+M.OUT_SEP = "# %%[jupynvim:out]"
+
+-- Plain-text lines for a cell's outputs (the buffer representation).
+local function _as_str(v)
+  if type(v) == "table" then return table.concat(v, "") end
+  if type(v) == "string" then return v end
+  return ""
+end
+
+local function _strip_ansi(s)
+  s = s:gsub("\27%[[?]?[%d;]*[a-zA-Z]", "")
+  s = s:gsub("\27%][^\27]*\27\\", "")
+  s = s:gsub("\27.", "")
+  return s
+end
+
+local function _process_cr(s)
+  s = s:gsub("\r\n", "\n")
+  local out = {}
+  for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
+    local segments = {}
+    for seg in (chunk .. "\r"):gmatch("([^\r]*)\r") do
+      table.insert(segments, seg)
+    end
+    table.insert(out, segments[#segments] or "")
+  end
+  if out[#out] == "" then table.remove(out) end
+  return table.concat(out, "\n")
+end
+
+function M.output_lines(cell)
+  local lines = {}
+  local function add_text(text)
+    for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
+      if l:find("data:image/%w+;base64,") then
+        table.insert(lines, "  [embedded image data]")
+      else
+        table.insert(lines, "  " .. l)
+      end
+    end
+  end
+  for _, o in ipairs(cell.outputs or {}) do
+    if o.output_type == "stream" then
+      add_text(_strip_ansi(_process_cr(_as_str(o.text))))
+    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
+      local data = o.data or {}
+      local has_img = data["image/png"] or data["image/gif"] or data["image/jpeg"]
+      local text = _as_str(data["text/plain"])
+      if has_img and (text == "" or text:match("^<[Ff]igure ")
+          or text:match("^<[%w._]+ object>$")
+          or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
+        text = ""
+      end
+      if text ~= "" then add_text(text) end
+    elseif o.output_type == "error" then
+      local msg = _as_str(o.ename) .. ": " .. _as_str(o.evalue)
+      if msg ~= ": " then add_text(msg) end
+      for _, tb in ipairs(o.traceback or {}) do
+        add_text(_strip_ansi(_as_str(tb)))
+      end
+    end
+  end
+  while lines[#lines] == "  " or lines[#lines] == "" do table.remove(lines) end
+  return lines
+end
+
+-- "2026-06-12T21:38:05.123Z" -> epoch seconds (fractional). Both stamps
+-- come from the same clock and format, so timezone handling cancels out
+-- in the subtraction.
+local function _iso_to_epoch(s)
+  if type(s) ~= "string" then return nil end
+  local y, mo, d, h, mi, sec, frac =
+    s:match("(%d+)%-(%d+)%-(%d+)T(%d+):(%d+):(%d+)%.?(%d*)")
+  if not y then return nil end
+  local t = os.time({
+    year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+    hour = tonumber(h), min = tonumber(mi), sec = tonumber(sec),
+  })
+  if not t then return nil end
+  return t + (tonumber("0." .. (frac ~= "" and frac or "0")) or 0)
+end
+
+-- Saved execution duration in ns from Jupyter-standard timing metadata
+-- (metadata.execution stamps written on run; survive save + reopen).
+function M.saved_duration_ns(meta)
+  local ex = type(meta) == "table" and meta.execution
+  if type(ex) ~= "table" then return nil end
+  local a = _iso_to_epoch(ex["iopub.execute_input"])
+  local b = _iso_to_epoch(ex["shell.execute_reply"])
+  if not (a and b) or b < a then return nil end
+  return (b - a) * 1e9
+end
 
 local notebooks = {}   -- buf -> Notebook
 
@@ -49,6 +144,16 @@ function M.create(buf, path, session_id, snapshot)
       execution_count = c.execution_count,
       outputs = c.outputs or {},
     })
+    -- restore the execution bar's duration from saved timing metadata,
+    -- so "[n] ✓ 0.3s" survives :wq + reopen like VSCode
+    local dur = M.saved_duration_ns(c.metadata)
+    if dur and c.cell_type == "code" and c.execution_count then
+      local failed = false
+      for _, o in ipairs(c.outputs or {}) do
+        if o.output_type == "error" then failed = true end
+      end
+      nb.cell_state[c.id] = { exec_state = "idle", duration_ns = dur, failed = failed }
+    end
   end
   if #nb.cells == 0 then
     table.insert(nb.cells, { id = "tmp_" .. tostring(buf), cell_type = "code", source = "", outputs = {} })
@@ -71,18 +176,31 @@ function Notebook:to_lines()
   local ranges = {}
   for i, c in ipairs(self.cells) do
     local start = #out
-    -- split source into lines (preserve empty cells as one empty line)
+    -- split source into lines (preserve empty cells as one empty line).
+    -- Strip exactly ONE trailing newline first: nbformat sources commonly
+    -- end with "\n" (it's the line terminator, not a blank line), and
+    -- keeping it would add a phantom empty last line to the cell that
+    -- shows a stray gutter number above the next cell (like VSCode, the
+    -- terminating newline is not its own editable line).
     local src = c.source or ""
+    if src:sub(-1) == "\n" then src = src:sub(1, -2) end
     if src == "" then
       table.insert(out, "")
     else
       for line in (src .. "\n"):gmatch("([^\n]*)\n") do
         table.insert(out, line)
       end
-      -- if source didn't end with \n, the last empty token is dropped already
     end
     local stop = #out
     table.insert(ranges, { id = c.id, start = start, stop = stop, type = c.cell_type })
+    -- outputs ride along as real (sync-excluded) text under the source
+    if c.cell_type == "code" and #(c.outputs or {}) > 0 then
+      local out_lines = M.output_lines(c)
+      if #out_lines > 0 then
+        table.insert(out, M.OUT_SEP)
+        for _, l in ipairs(out_lines) do table.insert(out, l) end
+      end
+    end
     if i < #self.cells then
       table.insert(out, M.CELL_SEP)
     end
@@ -96,10 +214,14 @@ end
 function Notebook:sync_from_buffer()
   local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
   local sources = { {} }
+  local in_out = false
   for _, l in ipairs(lines) do
     if l == M.CELL_SEP then
       table.insert(sources, {})
-    else
+      in_out = false
+    elseif l == M.OUT_SEP then
+      in_out = true  -- output region: not part of the source
+    elseif not in_out then
       table.insert(sources[#sources], l)
     end
   end
@@ -168,7 +290,9 @@ function Notebook:apply_cell_event(cell_id, ev)
   if kind == "execute_input" then
     c.execution_count = ev.execution_count
     c.outputs = {}
-    self.cell_state[cell_id] = { exec_state = "busy" }
+    -- start the execution stopwatch (drives the VSCode-style "[1] ✓ 0.1s"
+    -- bar; live elapsed while busy, frozen duration once idle)
+    self.cell_state[cell_id] = { exec_state = "busy", started_ns = vim.uv.hrtime() }
   elseif kind == "stream" then
     -- coalesce
     local last = c.outputs[#c.outputs]
@@ -196,8 +320,16 @@ function Notebook:apply_cell_event(cell_id, ev)
       output_type = "error",
       ename = ev.ename, evalue = ev.evalue, traceback = ev.traceback,
     })
+    local st = self.cell_state[cell_id]
+    if st then st.failed = true end
   elseif kind == "status" then
-    self.cell_state[cell_id] = { exec_state = ev.state }
+    -- preserve the stopwatch fields; stamp the duration when leaving busy
+    local st = self.cell_state[cell_id] or {}
+    if st.exec_state == "busy" and ev.state ~= "busy" and st.started_ns and not st.duration_ns then
+      st.duration_ns = vim.uv.hrtime() - st.started_ns
+    end
+    st.exec_state = ev.state
+    self.cell_state[cell_id] = st
   elseif kind == "execute_reply" then
     -- nothing to mutate
   elseif kind == "clear_output" then

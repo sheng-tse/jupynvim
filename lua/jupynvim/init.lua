@@ -28,8 +28,8 @@ M.config = {
   -- works for typical matplotlib plots; bump if your terminal is large and
   -- you want sharper output, or shrink for compact display. Affects the
   -- Kitty Unicode placeholder rendering. Reported as #7 by medwatt.
-  image_rows = 32,
-  image_cols = 96,
+  image_rows = 16,
+  image_cols = 48,
   -- Per-action keymap overrides. Each value is either a string (replace lhs)
   -- or `false` (disable). See lua/jupynvim/keymaps.lua for the full default
   -- list. nil/missing leaves the default in place.
@@ -53,6 +53,56 @@ M.config = {
   -- jupynvim implementing the LSP notebook protocol so ty (and future
   -- notebook-aware LSPs) can do per-cell analysis. Tracked for v0.3.
   lsp_blocklist = {},
+  -- Named remote profiles for :JupynvimOpenRemote. Each entry maps an alias
+  -- (used as `alias:relative/path` in the command) to a connection spec.
+  -- Example:
+  --   remote = {
+  --     mycluster = {
+  --       host = "user@cluster.example.edu",
+  --       core_path = "~/.local/bin/jupynvim-core",
+  --       -- ssh_args = { "-J", "jumpbox" },  -- optional ProxyJump etc
+  --       -- slurm = "interact -p GPU-shared --gpus 1 -t 02:00:00", -- v0.3.x
+  --     },
+  --   }
+  remote = {},
+  -- When an SSH session is active, these keys open the REMOTE tree explorer
+  -- instead of the local one; with no active session they fall through to the
+  -- local explorer (snacks). Set to {} to disable the hijack and bind
+  -- M.explorer / :JupynvimExplorer yourself.
+  explorer_keys = { "<leader>e", "<leader>E" },
+  -- Toggle a remote PTY terminal for the active SSH session (or the local
+  -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
+  -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
+  terminal_keys = { "<c-/>", "<c-_>" },
+  -- Toggle a SECOND remote terminal on the right (open/close like <C-/>),
+  -- for a scratch shell to run whatever you like. Set {} to disable.
+  terminal_right_keys = { "<leader>tr" },
+  -- Remote-terminal resize keys, bound buffer-local on the terminal (they
+  -- never shadow your global maps). Two sets:
+  --   resize_keys_normal: Shift+hjkl in NORMAL mode.
+  --   resize_keys:        Ctrl+arrows in NORMAL + terminal-INSERT mode (so
+  --                       you can resize without leaving insert).
+  -- Set a field to "" to unbind it.
+  terminal = {
+    resize_step = 3,
+    -- Default sizes (compact; you can resize and it now persists across
+    -- toggle). bottom_height = rows for the <C-/> terminal; side_width = cols
+    -- for a left/right terminal. nil side_width auto-computes (~40% screen, a
+    -- bit narrower). A bottom terminal only resizes height (K/J); a side
+    -- terminal only resizes width (H/L) - the other keys are no-ops.
+    bottom_height = 9,
+    side_width = nil,
+    resize_keys_normal = { taller = "K", shorter = "J", broader = "H", narrower = "L" },
+    resize_keys = { taller = "<C-Up>", shorter = "<C-Down>", broader = "<C-Left>", narrower = "<C-Right>" },
+  },
+  -- File-picker / grep keys that should target the REMOTE when SSH-connected
+  -- and otherwise replay your own local mapping (captured at bind time, so
+  -- LazyVim's local behavior is preserved). Defaults match LazyVim. Set a
+  -- group to {} to leave those keys alone.
+  pick_keys = {
+    files = { "<leader>ff", "<leader><space>" },
+    grep  = { "<leader>/", "<leader>sg" },
+  },
 }
 
 -- ---------- backend helpers ----------
@@ -68,37 +118,901 @@ local function locate_core()
   return "jupynvim-core"
 end
 
-local function ensure_client()
-  if M.client and M.client.job then return M.client end
-  local path = locate_core()
-  Log.info("spawning core: " .. path)
-  M.client = RPC.spawn({
-    cmd = { path },
+-- Path to this plugin's repo root (.../jupynvim).
+local function plugin_root()
+  local src = debug.getinfo(1, "S").source
+  if src:sub(1, 1) == "@" then src = src:sub(2) end
+  return vim.fn.fnamemodify(src, ":h:h:h")
+end
+
+-- Forward declarations: these helpers are defined further down but referenced
+-- by ensure_remote_binary (just below). Without forward-declaring, the refs
+-- would resolve to nil globals and the upload would silently no-op.
+local control_path, master_alive, ssh_base
+
+-- Map a remote `uname -m` to the musl target triple we cross-build. Covers
+-- x86 (PSC, most cloud VMs) and arm64 (AWS Graviton, GCP Tau T2A, etc.).
+local ARCH_TRIPLE = {
+  x86_64 = "x86_64-unknown-linux-musl",
+  amd64 = "x86_64-unknown-linux-musl",
+  aarch64 = "aarch64-unknown-linux-musl",
+  arm64 = "aarch64-unknown-linux-musl",
+}
+
+-- Path to the cross-compiled linux binary on THIS machine for the remote's
+-- architecture, for auto-upload. Override per-profile with `local_core`.
+-- Built by :JupynvimCrossBuild (cargo zigbuild, musl targets).
+local function locate_local_linux_core(profile, triple)
+  if profile and profile.local_core then return vim.fn.expand(profile.local_core) end
+  triple = triple or "x86_64-unknown-linux-musl"
+  return plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
+end
+
+-- Ensure the remote alias has the current backend binary at profile.core_path,
+-- uploading the locally cross-built linux binary over the SSH ControlMaster if
+-- the remote copy is missing or stale (sha256 mismatch). PSC blocks scp/sftp,
+-- so we stream the bytes via `ssh 'cat > path'`. Synchronous (must finish
+-- before the backend spawns). Best-effort: on any problem we warn and let the
+-- spawn use whatever's already on the remote.
+local function ensure_remote_binary(alias, profile)
+  if profile.transport_cmd then return end  -- custom transport: user owns deployment
+  local cp = control_path(alias)
+  if not cp or not master_alive(alias, profile) then return end
+  -- Detect the remote architecture so multi-cloud setups work: PSC/most VMs
+  -- are x86_64, AWS Graviton / GCP Tau T2A are aarch64. One RTT, once per
+  -- session (this whole function runs behind the _binary_verified guard).
+  local arch_probe = vim.system(
+    vim.list_extend(ssh_base(cp, profile.host), { "uname -m" }), {}):wait()
+  local arch = ((arch_probe.stdout or ""):match("(%S+)")) or "x86_64"
+  local triple = ARCH_TRIPLE[arch]
+  if not triple then
+    vim.notify("jupynvim: unsupported remote arch '" .. arch .. "' on " .. alias ..
+               " - deploy jupynvim-core manually (profile.core_path)", vim.log.levels.WARN)
+    return
+  end
+  local local_bin = locate_local_linux_core(profile, triple)
+  if vim.fn.filereadable(local_bin) ~= 1 then
+    vim.notify("jupynvim: no local linux binary at " .. local_bin ..
+               "\n  run :JupynvimCrossBuild (one-time: brew install zig; " ..
+               "cargo install cargo-zigbuild; rustup target add " .. triple .. ")",
+               vim.log.levels.WARN)
+    return
+  end
+  -- Same default as ad-hoc connects: a fixed home path, NOT a bare name
+  -- (non-interactive ssh exec doesn't source .profile, so ~/.local/bin is
+  -- not on PATH and a bare name fails with exit 127).
+  local core_path = profile.core_path or "~/.local/bin/jupynvim-core"
+  local local_sha = (vim.fn.system({ "shasum", "-a", "256", local_bin }) or ""):match("^(%x+)")
+  if not local_sha then return end
+  -- Make a remote-shell-expandable, quoted path: "~/.x" -> "$HOME/.x", wrapped
+  -- in double quotes so $HOME expands AND spaces survive. (shellescape uses
+  -- single quotes, which would keep ~ literal — the marker never persisted and
+  -- the upload path could be wrong.)
+  local function rp(p)
+    if p:sub(1, 2) == "~/" then p = "$HOME/" .. p:sub(3) end
+    return '"' .. p .. '"'
+  end
+  local core_q = rp(core_path)
+  local marker_q = rp(core_path .. ".sha256")
+  local dir_q = rp(core_path:match("^(.*)/[^/]+$") or ".")
+  -- Use vim.system (not vim.fn.system): the latter throws E976 "Using a Blob
+  -- as a String" when stdin contains NUL bytes, so piping the binary silently
+  -- failed inside the caller's pcall and the upload never happened. vim.system
+  -- writes raw binary stdin correctly. Returns (stdout, exit_code).
+  local function ssh(args, input)
+    local c = ssh_base(cp, profile.host)
+    for _, a in ipairs(args) do table.insert(c, a) end
+    local res = vim.system(c, input and { stdin = input } or {}):wait()
+    return res.stdout or "", res.code or -1
+  end
+  local remote_sha = (ssh({ "cat " .. marker_q .. " 2>/dev/null" })):gsub("%s+", "")
+  if remote_sha == local_sha then return end  -- already current
+
+  vim.notify("jupynvim: uploading backend to " .. alias .. " ...", vim.log.levels.INFO)
+  -- Stream the binary to a temp path, chmod, atomically move into place, then
+  -- write the sha marker. Quoted-$HOME paths expand on the remote shell.
+  local remote_cmd = string.format(
+    "mkdir -p %s && cat > %s.up && chmod +x %s.up && mv -f %s.up %s",
+    dir_q, core_q, core_q, core_q, core_q)
+  local data = io.open(local_bin, "rb")
+  if not data then return end
+  local bytes = data:read("*a"); data:close()
+  local _, code = ssh({ remote_cmd }, bytes)
+  if code ~= 0 then
+    vim.notify("jupynvim: binary upload to " .. alias .. " failed (exit " .. code .. ")", vim.log.levels.ERROR)
+    return
+  end
+  ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. marker_q })
+  vim.notify("jupynvim: backend updated on " .. alias .. " (" .. local_sha:sub(1, 12) .. ")",
+             vim.log.levels.INFO)
+end
+
+-- Multi-client storage. Keyed by alias ("local" for the default local backend,
+-- or any user-defined remote alias from M.config.remote). Lets you have a
+-- local notebook AND multiple remote notebooks open simultaneously, each
+-- routed to the right backend by their buffer's stored alias.
+M.clients = M.clients or {}
+
+-- Internal: spawn a backend process with the given cmd vector and wire it up
+-- with TTY attach + event handlers. Stores in M.clients[alias] for routing.
+local function spawn_client(cmd_vec, alias)
+  Log.info(string.format("spawning core (%s): %s", alias, table.concat(cmd_vec, " ")))
+  local client = RPC.spawn({
+    cmd = cmd_vec,
     env = vim.tbl_extend("force", vim.fn.environ(), {
       JUPYNVIM_LOG = M.config.log_level,
     }),
     on_exit = function(code)
-      M.client = nil
+      M.clients[alias] = nil
+      if alias == "local" then M.client = nil end
       vim.schedule(function()
-        vim.notify("jupynvim-core exited (code=" .. code .. ")", vim.log.levels.WARN)
+        vim.notify(string.format("jupynvim-core (%s) exited (code=%s)", alias, tostring(code)),
+                   vim.log.levels.WARN)
       end)
     end,
   })
-  -- Attach the controlling TTY for native Kitty graphics
+  -- Attach the controlling TTY for native Kitty graphics. Local mode is
+  -- attempted first; for SSH-remote backends the local-mode attempt fails
+  -- (backend is on a different host) and Image.attach auto-falls-back to
+  -- remote mode (escape_b64 round-trip).
   local tty_path = vim.env.JUPYNVIM_TTY or "/dev/tty"
-  Image.attach(M.client, tty_path)
+  Image.attach(client, tty_path)
 
-  -- Set up notification handlers
-  M.client:on("cell_event", function(args)
-    -- args is the params array: [{session_id, cell_id, event}]
+  client:on("cell_event", function(args)
     local p = args[1] or args
     M._handle_cell_event(p)
   end)
-  M.client:on("kernel_event", function(args)
+  client:on("kernel_event", function(args)
     local p = args[1] or args
     Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
   end)
+  -- Backend-initiated user-facing messages (e.g. "installing ipykernel into
+  -- this env..." during a first-use kernel start).
+  client:on("user_message", function(args)
+    local p = args[1] or args
+    local lvl = ({ info = vim.log.levels.INFO, warn = vim.log.levels.WARN,
+                   error = vim.log.levels.ERROR })[p.level or "info"] or vim.log.levels.INFO
+    vim.notify("jupynvim: " .. tostring(p.text or ""), lvl)
+  end)
+  M.clients[alias] = client
+  return client
+end
+
+-- M.client_for is defined below after the SSH helpers are declared (Lua
+-- needs `resolve` and `build_ssh_cmd` to be in scope at definition time).
+
+local function ensure_client()
+  if M.client and M.client.job then return M.client end
+  M.client = spawn_client({ locate_core() }, "local")
   return M.client
+end
+
+-- Resolve the RPC client a notebook's operations should route to. Remote
+-- notebooks (nb.alias set) go to their own backend; local ones to the
+-- shared local backend. Always use this in execute/kernel paths rather than
+-- the global M.client — otherwise, with a local AND a remote notebook open,
+-- run-cell on one routes to whichever backend was touched last.
+local function nb_client(nb)
+  if nb and nb.alias then return M.client_for(nb.alias) end
+  return ensure_client()
+end
+
+-- ControlMaster socket path for an alias. Multiplexed SSH: run
+-- `:JupynvimConnect <alias>` once to authenticate interactively (password,
+-- 2FA, etc); subsequent ssh commands reuse the socket and skip auth.
+control_path = function(alias)
+  if not alias or alias == "" then return nil end
+  local dir = vim.fn.stdpath("cache") .. "/jupynvim"
+  vim.fn.mkdir(dir, "p")
+  return dir .. "/cm-" .. alias
+end
+
+-- Resolve a possibly-function spec field. Functions can read env, prompt
+-- the user, etc. at spawn time — useful for dynamic slurm jobids, cloud
+-- tokens, anything that varies between calls.
+local function resolve(field, spec)
+  if type(field) == "function" then return field(spec) end
+  return field
+end
+
+-- ssh options that make a hung/dead connection FAIL FAST instead of blocking
+-- nvim forever. Without these, a timed-out compute node freezes the editor on
+-- the blocking vim.fn.system ssh calls (master_alive, binary upload, etc).
+-- ConnectTimeout caps the initial connect; ServerAlive* drops a silent-dead
+-- session in ~15s. Inserted into every ssh invocation.
+local SSH_TIMEOUT_OPTS = {
+  "-o", "ConnectTimeout=10",
+  "-o", "ServerAliveInterval=5",
+  "-o", "ServerAliveCountMax=3",
+}
+ssh_base = function(cp, host)
+  local c = { "ssh", "-T", "-o", "BatchMode=yes" }
+  for _, o in ipairs(SSH_TIMEOUT_OPTS) do table.insert(c, o) end
+  if cp then table.insert(c, "-o"); table.insert(c, "ControlPath=" .. cp) end
+  if host then table.insert(c, host) end
+  return c
+end
+
+-- Build an SSH command vector that spawns jupynvim-core on a remote host.
+-- spec.host: "user@host" passed to ssh (or an alias from ~/.ssh/config).
+-- spec.core_path: remote path to jupynvim-core
+--   (default "~/.local/bin/jupynvim-core", where auto-upload deploys it).
+-- spec.ssh_args: extra args appended after `ssh` (e.g. ProxyJump). Optional.
+--   Can be a function returning the array.
+-- spec.slurm: if set, prepended to the remote command. Typical:
+--   slurm = "srun -p GPU-shared --gpus 1 -t 02:00:00"
+-- Can be a function returning the string — useful for attaching to an
+-- existing job whose ID isn't known until call time:
+--   slurm = function()
+--     local jid = vim.env.PSC_JOBID or vim.fn.input("Job ID: ")
+--     return ("srun --jobid=%s --overlap --unbuffered"):format(jid)
+--   end
+local function build_ssh_cmd(spec)
+  -- -T raw stdio (msgpack), BatchMode no prompts, timeout opts fail fast,
+  -- ControlPath reuses the :JupynvimConnect master (or makes a fresh conn).
+  local cp = control_path(spec.label or spec.host)
+  local cmd = ssh_base(cp, nil)  -- host appended after ssh_args
+  local ssh_args = resolve(spec.ssh_args, spec) or {}
+  for _, a in ipairs(ssh_args) do table.insert(cmd, a) end
+  table.insert(cmd, spec.host)
+  local remote_cmd = spec.core_path or "~/.local/bin/jupynvim-core"
+  -- Environment setup before the backend starts (runs INSIDE the slurm step
+  -- when one is active, i.e. on the compute node). A login bash sources the
+  -- cluster's profile so `module` exists; the backend then inherits the
+  -- prepared PATH/env, which kernels, LSP servers, and terminals all reuse.
+  --   remote = { psc = { setup_cmd = "module load anaconda3" } }
+  local setup = resolve(spec.setup_cmd, spec)
+  if type(setup) == "string" and setup ~= "" then
+    remote_cmd = "bash -lc " .. vim.fn.shellescape(setup .. " && exec " .. remote_cmd)
+  end
+  -- Slurm wrapping: only honor (a) the :JupynvimUseJob cache or (b) a
+  -- static `slurm = "..."` string in the profile. Function-valued slurm
+  -- fields are intentionally IGNORED here — calling them from inside the
+  -- BufReadCmd that triggered the spawn would block on vim.fn.input with
+  -- no visible prompt. For dynamic per-spawn slurm, use :JupynvimUseJob.
+  local slurm
+  if M._slurm_cache and spec.label and M._slurm_cache[spec.label] then
+    slurm = M._slurm_cache[spec.label]
+  elseif type(spec.slurm) == "string" and spec.slurm ~= "" then
+    slurm = spec.slurm
+  end
+  if slurm then
+    remote_cmd = slurm .. " " .. remote_cmd
+  end
+  -- `exec` keeps backend's stdio identical to ssh's stdio (no shell wrapper
+  -- buffering in between). When slurm is involved the exec applies to srun
+  -- which itself execs the job step.
+  table.insert(cmd, "exec " .. remote_cmd)
+  return cmd
+end
+
+-- Get or spawn the client for an alias.
+--   nil / "" / "local"  → the default local backend (M.client)
+--   <other>             → looks up M.config.remote[<alias>], spawns via SSH
+--                         (or profile.transport_cmd), caches in M.clients
+-- Multiple remote aliases coexist: each gets its own subprocess + msgpack
+-- session, routed to whichever buffer's `b:jupynvim_alias` matches.
+function M.client_for(alias)
+  if alias == nil or alias == "" or alias == "local" then
+    if M.client and M.client.job then return M.client end
+    M.client = spawn_client({ locate_core() }, "local")
+    return M.client
+  end
+  local existing = M.clients[alias]
+  if existing and existing.job then return existing end
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    error("jupynvim: no remote profile '" .. alias .. "'")
+  end
+  -- Auto-upload the cross-built linux binary if the remote copy is stale.
+  -- Once per session per alias (cleared on disconnect). Synchronous so the
+  -- spawn below uses the fresh binary.
+  M._binary_verified = M._binary_verified or {}
+  if not M._binary_verified[alias] then
+    pcall(ensure_remote_binary, alias, profile)
+    M._binary_verified[alias] = true
+  end
+  -- Attach alias as `label` so build_ssh_cmd can find the cached slurm string.
+  local spec = vim.tbl_extend("force", {}, profile, { label = alias })
+  local cmd = resolve(spec.transport_cmd, spec) or build_ssh_cmd(spec)
+  return spawn_client(cmd, alias)
+end
+
+-- Point the "active" client at a remote alias's backend. Reuses the
+-- existing M.clients[alias] connection (spawned at :JupynvimConnect time)
+-- instead of tearing down and respawning. Accepts either an alias string
+-- or a spec table (the latter must include `label` or `host` for lookup).
+function M.use_remote(alias_or_spec)
+  local alias, spec
+  if type(alias_or_spec) == "string" then
+    alias = alias_or_spec
+    spec = M.config.remote and M.config.remote[alias]
+  else
+    spec = alias_or_spec
+    alias = spec.label or spec.host
+  end
+  assert(spec and spec.host, "use_remote: profile not found or missing host")
+  M._remote_spec = spec
+  -- Only treat named-profile aliases as the "active" explorer target
+  -- (one-off user@host specs aren't in M.config.remote).
+  if M.config.remote and M.config.remote[alias] then M._active_alias = alias end
+  M.client = M.client_for(alias)  -- reuse existing alive client
+  return M.client
+end
+
+-- Is the ControlMaster for this alias alive?
+master_alive = function(alias, profile)
+  local cp = control_path(alias)
+  if not cp then return false end
+  -- `ssh -O check` is local (queries the control socket), fast, no network.
+  vim.fn.system({ "ssh", "-O", "check", "-o", "ControlPath=" .. cp, profile.host })
+  return vim.v.shell_error == 0
+end
+
+-- Hosts declared in ~/.ssh/config (incl. Include files): the natural home of
+-- AWS/GCP boxes (`gcloud compute config-ssh`, ProxyCommand/IAP entries, EC2
+-- aliases). Wildcard patterns are skipped. Best-effort parse.
+-- Parse ~/.ssh/config (incl. Include files) into { {name, hostname}, ... }.
+-- hostname is the block's HostName when present (used for deduping aliases
+-- that point at the same machine).
+local function ssh_config_hosts_full()
+  local entries, seen = {}, {}
+  local function parse(path, depth)
+    if depth > 3 then return end
+    local f = io.open(path, "r")
+    if not f then return end
+    local block = {}  -- entries from the current Host line, awaiting HostName
+    for line in f:lines() do
+      local inc = line:match("^%s*[Ii]nclude%s+(.+)$")
+      local hs = not inc and line:match("^%s*[Hh]ost%s+(.+)$") or nil
+      local hn = not inc and not hs and line:match("^%s*[Hh]ost[Nn]ame%s+(%S+)") or nil
+      if inc then
+        for _, pat in ipairs(vim.split(inc, "%s+", { trimempty = true })) do
+          if not pat:match("^[/~]") then pat = "~/.ssh/" .. pat end
+          for _, p in ipairs(vim.fn.glob(vim.fn.expand(pat), true, true)) do
+            parse(p, depth + 1)
+          end
+        end
+      elseif hs then
+        block = {}
+        for _, h in ipairs(vim.split(hs, "%s+", { trimempty = true })) do
+          if not h:match("[%*%?!]") and not seen[h] then
+            seen[h] = true
+            local e = { name = h, hostname = h }
+            table.insert(entries, e)
+            table.insert(block, e)
+          end
+        end
+      elseif hn then
+        for _, e in ipairs(block) do e.hostname = hn end
+      end
+    end
+    f:close()
+  end
+  parse(vim.fn.expand("~/.ssh/config"), 0)
+  table.sort(entries, function(a, b)
+    if #a.name ~= #b.name then return #a.name < #b.name end  -- shortest alias first
+    return a.name < b.name
+  end)
+  return entries
+end
+
+local function ssh_config_hosts()
+  local names = {}
+  for _, e in ipairs(ssh_config_hosts_full()) do table.insert(names, e.name) end
+  table.sort(names)
+  return names
+end
+M._ssh_config_hosts = ssh_config_hosts  -- exposed for the :JupynvimConnect completion
+
+-- Hosts nobody means as a jupynvim target (git hosting etc) — hidden from the
+-- chooser, still accepted if typed explicitly.
+local SSH_HOST_NOISE = {
+  ["github.com"] = true, ["ssh.github.com"] = true, ["gitlab.com"] = true,
+  ["bitbucket.org"] = true, ["codeberg.org"] = true, ["aur.archlinux.org"] = true,
+}
+
+-- Interactive connection chooser: configured jupynvim profiles, then hosts
+-- from ~/.ssh/config, then "new connection". So AWS + GCP + PSC (and any mix
+-- of accounts) coexist: each is one entry; pick or type one on the fly.
+-- Build the chooser entries. Profiles first, then ssh-config hosts with the
+-- noise removed: git-hosting hosts hidden, aliases pointing at a machine a
+-- profile already covers hidden, and multiple aliases for the SAME machine
+-- (e.g. `gcp` + gcloud's generated `instance-...` entry) collapsed to the
+-- shortest one. Keeps the list to one entry per real target.
+-- Filtered, deduped connect targets: { {kind="profile"|"ssh", name=, host=} }.
+-- Shared by the chooser AND the :JupynvimConnect tab-completion so both show
+-- one entry per real machine.
+function M._connect_targets()
+  local out = {}
+  local profile_hostnames = {}
+  local function strip_user(h) return (tostring(h):gsub("^[^@]+@", "")) end
+  local names = {}
+  for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+  table.sort(names)
+  for _, name in ipairs(names) do
+    local prof = M.config.remote[name]
+    profile_hostnames[strip_user(prof.host or "")] = true
+    table.insert(out, { kind = "profile", name = name, host = prof.host })
+  end
+  local seen_machine = {}
+  for _, e in ipairs(ssh_config_hosts_full()) do  -- shortest-alias-first order
+    local machine = e.hostname or e.name
+    if not SSH_HOST_NOISE[e.name]
+       and not (M.config.remote or {})[e.name]
+       and not profile_hostnames[e.name]
+       and not profile_hostnames[machine]
+       and not seen_machine[machine] then
+      seen_machine[machine] = true
+      table.insert(out, { kind = "ssh", name = e.name })
+    end
+  end
+  return out
+end
+
+function M._connect_items()
+  local items = {}
+  for _, t in ipairs(M._connect_targets()) do
+    if t.kind == "profile" then
+      table.insert(items, {
+        label = t.name .. "  (" .. (t.host or "?") .. ")",
+        run = function() M.connect(t.name) end,
+      })
+    else
+      table.insert(items, {
+        label = "ssh: " .. t.name .. "  (~/.ssh/config)",
+        run = function() M.connect_adhoc(t.name) end,
+      })
+    end
+  end
+  table.insert(items, {
+    label = "new connection (user@host) ...",
+    run = function()
+      vim.ui.input({ prompt = "user@host: " }, function(host)
+        if host and host ~= "" then M.connect_adhoc(vim.trim(host)) end
+      end)
+    end,
+  })
+  return items
+end
+
+function M.connect_choose()
+  local items = M._connect_items()
+  vim.ui.select(items, {
+    prompt = "jupynvim: connect to",
+    format_item = function(it) return it.label end,
+  }, function(choice)
+    if choice then choice.run() end
+  end)
+end
+
+-- Connect to an arbitrary user@host with no pre-declared profile. Creates a
+-- session-scoped profile (alias = sanitized host string) with the default
+-- core_path; everything (auto binary upload, explorer, LSP, terminal) works
+-- the same. Add it under config.remote to make it permanent.
+function M.connect_adhoc(host)
+  local alias = host:gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+  if alias == "" then alias = "adhoc" end
+  M.config.remote = M.config.remote or {}
+  if not M.config.remote[alias] then
+    M.config.remote[alias] = { host = host, core_path = "~/.local/bin/jupynvim-core" }
+    vim.notify(("jupynvim: session profile '%s' -> %s\n  add to config.remote to persist"):format(alias, host),
+      vim.log.levels.INFO)
+  end
+  M.connect(alias)
+end
+
+-- Open an interactive SSH ControlMaster session in a terminal split. After
+-- you authenticate (password, 2FA, key passphrase), the connection persists
+-- as a multiplexed socket. Subsequent :JupynvimOpenRemote calls reuse it
+-- without prompting. Similar to VSCode's "Connect to Host" flow.
+--
+-- Idempotent: if master is already alive, returns early. If a stale socket
+-- file exists (master died but file remained), cleans up before reconnecting.
+function M.connect(alias)
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
+    return
+  end
+  -- Connect always spawns the backend on the login node (no slurm wrap).
+  -- File ops, browsing, editing, search, terminal all happen on cheap CPU
+  -- resources and don't need a compute allocation. Use :JupynvimUseJob
+  -- separately when you want subsequent backend spawns to attach to a
+  -- specific slurm job (for kernel execution on GPU/compute nodes).
+  local cp = control_path(alias)
+  if master_alive(alias, profile) then
+    -- Already connected. Restart the backend so an explicit :JupynvimConnect
+    -- always picks up a fresh binary: stop the (possibly stale) backend
+    -- process and clear the per-session upload guard, so the next client_for
+    -- re-verifies/uploads and respawns. The ControlMaster (auth) stays up, so
+    -- no re-auth. Without this, a backend started before a rebuild keeps
+    -- serving old code ("unknown method 'run'").
+    local existing = M.clients[alias]
+    if existing then pcall(function() existing:stop() end); M.clients[alias] = nil end
+    if M._binary_verified then M._binary_verified[alias] = nil end
+    M.remote_browse(alias)
+    return
+  end
+  -- Clean up stale socket file if any (master died without cleanup)
+  vim.fn.system({ "rm", "-f", cp })
+
+  -- -N: no remote command, just hold the connection open for multiplexing.
+  -- ControlMaster=yes: create the socket. ControlPersist=4h: keep it for 4
+  -- hours after the foreground exits (ssh detaches to background after auth).
+  local args = { "ssh", "-N",
+                 "-o", "ControlMaster=yes",
+                 "-o", "ControlPath=" .. cp,
+                 "-o", "ControlPersist=4h" }
+  local ssh_args = resolve(profile.ssh_args, profile) or {}
+  for _, a in ipairs(ssh_args) do table.insert(args, a) end
+  table.insert(args, profile.host)
+  local term_buf
+  vim.cmd("botright 15split")
+  vim.cmd("enew")
+  term_buf = vim.api.nvim_get_current_buf()
+  vim.bo[term_buf].buflisted = false  -- keep the auth terminal out of the bufferline
+  vim.fn.termopen(args, {
+    on_exit = function(_, code)
+      vim.schedule(function()
+        -- Always close the auth terminal on clean exit (code 0). With
+        -- ControlPersist, the ssh foreground exits as soon as the master
+        -- forks to background — that's the success signal. If auth
+        -- actually failed, code != 0 and we leave the terminal up.
+        if code == 0 then
+          if term_buf and vim.api.nvim_buf_is_valid(term_buf) then
+            -- Close the auth split's WINDOW first: deleting only the buffer
+            -- leaves the window open on a fresh [No Name] buffer (the stray
+            -- bottom strip after login).
+            for _, w in ipairs(vim.api.nvim_list_wins()) do
+              if vim.api.nvim_win_get_buf(w) == term_buf
+                 and #vim.api.nvim_list_wins() > 1 then
+                pcall(vim.api.nvim_win_close, w, true)
+              end
+            end
+            pcall(vim.api.nvim_buf_delete, term_buf, { force = true })
+          end
+          -- Poll briefly for master to appear (FSEvent race after fork).
+          local deadline = vim.loop.hrtime() + 3e9  -- 3 seconds
+          local function check()
+            if master_alive(alias, profile) then
+              vim.notify("jupynvim: " .. alias .. " connected", vim.log.levels.INFO)
+              M.remote_browse(alias)
+            elseif vim.loop.hrtime() < deadline then
+              vim.defer_fn(check, 200)
+            else
+              vim.notify("jupynvim: " .. alias .. " auth exited 0 but master not detected",
+                         vim.log.levels.WARN)
+            end
+          end
+          check()
+        else
+          vim.notify("jupynvim: " .. alias .. " connect failed (code=" .. code .. ")",
+                     vim.log.levels.WARN)
+        end
+      end)
+    end,
+  })
+  -- Drop straight into terminal-insert mode so the password prompt is
+  -- immediately typeable. Without this the split is in NORMAL mode: keys do
+  -- vim motions, nothing reaches ssh, and the prompt looks frozen.
+  vim.cmd("startinsert")
+  vim.notify("jupynvim: authenticate " .. alias .. " in the terminal split below"
+             .. " (type password; press i if you clicked away)",
+             vim.log.levels.INFO)
+end
+
+-- Explicitly route future backend spawns for an alias through an existing
+-- slurm job (so kernels land on the compute node you've already allocated).
+-- Without this, backends spawn on the login node.
+--
+--   :JupynvimUseJob psc 40962291  -- attach to running job
+--   :JupynvimUseJob psc           -- clear; back to login node
+--
+-- Takes effect on the NEXT backend spawn for that alias. If a backend is
+-- already running, run :JupynvimReconnect <alias> (TODO) or restart nvim.
+function M.use_job(alias, jobid)
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias) .. "'", vim.log.levels.ERROR)
+    return
+  end
+  M._slurm_cache = M._slurm_cache or {}
+  if not jobid or jobid == "" then
+    M._slurm_cache[alias] = nil
+  else
+    -- --unbuffered is critical: without it srun block-buffers the task's
+    -- stdout when it's a pipe (our case — no TTY), so the backend's
+    -- length-prefixed msgpack response frames sit in srun's buffer and
+    -- never reach the frontend → every RPC times out. --unbuffered
+    -- forwards task output immediately.
+    M._slurm_cache[alias] = string.format("srun --jobid=%s --overlap --unbuffered", jobid)
+  end
+  local desc = jobid and ("job " .. jobid) or "login node (no slurm)"
+
+  -- Tear down any existing backend for this alias so the new slurm wrap takes effect.
+  local existing = M.clients[alias]
+  if existing and existing.job then
+    pcall(function() existing:stop() end)
+    M.clients[alias] = nil
+    if M.client == existing then M.client = nil end
+  end
+
+  -- If there's no live SSH master, do a full connect (auth terminal + spawn);
+  -- otherwise just spawn the backend through the existing master.
+  if not master_alive(alias, profile) then
+    M.connect(alias)  -- async: prompts auth, opens browser when ready
+    vim.notify(string.format("jupynvim: %s -> %s (connecting)", alias, desc),
+               vim.log.levels.INFO)
+    return
+  end
+
+  -- Master is alive: spawn backend and refresh browser
+  local ok = pcall(function() M.client_for(alias) end)
+  if not ok then
+    vim.notify("jupynvim: " .. alias .. " respawn failed; try :JupynvimConnect " .. alias,
+               vim.log.levels.WARN)
+    return
+  end
+  -- New backend → the cached tree is stale; drop it and (re)open the explorer.
+  require("jupynvim.remote_explorer").reset(alias)
+  M._active_alias = alias
+  M.remote_browse(alias)
+  vim.notify(string.format("jupynvim: %s -> %s", alias, desc), vim.log.levels.INFO)
+end
+
+-- Tear down the ControlMaster socket for an alias, forcing the next
+-- :JupynvimOpenRemote to re-authenticate.
+function M.disconnect(alias)
+  local profile = M.config.remote and M.config.remote[alias]
+  -- ssh-config aliases (ad-hoc connects) have no declared profile, and the
+  -- control master survives nvim restarts (ControlPersist), so disconnect
+  -- must work without having connected THIS session: the alias itself is a
+  -- valid ssh destination.
+  if not profile then
+    profile = { host = alias }
+  end
+  local cp = control_path(alias)
+  if not cp then return end
+  vim.fn.system({ "ssh", "-O", "exit", "-o", "ControlPath=" .. cp, profile.host })
+  vim.fn.system({ "rm", "-f", cp })  -- always clean up file even if -O exit failed
+  -- Drop the backend client + cached explorer tree; revert explorer to local.
+  local cl = M.clients[alias]
+  if cl then pcall(function() cl:stop() end); M.clients[alias] = nil end
+  pcall(function() require("jupynvim.remote_explorer").reset(alias) end)
+  if M._active_alias == alias then M._active_alias = nil end
+  if M._binary_verified then M._binary_verified[alias] = nil end
+  vim.notify("jupynvim: " .. alias .. " control socket closed")
+end
+
+-- Open the tree-style remote file explorer (lua/jupynvim/remote_explorer.lua)
+-- for `alias`, rooted at `subpath` (default remote $HOME). snacks/LazyVim-style
+-- sidebar: icons + indented tree, <CR>/l expand-or-open, h collapse, a/d/r
+-- create/delete/rename, R refresh, q close. Notebooks open via the notebook
+-- flow; other files via the jupynvim:// URI scheme.
+function M.remote_browse(alias, subpath)
+  local profile = M.config.remote and M.config.remote[alias]
+  if not profile then
+    vim.notify("jupynvim: no remote profile '" .. tostring(alias or "?") .. "'", vim.log.levels.ERROR)
+    return
+  end
+  -- Custom transports (transport_cmd) don't use an SSH ControlMaster; the
+  -- master check only applies to plain ssh profiles.
+  if not profile.transport_cmd and not master_alive(alias, profile) then
+    vim.notify("jupynvim: " .. alias .. " not connected; run :JupynvimConnect " .. alias .. " first",
+               vim.log.levels.WARN)
+    return
+  end
+  M._active_alias = alias
+  require("jupynvim.remote_explorer").open(alias, (subpath ~= nil and subpath ~= "") and subpath or "~")
+end
+
+-- Re-render every visible notebook's frames. Toggling the explorer or a
+-- terminal (local snacks float OR remote split) changes the layout, but
+-- those toggles settle ASYNC and don't reliably fire a resize event the
+-- notebook sees, so the width-sized frames go stale until something else
+-- re-renders (the user found `i`/`a` or a second toggle "fixes" it — both
+-- just trigger a refresh). So every toggle dispatcher calls this. We fire
+-- once on the next tick (synchronous-settle case, before the redraw) and
+-- once after a short delay (async-settle backstop). Render.refresh clears
+-- and redraws in one pass and re-resolves the notebook's current window,
+-- so running it twice never shows a half-state.
+function M._refresh_notebooks_soon()
+  local Render = require("jupynvim.render")
+  local function each(fn)
+    for buf, nb in pairs(Notebook.all()) do
+      if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
+        fn(nb, vim.fn.bufwinid(buf))
+      end
+    end
+  end
+  -- The frame extmarks are already correct after a toggle (verified via
+  -- :JupynvimDebugFrames). The real problem is the SCREEN: closing a
+  -- terminal float does a PARTIAL repaint that leaves the notebook's cells
+  -- stale. The cellmode WinNew/WinClosed handler re-renders + redraws
+  -- regardless of how the key was routed; this is a dispatcher-side backstop
+  -- for the toggles that DO go through here. No SYNCHRONOUS render: snacks
+  -- settles its window async, so an immediate render shows the pre-settle
+  -- layout for a tick (the "jump" you saw). Render on the next tick
+  -- (settled), then redraw to flush the stale screen. Plain redraw, no flash.
+  vim.schedule(function()
+    each(function(nb, win) pcall(Render.refresh_sync, nb, win) end)
+    pcall(vim.cmd, "redraw")
+  end)
+  vim.defer_fn(function() pcall(vim.cmd, "redraw") end, 90)
+end
+
+-- <leader>e dispatcher / TOGGLE. When an SSH session is active, toggle the
+-- REMOTE tree explorer (open if hidden, close if shown); otherwise fall
+-- through to the local explorer (snacks). Bound to explorer_keys in M.setup.
+function M.explorer()
+  local alias = M._active_alias
+  if alias and M.clients[alias] and M.clients[alias].job then
+    local re = require("jupynvim.remote_explorer")
+    local win = re.visible_win(alias)
+    if win and #vim.api.nvim_list_wins() > 1 then
+      -- toggle: hide it (picker-based explorer needs picker:close, not win_close)
+      if re.close then pcall(re.close, alias) else pcall(vim.api.nvim_win_close, win, false) end
+    else
+      M.remote_browse(alias)
+    end
+    M._refresh_notebooks_soon()
+    return
+  end
+  -- Local fallback: snacks explorer, else netrw.
+  local ok = pcall(function() require("snacks").explorer() end)
+  if not ok then pcall(vim.cmd, "Lexplore") end
+  M._refresh_notebooks_soon()
+end
+
+-- Terminal dispatcher / TOGGLE. SSH-connected → toggle a REMOTE PTY terminal
+-- for the active alias (summon/dismiss from anywhere); otherwise fall back to
+-- the local terminal (snacks, else :terminal). Bound to terminal_keys in setup.
+function M.terminal()
+  local alias = M._active_alias
+  if alias and M.clients[alias] and M.clients[alias].job then
+    require("jupynvim.remote_term").toggle(alias)
+    M._refresh_notebooks_soon()
+    return
+  end
+  local ok = pcall(function() require("snacks").terminal() end)
+  if not ok then pcall(vim.cmd, "botright split | terminal") end
+  M._refresh_notebooks_soon()
+end
+
+-- Toggle a SECOND remote terminal on the right (independent of the <C-/>
+-- bottom one). For a scratch/extra shell. Bound to terminal_right_keys.
+function M.terminal_right()
+  local alias = M._active_alias
+  if alias and M.clients[alias] and M.clients[alias].job then
+    require("jupynvim.remote_term").toggle(alias, { split = "right" })
+    M._refresh_notebooks_soon()
+  else
+    vim.notify("jupynvim: no active SSH session", vim.log.levels.WARN)
+  end
+end
+
+-- True when an SSH session is the active context (so file/search keys should
+-- target the remote). Otherwise callers fall back to the user's local mapping.
+function M.remote_active()
+  local a = M._active_alias
+  return a and M.clients[a] and M.clients[a].job and true or false
+end
+
+-- Find-files dispatcher: remote picker when SSH-connected, else the user's own
+-- local mapping (captured at bind time). Bound to pick_keys.files.
+function M.find_files()
+  if M.remote_active() then
+    require("jupynvim.remote_pick").files(M._active_alias)
+    return true
+  end
+  return false
+end
+
+-- Grep dispatcher: remote grep when SSH-connected, else local mapping.
+function M.grep_pick()
+  if M.remote_active() then
+    require("jupynvim.remote_pick").grep(M._active_alias)
+    return true
+  end
+  return false
+end
+
+-- Switch back to a local backend. Clears the active-remote alias so
+-- <leader>e goes back to the local (snacks) explorer.
+function M.use_local()
+  M._active_alias = nil
+  if M.client and not M._remote_spec then return M.client end
+  if M.client then
+    pcall(function() M.client:stop() end)
+    M.client = nil
+  end
+  M._remote_spec = nil
+  local c = ensure_client()
+  -- spawning the local core re-attaches kitty graphics with raw tty writes;
+  -- if those scroll the screen, nvim's grid is visually shifted (stale rows
+  -- on top, dead rows below the statusline). Repaint the whole screen once
+  -- the attach has settled.
+  vim.defer_fn(function() pcall(vim.cmd, "mode") end, 150)
+  vim.defer_fn(function() pcall(vim.cmd, "mode") end, 500)
+  return c
+end
+
+-- Parse a jupynvim:// URI into (alias, path). Returns nil on no match.
+--   jupynvim://psc/home/user/foo.py  →  "psc", "/home/user/foo.py"
+--   jupynvim://psc/~/foo.py                →  "psc", "/~/foo.py"  (server expands ~)
+function M._parse_uri(uri)
+  local alias, path = uri:match("^jupynvim://([^/]+)(/.*)$")
+  if alias and path then return alias, path end
+  return nil
+end
+
+-- Parse a remote-open spec.
+--   "alias:relative/or/abs/path"   uses M.config.remote[alias]
+--   "user@host:/abs/path"          one-off; alias name defaults to user@host
+-- Returns { host, core_path, path, ssh_args, slurm } or nil + err.
+function M._parse_remote_spec(s)
+  if type(s) ~= "string" or s == "" then return nil, "empty spec" end
+  local prefix, path = s:match("^([^:]+):(.+)$")
+  if not prefix or not path then return nil, "expected `alias:path` or `user@host:/path`" end
+  local profile = M.config.remote and M.config.remote[prefix]
+  if profile then
+    -- Copy the whole profile so any field (transport_cmd, custom keys) flows
+    -- through to use_remote/build_ssh_cmd unchanged.
+    local spec = vim.tbl_deep_extend("force", {}, profile)
+    spec.host = profile.host or prefix
+    spec.path = path
+    spec.label = prefix
+    return spec
+  end
+  -- Bare user@host:/path (no configured alias)
+  return { host = prefix, path = path, label = prefix }
+end
+
+-- Debounced rewrite of cells' output REGIONS (real buffer lines) after
+-- kernel events. Bottom-up so line numbers stay valid across edits.
+local _out_sync = {}  -- buf -> { timer, ids }
+function M._queue_output_sync(buf, nb, cell_id)
+  local q = _out_sync[buf]
+  if not q then q = { ids = {} }; _out_sync[buf] = q end
+  q.ids[cell_id] = true
+  if q.timer then return end
+  q.timer = vim.uv.new_timer()
+  q.timer:start(150, 0, vim.schedule_wrap(function()
+    if q.timer then q.timer:stop(); q.timer:close(); q.timer = nil end
+    local ids = q.ids
+    q.ids = {}
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    M._apply_output_sync(nb, ids)
+  end))
+end
+
+function M._apply_output_sync(nb, ids)
+  local buf = nb.buf
+  local CellMode = require("jupynvim.cellmode")
+  local was_modifiable = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
+  local ranges = CellMode.ranges(buf)
+  for i = #nb.cells, 1, -1 do
+    local cell = nb.cells[i]
+    if cell and ids[cell.id] and ranges[i] then
+      local r = ranges[i]
+      local rep = {}
+      if cell.cell_type == "code" then
+        local out_lines = Notebook.output_lines(cell)
+        if #out_lines > 0 then
+          rep = { Notebook.OUT_SEP }
+          vim.list_extend(rep, out_lines)
+        end
+      end
+      local s0 = r.out_sep or r.stop
+      local e0 = r.out_stop or s0
+      pcall(vim.api.nvim_buf_set_lines, buf, s0, e0, false, rep)
+    end
+  end
+  vim.bo[buf].modifiable = not CellMode.is_command(buf) and was_modifiable or false
+  if not CellMode.is_command(buf) then vim.bo[buf].modifiable = true end
+  Render.refresh(nb, vim.fn.bufwinid(buf))
 end
 
 function M._handle_cell_event(p)
@@ -122,6 +1036,7 @@ function M._handle_cell_event(p)
             vim.bo[buf].modified = true
           end
         end)
+        M._queue_output_sync(buf, nb, p.cell_id)
       end
       -- EAGER image transmission — must use the SAME renderer as the active
       -- config so the cache entry matches what render_cell expects.
@@ -164,19 +1079,21 @@ end
 
 M._opening = M._opening or {}
 
--- Walk up from `start_dir` looking for a `.venv/bin/python` (or
--- `.venv/Scripts/python.exe` on Windows). Return the python path if the venv
--- exists AND ipykernel is importable from it. nil otherwise.
+-- Walk up from `start_dir` looking for a project venv python under `.venv`,
+-- `venv`, or `env` (`Scripts\python.exe` on Windows). Return the python path
+-- if the venv exists AND ipykernel is importable from it. nil otherwise.
 local function find_local_venv_python(start_dir)
   local is_win = package.config:sub(1, 1) == "\\"
-  local rel = is_win and ".venv\\Scripts\\python.exe" or ".venv/bin/python"
+  local bin = is_win and "Scripts\\python.exe" or "bin/python"
   local dir = start_dir
   for _ = 1, 10 do
-    local candidate = dir .. "/" .. rel
-    if vim.fn.executable(candidate) == 1 then
-      vim.fn.system({ candidate, "-c", "import ipykernel" })
-      if vim.v.shell_error == 0 then return candidate end
-      return nil  -- venv exists but no ipykernel - don't fall back silently
+    for _, name in ipairs({ ".venv", "venv", "env" }) do
+      local candidate = dir .. "/" .. name .. "/" .. bin
+      if vim.fn.executable(candidate) == 1 then
+        vim.fn.system({ candidate, "-c", "import ipykernel" })
+        if vim.v.shell_error == 0 then return candidate end
+        return nil  -- venv exists but no ipykernel - don't fall back silently
+      end
     end
     local parent = vim.fn.fnamemodify(dir, ":h")
     if parent == dir then break end
@@ -188,7 +1105,14 @@ M._find_local_venv_python = find_local_venv_python
 
 function M.open(path, opts)
   opts = opts or {}
-  ensure_client()
+  -- Route through the right client. opts.alias picks a specific remote
+  -- backend (set by the URI handler / file browser for remote notebooks);
+  -- without it, fall back to the local backend.
+  if opts.alias then
+    M.client = M.client_for(opts.alias)
+  else
+    ensure_client()
+  end
   local abs = vim.fn.fnamemodify(path, ":p")
   -- Clear stray direct placements left by file explorers (snacks.image
   -- previews .ipynb files and the placement survives past the explorer
@@ -204,11 +1128,36 @@ function M.open(path, opts)
   if existing_buf > 0 then
     local existing_nb = Notebook.get(existing_buf)
     if existing_nb and not opts.force then
-      vim.api.nvim_set_current_buf(existing_buf)
-      Render.refresh(existing_nb, vim.api.nvim_get_current_win())
+      -- Already open: if a window already shows it, FOCUS that window (like
+      -- <C-w>w to it) rather than re-displaying the buffer in the current
+      -- window. Re-displaying (e.g. when the explorer opens the same file)
+      -- duplicated the notebook into the explorer's pane and forced a stale
+      -- re-render. Only fall back to set_current_buf when no window shows it.
+      local wins = vim.fn.win_findbuf(existing_buf)
+      if #wins > 0 then
+        pcall(vim.api.nvim_set_current_win, wins[1])
+      else
+        vim.api.nvim_set_current_buf(existing_buf)
+      end
+      Render.refresh(existing_nb, vim.fn.bufwinid(existing_buf))
       return existing_buf
     end
-    -- :e! / force reload: tear down old session before creating new one
+  end
+
+  -- Idempotency #2: re-entrancy guard. The first M.open is mid-flight
+  -- (likely blocked in call_sync's vim.wait). A second BufReadCmd that fires
+  -- during the wait must NOT touch the notebook the first call is building
+  -- (including the force-tear-down path below — that would wipe the new nb
+  -- before the outer call finishes).
+  if M._opening[abs] then
+    return existing_buf > 0 and existing_buf or nil
+  end
+  M._opening[abs] = true
+
+  -- Force reload: tear down old session BEFORE creating new one. Safe to do
+  -- now that the re-entrancy guard is set.
+  if existing_buf > 0 then
+    local existing_nb = Notebook.get(existing_buf)
     if existing_nb and opts.force then
       pcall(function()
         ensure_client():call("close", { session_id = existing_nb.session_id }, function() end)
@@ -218,14 +1167,11 @@ function M.open(path, opts)
     end
   end
 
-  -- Idempotency #2: re-entrancy guard. Two BufReadCmds for the same path race
-  -- on `call_sync`; only the first should proceed.
-  if M._opening[abs] then
-    return existing_buf > 0 and existing_buf or nil
-  end
-  M._opening[abs] = true
-
-  local err, result = M.client:call_sync("open", { path = abs }, 5000)
+  -- Remote backends (SSH-spawned) take longer to first-respond because of
+  -- ssh connect + scheduler attach (srun, etc) + binary startup. Bump to 30s
+  -- so a slow PSC node doesn't time out before jupynvim-core is ready.
+  local open_timeout = M._remote_spec and 30000 or 5000
+  local err, result = M.client:call_sync("open", { path = abs }, open_timeout)
   if err then
     M._opening[abs] = nil
     vim.notify("jupynvim open failed: " .. tostring(err), vim.log.levels.ERROR)
@@ -266,11 +1212,17 @@ function M.open(path, opts)
   -- pre-edit history without affecting future edits.
   do
     local prev = vim.bo[buf].undolevels
+    -- Force modifiable for the no-op insert: after :bd + reopen the reused
+    -- buffer can come back with 'modifiable' off (cellmode leaves it off in
+    -- command mode), which made this normal! a<BS> throw E21.
+    local prev_mod = vim.bo[buf].modifiable
+    vim.bo[buf].modifiable = true
     vim.bo[buf].undolevels = -1
     vim.api.nvim_buf_call(buf, function()
       vim.cmd('exe "normal! a \\<BS>\\<Esc>"')
     end)
     vim.bo[buf].undolevels = prev
+    vim.bo[buf].modifiable = prev_mod
     -- The no-op insert/backspace bumps `modified` even though buffer text is
     -- unchanged. Reset it so :q doesn't prompt to save on a freshly-opened
     -- file the user hasn't actually edited.
@@ -290,6 +1242,7 @@ function M.open(path, opts)
   end)
   M._attach_autocmds(buf)
   Keymaps.attach(buf, M)
+  require("jupynvim.cellmode").attach(buf, M)
 
   -- Display the buffer FIRST so we have a real window for the synchronous
   -- option-setting that follows. Without this, win_findbuf is empty and
@@ -297,6 +1250,7 @@ function M.open(path, opts)
   -- the literal "# %%[jupynvim:cell-sep]" markers flash visible on open.
   vim.api.nvim_set_current_buf(buf)
   local cur_win = vim.api.nvim_get_current_win()
+  M._disable_indent_guides(buf)
 
   -- Force a single window for the notebook buffer. Other plugins (LazyVim
   -- defaults, snacks.dashboard, neo-tree, etc.) sometimes auto-split on
@@ -315,7 +1269,11 @@ function M.open(path, opts)
   -- very first redraw. Doing this in a scheduled callback caused a one-frame
   -- flash where the separator markers were visible.
   vim.api.nvim_win_call(cur_win, function()
-    vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+    -- nolist: a global `set list` (LazyVim sets it) renders the trailing
+    -- spaces on blank output lines (the "  " from OUT_INDENT) as listchars
+    -- `trail` dashes, which showed as stray gray "—" between output blocks.
+    -- A rendered notebook view shouldn't show whitespace markers anyway.
+    vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
     vim.cmd([[setlocal showbreak=\ ]])
   end)
   -- Cursor to top of the rendered notebook. The BufReadCmd pre-populates
@@ -351,6 +1309,13 @@ function M.open(path, opts)
       pcall(function() vim.bo[buf].indentexpr = "python#GetIndent(v:lnum)" end)
     end
   end)
+  -- Re-scope treesitter NOW. _populate_buffer already called this, but that
+  -- ran before the filetype above attached the parser, so it was a no-op and
+  -- treesitter would parse the whole buffer (markdown + separators + code)
+  -- unscoped — which throws the Python parser into error recovery and the
+  -- cells render plain. Re-run it here, after the parser exists, so code
+  -- cells are highlighted even if no edit (which also re-syncs) ever happens.
+  pcall(M._sync_treesitter_ranges, nb)
 
   -- Look up the kernel python BEFORE LSP attaches so we can inject
   -- settings.python.pythonPath + analysis.extraPaths into the config.
@@ -361,37 +1326,49 @@ function M.open(path, opts)
   -- once to harvest its real site-packages directories.
   local py_path
   local extra_paths = {}
-  -- Auto-detected .venv takes precedence over registered kernelspec, since
-  -- the user effectively asked for project-local environment by putting the
-  -- notebook next to one. Falls through to kernelspec lookup otherwise.
-  if M.config.auto_venv ~= false then
-    local nb_dir = vim.fn.fnamemodify(abs, ":h")
-    py_path = find_local_venv_python(nb_dir)
-  end
-  if not py_path then
-    local kspec_name = (snap.metadata and snap.metadata.kernelspec and snap.metadata.kernelspec.name) or "python3"
-    local kerr, kres = M.client:call_sync("list_kernels", {}, 2000)
-    if not kerr and type(kres) == "table" then
-      for _, k in ipairs(kres) do
-        if k.name == kspec_name and k.argv and k.argv[1] then
-          py_path = k.argv[1]
-          break
+  local is_remote = opts.alias ~= nil
+  -- Local-only: .venv discovery walks the local filesystem and the python
+  -- introspection runs locally. For remote notebooks the kernel lives on the
+  -- remote backend; the LSP work that wants sys.path won't make sense anyway
+  -- until we implement Phase 6 (remote LSP relay). Skip both for now.
+  if not is_remote then
+    if M.config.auto_venv ~= false then
+      local nb_dir = vim.fn.fnamemodify(abs, ":h")
+      py_path = find_local_venv_python(nb_dir)
+    end
+    if not py_path then
+      local kspec_name = (snap.metadata and snap.metadata.kernelspec and snap.metadata.kernelspec.name) or "python3"
+      local kerr, kres = M.client:call_sync("list_kernels", {}, 2000)
+      if not kerr and type(kres) == "table" then
+        for _, k in ipairs(kres) do
+          if k.name == kspec_name and k.argv and k.argv[1] then
+            py_path = k.argv[1]
+            break
+          end
         end
       end
     end
-  end
-  if py_path then
-    local sys_path = vim.fn.system({ py_path, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
-    if vim.v.shell_error == 0 then
-      for line in sys_path:gmatch("[^\r\n]+") do
-        if line:find("site%-packages") or line:find("dist%-packages") then
-          table.insert(extra_paths, line)
+    -- Belt-and-braces: even when is_remote is false, refuse to spawn a
+    -- python that isn't executable here. A stale local kernelspec pointing
+    -- at a remote-only path (PSC anaconda etc) was producing E475.
+    if py_path and vim.fn.executable(py_path) == 1 then
+      local sys_path = vim.fn.system({ py_path, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
+      if vim.v.shell_error == 0 then
+        for line in sys_path:gmatch("[^\r\n]+") do
+          if line:find("site%-packages") or line:find("dist%-packages") then
+            table.insert(extra_paths, line)
+          end
         end
       end
+    elseif py_path then
+      Log.warn("kernel python path '" .. py_path .. "' is not executable locally; skipping sys.path probe")
+      py_path = nil
     end
   end
   nb.kernel_python_path = py_path
   nb.kernel_extra_paths = extra_paths
+  nb.alias = opts.alias
+  vim.b[buf].jupynvim_alias = opts.alias
   M._attach_lsp(buf, ft, py_path, extra_paths)
   -- Kernel-backed completion + hover via virtual LSP. Language-agnostic:
   -- the kernel's complete_request/inspect_request handle the actual work,
@@ -404,6 +1381,32 @@ function M.open(path, opts)
 
   Render.refresh(nb, cur_win)
   M._opening[abs] = nil
+
+  -- Fast follow-up render + redraw. The first paint can be incomplete if the
+  -- user fires a command the instant the notebook opens (e.g. run-all), so
+  -- the frames look absent for a beat; this repaints once things settle. (It
+  -- does not speed up treesitter's own async parse, which colors a little
+  -- later on its own.)
+  vim.defer_fn(function()
+    if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
+      pcall(M._sync_treesitter_ranges, nb)  -- backstop if the parser wasn't ready synchronously
+      pcall(Render.refresh, nb, vim.fn.bufwinid(buf))
+      pcall(vim.cmd, "redraw")
+    end
+  end, 120)
+
+  -- Treesitter scoping can be reset asynchronously after open by an LSP
+  -- attaching or the kernel starting (the "leader-nB too fast renders plain"
+  -- path: running cells starts the kernel, which makes the LSP attach). We
+  -- re-scope in those handlers, but the exact moment the reset lands is
+  -- timing-dependent, so also run a couple of self-healing passes over the
+  -- first second. _sync compares actual-vs-desired regions, so each pass is a
+  -- cheap no-op (a row-signature compare, no re-parse) once scoping is correct.
+  for _, delay in ipairs({ 400, 1000 }) do
+    vim.defer_fn(function()
+      if vim.api.nvim_buf_is_valid(buf) then pcall(M._sync_treesitter_ranges, nb) end
+    end, delay)
+  end
 
   -- Auto-start kernel based on notebook metadata
   vim.defer_fn(function() M.start_kernel(buf) end, 50)
@@ -588,13 +1591,19 @@ function M._populate_buffer(nb)
   vim.api.nvim_buf_set_option(nb.buf, "modifiable", true)
   vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(nb.buf, "modified", false)
+  -- cell command mode keeps the buffer non-modifiable; restore the lock
+  -- after this (possibly async) repopulation
+  if require("jupynvim.cellmode").is_command(nb.buf) then
+    vim.api.nvim_buf_set_option(nb.buf, "modifiable", false)
+  end
   -- Pre-conceal cell separator marker lines synchronously, before the
   -- debounced Render.refresh runs. Without this, the literal
   -- "# %%[jupynvim:cell-sep]" text flashes visible on screen for one or
   -- two redraw frames between buffer population and the first render.
   local sep = require("jupynvim.notebook").CELL_SEP
+  local osep = require("jupynvim.notebook").OUT_SEP
   for i, line in ipairs(lines) do
-    if line == sep then
+    if line == sep or line == osep then
       pcall(vim.api.nvim_buf_set_extmark, nb.buf, nb.border_ns, i - 1, 0, {
         end_col = #line,
         conceal = "",
@@ -607,7 +1616,16 @@ function M._populate_buffer(nb)
   -- continuation row. Right border on continuation rows is a known gap.
   for _, win in ipairs(vim.fn.win_findbuf(nb.buf)) do
     vim.api.nvim_win_call(win, function()
-      vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+      vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
+      -- The statuscolumn IS the cell gutter: per-cell line numbers,
+      -- selection bar, and the cell's left border. The buffer number is
+      -- baked in because the expression can evaluate while ANOTHER window
+      -- is current. 'relativenumber' stays on only so cursor movement
+      -- triggers gutter redraws; the gutter computes its own numbers.
+      vim.opt_local.statuscolumn =
+        string.format("%%!v:lua.require'jupynvim.cellmode'.statuscol(%d)", nb.buf)
+      -- hanging indents for wrapped markdown list items
+      vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
       vim.cmd([[setlocal showbreak=\ ]])
     end)
   end
@@ -626,6 +1644,21 @@ function M._sync_treesitter_ranges(nb)
   if not vim.treesitter then return end
   local ok, parser = pcall(vim.treesitter.get_parser, nb.buf, vim.bo[nb.buf].filetype)
   if not ok or not parser then return end
+  -- When the treesitter highlighter is active, turn off Vim's regex syntax.
+  -- They otherwise both run: treesitter (scoped to code cells below) colors the
+  -- code, while vim syntax knows nothing about our cell/output regions and
+  -- paints every output line that starts with "#" as pythonComment, so printed
+  -- output like `# transpose` rendered gray. Treesitter alone is enough; gate
+  -- on the highlighter being active so configs without treesitter highlighting
+  -- keep their syntax-based colors (the output mask uses hl_mode=replace, which
+  -- covers that case too). Re-checked on every sync, so a filetype re-set that
+  -- reloads syntax gets corrected on the next pass.
+  pcall(function()
+    local hltr = vim.treesitter.highlighter
+    if hltr and hltr.active and hltr.active[nb.buf] and vim.bo[nb.buf].syntax ~= "" then
+      vim.bo[nb.buf].syntax = ""
+    end
+  end)
   local _, ranges = nb:to_lines()
   local lines = vim.api.nvim_buf_get_lines(nb.buf, 0, -1, false)
   local regions = {}
@@ -640,21 +1673,46 @@ function M._sync_treesitter_ranges(nb)
       })
     end
   end
-  -- Skip set_included_regions when the cell structure (row boundaries)
-  -- hasn't changed. Byte offsets shift on every keystroke, but treesitter's
-  -- own incremental parser handles intra-line edits inside an existing
-  -- region. Re-setting regions here would force a full tree invalidation
-  -- on each keystroke, which races with indentexpr (treesitter indent
-  -- returns -1 against an invalidated tree, so Enter after `:` falls back
-  -- to plain autoindent). Compare row boundaries only.
-  local row_sig = {}
-  for i, region in ipairs(regions) do
-    row_sig[i] = region[1][1] .. ":" .. region[1][4]
+  -- Re-scope only when the parser isn't already scoped the way we want, but
+  -- decide that by comparing our desired regions against the parser's CURRENT
+  -- included_regions rather than a cached copy of our own last value.
+  -- Something external resets the regions to the whole buffer after open — an
+  -- LSP attaching, the kernel starting, or nvim-treesitter re-initialising the
+  -- parser when FileType fires — and a self-keyed cache never notices, so the
+  -- re-sync no-ops and the cells parse as plain markdown+separator+code soup
+  -- (the "leader-nB too fast renders plain" report). Comparing actual-vs-
+  -- desired self-heals after any such reset while still skipping the genuine
+  -- no-op case, so we don't force a full tree invalidation on every keystroke
+  -- (which races indentexpr: treesitter indent returns -1 against a freshly
+  -- invalidated tree, dropping autoindent after `:`). Byte offsets shift on
+  -- every keystroke, so compare row boundaries only — treesitter's own
+  -- incremental parser handles intra-line edits inside an existing region.
+  local function row_signature(regs)
+    local parts = {}
+    for i, region in ipairs(regs) do
+      local rng = region[1]
+      if rng then parts[i] = (rng[1] or 0) .. ":" .. (rng[4] or 0) end
+    end
+    return table.concat(parts, ",")
   end
-  local sig = table.concat(row_sig, ",")
-  if nb._ts_regions_sig == sig then return end
-  nb._ts_regions_sig = sig
+  local want_sig = row_signature(regions)
+  local ok_cur, current = pcall(parser.included_regions, parser)
+  local have_sig = ok_cur and row_signature(current) or nil
+  if want_sig == have_sig then return end
   pcall(parser.set_included_regions, parser, regions)
+end
+
+-- Indent-guide plugins (snacks.indent, mini.indentscope, indent-blankline)
+-- draw guides from leading whitespace. Our output lines are indented two
+-- spaces, so the blank lines between output blocks pick up stray guide marks
+-- (the "gray dashes between each \n"). A notebook buffer renders its own
+-- structure, so turn those plugins off per-buffer. Each is a no-op if the
+-- plugin isn't installed.
+function M._disable_indent_guides(buf)
+  pcall(function() vim.b[buf].snacks_indent = false end)
+  pcall(function() vim.b[buf].miniindentscope_disable = true end)
+  pcall(function() vim.b[buf].indent_blankline_enabled = false end)
+  pcall(function() require("ibl").setup_buffer(buf, { enabled = false }) end)
 end
 
 function M._attach_autocmds(buf)
@@ -678,10 +1736,25 @@ function M._attach_autocmds(buf)
         if want_ft == "python" then
           pcall(function() vim.bo[buf].indentexpr = "python#GetIndent(v:lnum)" end)
         end
+        -- Re-setting filetype above (when something knocked it off "python")
+        -- re-fires FileType, which makes nvim-treesitter rebuild the parser
+        -- with the whole buffer as one region — the cells then render as plain
+        -- markdown+code soup. Re-scope to code cells. _sync is self-healing, so
+        -- this is a cheap no-op (a row-signature compare, no re-parse) whenever
+        -- the regions are already correct.
+        local nb_for_ts = Notebook.get(buf)
+        if nb_for_ts then pcall(M._sync_treesitter_ranges, nb_for_ts) end
+        M._disable_indent_guides(buf)  -- snacks/ibl re-enable per event; reassert
         local wins = vim.fn.win_findbuf(buf)
         for _, win in ipairs(wins) do
           vim.api.nvim_win_call(win, function()
-            vim.cmd("setlocal signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+            vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2,list:-1 nofoldenable foldmethod=manual nonumber relativenumber")
+            -- buffer number baked in: the expression can evaluate while
+            -- ANOTHER window is current (see _populate_buffer)
+            vim.opt_local.statuscolumn =
+              string.format("%%!v:lua.require'jupynvim.cellmode'.statuscol(%d)", buf)
+            -- hanging indents for wrapped markdown list items
+            vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
             vim.cmd([[setlocal showbreak=\ ]])
           end)
         end
@@ -730,6 +1803,17 @@ function M._attach_autocmds(buf)
       if nb and nb.kernel_python_path then
         vim.schedule(function()
           M._sync_lsp_python_path(buf, nb.kernel_python_path, nb.kernel_extra_paths)
+        end)
+      end
+      -- An attaching LSP (and the nvim-treesitter FileType handling it can
+      -- trigger) often resets the parser's included_regions back to the whole
+      -- buffer, so code cells render plain until the next edit — this is the
+      -- "leader-nB too fast renders plain" path, since running cells starts the
+      -- kernel which is what makes the LSP attach. Re-scope once the attach
+      -- settles. _sync is self-healing, so it's a no-op when nothing reset it.
+      if nb then
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(buf) then pcall(M._sync_treesitter_ranges, nb) end
         end)
       end
     end,
@@ -900,7 +1984,7 @@ function M.run_cell(buf, opts)
   if not cell_id then return end
   local cell = nb:get_cell(cell_id)
   -- Push current source to backend, then execute
-  local cl = ensure_client()
+  local cl = nb_client(nb)
   cl:call("update_cell_source", { session_id = nb.session_id, cell_id = cell.id, source = cell.source }, function(err)
     if err then
       vim.notify("update_cell_source: " .. tostring(err), vim.log.levels.ERROR)
@@ -913,6 +1997,18 @@ function M.run_cell(buf, opts)
       return
     end
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
+      -- "kernel not started" alone is unactionable. While a start is in
+      -- flight (first use may be pip-installing ipykernel into the env),
+      -- say so calmly; otherwise append the actual start failure.
+      if err2 and tostring(err2):find("kernel not started") then
+        if nb.kernel_starting then
+          vim.notify("jupynvim: kernel is still starting (first use of an env may install ipykernel; can take a minute). Run the cell again once \"kernel started\" appears.",
+            vim.log.levels.WARN)
+          return
+        elseif nb.kernel_error then
+          err2 = tostring(err2) .. "\n  last start_kernel error: " .. nb.kernel_error
+        end
+      end
       if err2 then
         vim.notify("execute: " .. tostring(err2), vim.log.levels.ERROR)
       end
@@ -928,7 +2024,7 @@ function M.run_all(buf)
   if not nb then return end
   nb:sync_from_buffer()
   -- Sequence cells: each one's execute fires only after the previous update + execute have completed
-  local cl = ensure_client()
+  local cl = nb_client(nb)
   local code_cells = {}
   for _, c in ipairs(nb.cells) do
     if c.cell_type == "code" then table.insert(code_cells, c) end
@@ -952,12 +2048,12 @@ function M.run_above(buf)
   nb:sync_from_buffer()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
+  local cl = nb_client(nb)
   local co
   co = coroutine.wrap(function()
     for _, c in ipairs(nb.cells) do
       if c.id == cur_id then break end
       if c.cell_type == "code" then
-        local cl = ensure_client()
         cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
           cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
             co()
@@ -977,12 +2073,12 @@ function M.run_below(buf)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local seen = false
+  local cl = nb_client(nb)
   local co
   co = coroutine.wrap(function()
     for _, c in ipairs(nb.cells) do
       if c.id == cur_id then seen = true end
       if seen and c.cell_type == "code" then
-        local cl = ensure_client()
         cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
           cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
             co()
@@ -1147,13 +2243,15 @@ function M.start_kernel(buf, kernel_name)
   -- The auto-start in M.open could otherwise run multiple times (e.g.
   -- BufReadCmd re-firing) and orphan ipykernel processes.
   if nb.kernel_started and not kernel_name then return end
-  local cl = ensure_client()
-  -- Auto-detect a local .venv near the notebook and use its python directly,
-  -- bypassing the global kernelspec registry. Only on auto-start (no
-  -- explicit kernel_name) so users picking via `<leader>nK` aren't
-  -- overridden. Disable with `auto_venv = false` in setup.
+  -- Route to the alias's backend if this is a remote notebook. Without
+  -- this, ensure_client() would return whatever M.client happens to point
+  -- at, which can race if multiple notebooks across aliases are open.
+  local cl = nb.alias and M.client_for(nb.alias) or ensure_client()
+  -- Auto-venv, local flavor: probe the local filesystem and pass the python
+  -- directly. For REMOTE notebooks the backend does the equivalent walk-up on
+  -- its own filesystem when we pass auto_venv (same .venv/venv/env semantics).
   local python_path = nil
-  if not kernel_name and M.config.auto_venv ~= false then
+  if not kernel_name and M.config.auto_venv ~= false and not nb.alias then
     local nb_dir = nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
     if nb_dir then
       python_path = find_local_venv_python(nb_dir)
@@ -1162,15 +2260,20 @@ function M.start_kernel(buf, kernel_name)
       end
     end
   end
+  nb.kernel_starting = true
   cl:call("start_kernel", {
     session_id = nb.session_id,
     kernel_name = kernel_name,
     python_path = python_path,
+    auto_venv = M.config.auto_venv ~= false,
   }, function(err, res)
+    nb.kernel_starting = nil
     if err then
+      nb.kernel_error = tostring(err)  -- surfaced by later "kernel not started"
       vim.notify("start_kernel: " .. tostring(err), vim.log.levels.ERROR)
       return
     end
+    nb.kernel_error = nil
     nb.kernel_started = true
     vim.notify("jupynvim: kernel '" .. (res.kernel_name or "?") .. "' started", vim.log.levels.INFO)
     -- Auto-inject inline plotting magic for python kernels (silent — no output)
@@ -1182,7 +2285,10 @@ function M.start_kernel(buf, kernel_name)
       }, function() end)
     end
     -- Tell the LSP about the kernel's interpreter so import resolution
-    -- matches what `pip list` in that env reports.
+    -- matches what `pip list` in that env reports. Local-only — the LSP
+    -- runs on the user's machine and can't introspect a remote python.
+    -- Phase 6 (remote LSP relay) will be the right path for remote.
+    if nb.alias then return end
     cl:call("list_kernels", {}, function(_, kernels)
       if not kernels then return end
       local active = res.kernel_name
@@ -1192,6 +2298,8 @@ function M.start_kernel(buf, kernel_name)
         if k.name == active and k.argv and k.argv[1] then
           local py = k.argv[1]
           nb.kernel_python_path = py
+          -- Defensive: don't try to run a python path that isn't here
+          if vim.fn.executable(py) ~= 1 then return end
           local sp = vim.fn.system({ py, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
           local extra = {}
           if vim.v.shell_error == 0 then
@@ -1238,6 +2346,9 @@ function M.clear_outputs(buf)
     if c.cell_type == "code" then
       c.outputs = {}
       c.execution_count = nil
+      -- also drop the execution-timing stamp, else saved_duration_ns rebuilds
+      -- the "✓ 1.6s" badge from it after the clear
+      if type(c.metadata) == "table" then c.metadata.execution = nil end
       nb.cell_state[c.id] = nil
       -- Drop only code-cell image placements; markdown embedded images
       -- (keys like "<id>_md_<idx>") stay so the cell still renders them.
@@ -1277,6 +2388,7 @@ function M.clear_cell_output(buf)
   end
   cell.outputs = {}
   cell.execution_count = nil
+  if type(cell.metadata) == "table" then cell.metadata.execution = nil end
   nb.cell_state[cell.id] = nil
   pcall(require("jupynvim.image").clear_for_cell, cell.id)
   nb.image_ids = nb.image_ids or {}
@@ -1357,7 +2469,13 @@ function M.delete_image(buf)
 end
 
 function M.kernel_picker(buf)
-  ensure_client():call("list_kernels", {}, function(err, kernels)
+  -- Route to the notebook's OWN backend (a remote notebook lists kernels on
+  -- the remote, incl. its conda envs), and pass the notebook's dir so
+  -- project-local venvs (.venv/venv/env) show up as picker entries.
+  local nb = Notebook.get(buf)
+  local cl = (nb and nb.alias) and M.client_for(nb.alias) or ensure_client()
+  local dir = nb and nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
+  cl:call("list_kernels", { dir = dir }, function(err, kernels)
     if err then vim.notify("list_kernels: " .. err, vim.log.levels.ERROR); return end
     vim.ui.select(kernels, {
       prompt = "Select kernel:",
@@ -1371,102 +2489,6 @@ function M.kernel_picker(buf)
 end
 
 -- Internal helper: open the given cell's output as a scratch split.
-local function _open_output_split(buf, cell, origin_line)
-  local function as_str(v)
-    if type(v) == "table" then return table.concat(v, "") end
-    if type(v) == "string" then return v end
-    return ""
-  end
-  local function strip_ansi(s)
-    s = s:gsub("\27%[[?]?[%d;]*[a-zA-Z]", "")
-    s = s:gsub("\27%][^\27]*\27\\", "")
-    s = s:gsub("\27.", "")
-    return s
-  end
-  -- Apply tqdm/progress-bar carriage-return semantics: \r overwrites the
-  -- current line, so only the LAST \r-terminated chunk per logical line
-  -- survives. Without this, the scratch split shows every intermediate
-  -- progress-bar tick as its own line (the inline view already applies
-  -- this in render.lua's process_cr).
-  local function process_cr(s)
-    local out = {}
-    for chunk in (s .. "\n"):gmatch("([^\n]*)\n") do
-      local segments = {}
-      for seg in (chunk .. "\r"):gmatch("([^\r]*)\r") do
-        table.insert(segments, seg)
-      end
-      table.insert(out, segments[#segments] or "")
-    end
-    if out[#out] == "" then table.remove(out) end
-    return table.concat(out, "\n")
-  end
-
-  local lines = {}
-  for _, o in ipairs(cell.outputs) do
-    if o.output_type == "stream" then
-      local txt = strip_ansi(process_cr(as_str(o.text)))
-      for line in (txt .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(lines, line)
-      end
-    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
-      local data = o.data or {}
-      local txt = as_str(data["text/plain"])
-      if txt ~= "" then
-        for line in (txt .. "\n"):gmatch("([^\n]*)\n") do
-          table.insert(lines, line)
-        end
-      end
-      if data["image/png"] then
-        table.insert(lines, "[image/png — view in main notebook]")
-      end
-    elseif o.output_type == "error" then
-      table.insert(lines, as_str(o.ename) .. ": " .. as_str(o.evalue))
-      for _, tb in ipairs(o.traceback or {}) do
-        local txt = strip_ansi(process_cr(as_str(tb)))
-        for line in (txt .. "\n"):gmatch("([^\n]*)\n") do
-          table.insert(lines, line)
-        end
-      end
-    end
-  end
-  if lines[#lines] == "" then table.remove(lines) end
-  if #lines == 0 then
-    vim.notify("jupynvim: output has no text content", vim.log.levels.INFO)
-    return
-  end
-
-  local scratch = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(scratch, 0, -1, false, lines)
-  vim.api.nvim_set_option_value("modifiable", false, { buf = scratch })
-  vim.api.nvim_set_option_value("buftype", "nofile", { buf = scratch })
-  vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = scratch })
-  vim.api.nvim_set_option_value("filetype", "jupynvim_output", { buf = scratch })
-  vim.b[scratch].jupynvim_origin_buf = buf
-  vim.b[scratch].jupynvim_origin_line = origin_line
-  vim.api.nvim_buf_set_name(scratch,
-    string.format("jupynvim://Out[%s]", tostring(cell.execution_count or "?")))
-
-  local height = math.min(math.max(#lines, 4), math.floor(vim.o.lines * 0.4))
-  vim.cmd("belowright " .. height .. "split")
-  vim.api.nvim_set_current_buf(scratch)
-
-  local close_map = function()
-    local origin_buf = vim.b.jupynvim_origin_buf
-    local origin_l = vim.b.jupynvim_origin_line
-    vim.cmd("close")
-    for _, w in ipairs(vim.fn.win_findbuf(origin_buf)) do
-      vim.api.nvim_set_current_win(w)
-      if origin_l then
-        pcall(vim.api.nvim_win_set_cursor, w, { origin_l, 0 })
-      end
-      return
-    end
-  end
-  vim.keymap.set("n", "<C-j>", close_map, { buffer = scratch, silent = true, desc = "Leave output" })
-  vim.keymap.set("n", "<C-k>", close_map, { buffer = scratch, silent = true, desc = "Leave output" })
-  vim.keymap.set("n", "q",     close_map, { buffer = scratch, silent = true, desc = "Leave output" })
-end
-
 local function _has_output(cell)
   return cell and cell.cell_type == "code" and cell.outputs and #cell.outputs > 0
 end
@@ -1476,50 +2498,66 @@ end
 -- so when the cursor is below an output region, this key enters that
 -- region. From inside the scratch split, either key (or q) returns.
 function M.enter_output(buf, direction)
-  -- Already inside a jupynvim output scratch? Close and return.
-  local ok, _ = pcall(vim.api.nvim_buf_get_var, buf, "jupynvim_origin_buf")
-  if ok then
-    local origin_buf = vim.b[buf].jupynvim_origin_buf
-    local origin_line = vim.b[buf].jupynvim_origin_line
-    vim.cmd("close")
-    if origin_buf then
-      for _, w in ipairs(vim.fn.win_findbuf(origin_buf)) do
-        vim.api.nvim_set_current_win(w)
-        if origin_line then
-          pcall(vim.api.nvim_win_set_cursor, w, { origin_line, 0 })
-        end
-        return
-      end
-    end
-    return
-  end
-
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local cur_id = nb:cell_at_line(lnum)
-  local cur_idx = 1
-  for i, c in ipairs(nb.cells) do if c.id == cur_id then cur_idx = i; break end end
-
-  local target_idx
-  if direction == "up" then
-    -- look at current cell, then walk backwards
-    for i = cur_idx, 1, -1 do
-      if _has_output(nb.cells[i]) then target_idx = i; break end
-    end
-  else
-    -- down: current cell first, then walk forwards
-    for i = cur_idx, #nb.cells do
-      if _has_output(nb.cells[i]) then target_idx = i; break end
-    end
-  end
-  if not target_idx then
-    vim.notify("jupynvim: no " .. direction .. " cell with output", vim.log.levels.INFO)
+  local CellMode = require("jupynvim.cellmode")
+  -- command mode: C-j/C-k are plain window navigation (terminal/explorer
+  -- round-trips). Inside a cell: hop between the source editor and its
+  -- output region, which is REAL buffer text (motions/visual/yank native).
+  if CellMode.is_command(buf) then
+    vim.cmd("wincmd " .. (direction == "up" and "k" or "j"))
     return
   end
+  if direction == "up" then
+    CellMode.focus_source(buf)
+  else
+    CellMode.focus_output(buf)
+  end
+end
 
-  _open_output_split(buf, nb.cells[target_idx], lnum)
+-- gx on a rendered markdown link: the URL part is concealed, so resolve
+-- the link under the cursor from the raw line and open it.
+function M.open_link(buf)
+  local line = vim.api.nvim_get_current_line()
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local l = require("jupynvim.markdown").link_at(line, col)
+  if l and l.url and l.url ~= "" then
+    if l.url:match("^jupynvim%-img:") then
+      vim.notify("jupynvim: embedded image (<leader>nI saves it to a file)", vim.log.levels.INFO)
+      return
+    end
+    vim.ui.open(l.url)
+    local shown = #l.url > 70 and (l.url:sub(1, 70) .. "…") or l.url
+    vim.notify("jupynvim: opening " .. shown, vim.log.levels.INFO)
+    return
+  end
+  local cf = vim.fn.expand("<cfile>")
+  if cf and cf ~= "" then pcall(vim.ui.open, cf) end
+end
+
+-- Open the markdown link under the MOUSE pointer. Used by the
+-- <LeftRelease> mapping in command mode, where rendered markdown isn't
+-- cursor-addressable (j/k jump whole cells), so a click is how links get
+-- followed, like VSCode's rendered view. Returns true when a link was
+-- opened so the mapping swallows that click.
+function M.click_link(buf)
+  local ok, mp = pcall(vim.fn.getmousepos)
+  if not ok or not mp or not mp.line or mp.line == 0 then return false end
+  if not mp.winid or mp.winid == 0 then return false end
+  local wok, wbuf = pcall(vim.api.nvim_win_get_buf, mp.winid)
+  if not wok or wbuf ~= buf then return false end
+  local line = (vim.api.nvim_buf_get_lines(buf, mp.line - 1, mp.line, false))[1]
+  if not line or line == "" then return false end
+  -- link_at falls back to the line's first link, which absorbs the
+  -- column drift that concealed URLs introduce under the mouse position
+  local l = require("jupynvim.markdown").link_at(line, math.max(mp.column or 1, 1))
+  if not (l and l.url and l.url ~= "") or l.url:match("^jupynvim%-img:") then
+    return false
+  end
+  pcall(vim.ui.open, l.url)
+  local shown = #l.url > 70 and (l.url:sub(1, 70) .. "…") or l.url
+  vim.notify("jupynvim: opening " .. shown, vim.log.levels.INFO)
+  return true
 end
 
 -- Save the current cell's image (markdown embedded or code-cell output)
@@ -1663,10 +2701,53 @@ end
 
 -- ---------- setup ----------
 
+-- Deep-merge user opts into config: nested MAPS merge recursively (so e.g.
+-- terminal = { bottom_height = 12 } keeps the other terminal defaults), while
+-- key-LIST arrays (explorer_keys, terminal_keys, pick_keys.*) are replaced
+-- wholesale (so you set exactly the keys you want). Makes every option
+-- independently overridable.
+local function deep_merge(dst, src)
+  local islist = vim.islist or vim.tbl_islist
+  for k, v in pairs(src) do
+    if type(v) == "table" and type(dst[k]) == "table"
+       and not islist(v) and not islist(dst[k]) then
+      dst[k] = deep_merge(vim.deepcopy(dst[k]), v)
+    else
+      dst[k] = v
+    end
+  end
+  return dst
+end
+
 function M.setup(opts)
-  M.config = vim.tbl_extend("force", M.config, opts or {})
+  M.config = deep_merge(M.config, opts or {})
   Log.set_level(M.config.log_level)
   Render.setup_highlights()
+  -- A `:colorscheme` runs `hi clear`, wiping our groups (and the
+  -- JupynvimOutputText -> Normal link). Re-establish them on every
+  -- colorscheme change so output text never falls back to a stale color.
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = vim.api.nvim_create_augroup("jupynvim_colors", { clear = true }),
+    callback = function() pcall(Render.setup_highlights) end,
+  })
+  -- Keep indent-guide plugins (snacks.indent etc.) off notebook buffers. This
+  -- catches buffers already open when the plugin (re)loads and re-asserts on
+  -- every notebook display, so it works even on a hot reload without reopening
+  -- (M.open's call only covers fresh opens).
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "BufEnter", "FileType" }, {
+    group = vim.api.nvim_create_augroup("jupynvim_indent_guards", { clear = true }),
+    callback = function(ev)
+      if require("jupynvim.notebook").get(ev.buf) then
+        M._disable_indent_guides(ev.buf)
+        -- nolist on the notebook window: a global `set list` renders the
+        -- trailing spaces of blank output lines as gray `trail` dashes.
+        pcall(function() vim.wo.list = false end)
+      end
+    end,
+  })
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if require("jupynvim.notebook").get(b) then pcall(M._disable_indent_guides, b) end
+  end
   require("jupynvim.diag").setup()
   require("jupynvim.lsp").setup()
   Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols })
@@ -1691,15 +2772,96 @@ function M.setup(opts)
     end)
   end
 
+  -- Bind explorer_keys to the M.explorer dispatcher (remote tree when an SSH
+  -- session is active, local snacks otherwise). Done on User VeryLazy so it
+  -- lands AFTER LazyVim sets its own <leader>e — otherwise LazyVim would
+  -- overwrite ours. Falls back to immediate set if VeryLazy already fired.
+  local function bind_dispatch_keys()
+    for _, lhs in ipairs(M.config.explorer_keys or {}) do
+      pcall(vim.keymap.set, "n", lhs, function() M.explorer() end,
+        { desc = "jupynvim: explorer (remote when SSH-connected)" })
+    end
+    -- Terminal toggle works from normal AND terminal mode (so <C-/> dismisses
+    -- the remote term while you're typing in it).
+    for _, lhs in ipairs(M.config.terminal_keys or {}) do
+      pcall(vim.keymap.set, { "n", "t" }, lhs, function()
+        if vim.fn.mode() == "t" then
+          vim.cmd("stopinsert")
+        end
+        M.terminal()
+      end, { desc = "jupynvim: terminal toggle (remote when SSH-connected)" })
+    end
+    -- Second terminal on the right (toggle). Normal mode only (leader keys
+    -- aren't meaningful in terminal-insert); dismiss it from inside with the
+    -- <C-/> family or by closing the window.
+    for _, lhs in ipairs(M.config.terminal_right_keys or {}) do
+      pcall(vim.keymap.set, "n", lhs, function() M.terminal_right() end,
+        { desc = "jupynvim: toggle second remote terminal (right)" })
+    end
+    -- Pick keys (find-files / grep): target the remote when connected, else
+    -- REPLAY the user's own local mapping (captured here, after LazyVim set
+    -- it). So local behavior is untouched; only the remote case is added.
+    M._pick_orig = M._pick_orig or {}
+    local function capture_and_bind(lhs, kind)
+      local cur = vim.fn.maparg(lhs, "n", false, true)
+      -- Capture the original only if the current map isn't already ours
+      -- (avoids capturing our own dispatcher → infinite replay loop).
+      if not (cur.desc and cur.desc:match("^jupynvim:")) then
+        M._pick_orig[lhs] = cur
+      end
+      local function replay()
+        local orig = M._pick_orig[lhs]
+        if orig and orig.callback then pcall(orig.callback)
+        elseif orig and orig.rhs and orig.rhs ~= "" then
+          local feed = vim.api.nvim_replace_termcodes(orig.rhs, true, true, true)
+          vim.api.nvim_feedkeys(feed, orig.noremap == 1 and "n" or "m", false)
+        else
+          pcall(function() require("snacks").picker[kind]() end)
+        end
+      end
+      pcall(vim.keymap.set, "n", lhs, function()
+        local handled = (kind == "files") and M.find_files() or M.grep_pick()
+        if not handled then replay() end
+      end, { desc = "jupynvim: " .. kind .. " (remote when SSH-connected)", silent = true })
+    end
+    for _, lhs in ipairs((M.config.pick_keys or {}).files or {}) do capture_and_bind(lhs, "files") end
+    for _, lhs in ipairs((M.config.pick_keys or {}).grep or {}) do capture_and_bind(lhs, "grep") end
+  end
+  local pk = M.config.pick_keys or {}
+  if (M.config.explorer_keys and #M.config.explorer_keys > 0)
+     or (M.config.terminal_keys and #M.config.terminal_keys > 0)
+     or (M.config.terminal_right_keys and #M.config.terminal_right_keys > 0)
+     or (pk.files and #pk.files > 0) or (pk.grep and #pk.grep > 0) then
+    -- LazyVim registers <leader>e / <C-/> via snacks' `keys` spec, and
+    -- lazy.nvim sets those at startup. We must bind AFTER that or LazyVim
+    -- wins. Bind on VeryLazy AND on a 500ms timer (belt + braces) to land last.
+    vim.api.nvim_create_autocmd("User", {
+      pattern = "VeryLazy",
+      once = true,
+      callback = function() vim.defer_fn(bind_dispatch_keys, 100) end,
+    })
+    vim.defer_fn(bind_dispatch_keys, 500)
+    bind_dispatch_keys()
+  end
+
   -- Hijack .ipynb opens
   local group = vim.api.nvim_create_augroup("JupynvimDispatch", { clear = true })
   vim.api.nvim_create_autocmd("BufReadCmd", {
     group = group,
     pattern = { "*.ipynb" },
     callback = function(args)
+      -- Skip jupynvim:// URIs — they're handled by our dedicated URI BufReadCmd
+      -- (registered below) which routes through the alias's remote backend
+      -- and passes opts.alias to M.open. This pattern would otherwise call
+      -- M.open with no alias and the local client, trying to run remote
+      -- paths through local fs ops.
+      if args.file:match("^jupynvim://") then return end
       -- BufReadCmd means user wants to read this file. If we already have a
       -- live notebook for it, treat as :e! (force reload from disk).
       local abs = vim.fn.fnamemodify(args.file, ":p")
+      -- Skip if M.open is mid-flight for this path — it created the buffer
+      -- itself via vim.fn.bufnr(true) and is about to populate it.
+      if M._opening and M._opening[abs] then return end
       local b = vim.fn.bufnr(abs)
       local force = b > 0 and Notebook.get(b) ~= nil
       -- Pre-populate the buffer with the on-disk file's line count of empty
@@ -1727,8 +2889,297 @@ function M.setup(opts)
     group = group,
     pattern = { "*.ipynb" },
     callback = function(args)
-      -- New file: defer-create with empty notebook
+      -- Skip URIs (handled by the dedicated jupynvim:// autocmd).
+      if args.file:match("^jupynvim://") then return end
+      -- Skip if our M.open is mid-flight for this path — it creates the
+      -- buffer via vim.fn.bufnr(abs, true), which triggers BufNewFile.
+      -- Re-entering M.open here would race with the in-progress one,
+      -- wipe its alias tagging, and (worst) drop the remote-backend route.
+      local abs = vim.fn.fnamemodify(args.file, ":p")
+      if M._opening and M._opening[abs] then return end
       vim.schedule(function() M.open(args.file) end)
+    end,
+  })
+
+  -- ===========================================================
+  -- Remote URI scheme: jupynvim://<alias>/<path>
+  --
+  -- Any buffer whose name matches this scheme is fetched/saved via the
+  -- alias's backend (M.client_for(alias)) using fs_read/fs_write RPCs.
+  -- Works for any file type. .ipynb gets routed to M.open instead so the
+  -- notebook flow takes over.
+  -- ===========================================================
+  vim.api.nvim_create_autocmd("BufReadCmd", {
+    group = group,
+    pattern = "jupynvim://*",
+    callback = function(args)
+      local alias, path = M._parse_uri(args.file)
+      if not alias then
+        vim.notify("jupynvim: invalid URI " .. args.file, vim.log.levels.ERROR)
+        return
+      end
+      local ok, client = pcall(M.client_for, alias)
+      if not ok then
+        vim.notify("jupynvim: " .. tostring(client), vim.log.levels.ERROR)
+        return
+      end
+      -- Directory (URI ends in /): open the tree explorer rooted there.
+      -- Wipe the throwaway URI buffer first; the explorer makes its own.
+      if path:sub(-1) == "/" then
+        local dir = path:gsub("/+$", "")
+        if dir == "" then dir = "/" end
+        local uri_buf = args.buf
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(uri_buf) then
+            pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
+          end
+          M.remote_browse(alias, dir)
+        end)
+        return
+      end
+      -- Notebook: hand off to the notebook open flow. The notebook flow
+      -- creates its own buffer (named with the remote path), so wipe the
+      -- empty URI buffer we just created — otherwise we get an orphan
+      -- "jupynvim://..." buffer alongside the real notebook buffer.
+      if path:sub(-6) == ".ipynb" then
+        local uri_buf = args.buf
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(uri_buf) then
+            pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
+          end
+          M.use_remote(alias)
+          M.open(path, { alias = alias })
+        end)
+        return
+      end
+      -- Regular file: fs_read then populate the buffer.
+      local err, res = client:call_sync("fs_read", { path = path }, 30000)
+      local lines
+      if err then
+        -- "No such file" is expected when editing a new remote file
+        -- (BufReadCmd fires before the user starts typing). Treat as empty
+        -- buffer rather than error so :w later creates the file.
+        if tostring(err):lower():find("no such file") then
+          lines = { "" }
+        else
+          vim.notify("jupynvim: fs_read failed: " .. tostring(err), vim.log.levels.ERROR)
+          return
+        end
+      else
+        local content = vim.base64.decode(res.content_b64)
+        lines = vim.split(content, "\n", { plain = true })
+        -- vim.split with trailing \n produces a phantom empty string; drop
+        -- it so the buffer matches the file exactly.
+        if #lines > 0 and lines[#lines] == "" then
+          table.remove(lines, #lines)
+        end
+      end
+      vim.api.nvim_buf_set_lines(args.buf, 0, -1, false, lines)
+      vim.bo[args.buf].buftype = "acwrite"
+      vim.bo[args.buf].swapfile = false  -- buffer content lives on the remote, no need for local swap
+      vim.bo[args.buf].modified = false
+      vim.b[args.buf].jupynvim_alias = alias
+      vim.b[args.buf].jupynvim_remote_path = path
+      -- Filetype detection → syntax, treesitter, ftplugin (indent etc).
+      local ft = vim.filetype.match({ filename = path, buf = args.buf })
+      if ft then vim.bo[args.buf].filetype = ft end
+      -- Remote LSP: attach a language server running ON the remote (Phase 6).
+      -- Deferred so the buffer/filetype are fully settled first.
+      if ft and ft ~= "" then
+        local b = args.buf
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(b) then
+            pcall(function() require("jupynvim.remote_lsp").attach(b, alias, path, ft) end)
+          end
+        end)
+      end
+      -- The file often opens into a window that the dashboard/explorer left
+      -- with number/signcolumn OFF — restore the user's normal display opts
+      -- so a remote .py/.cpp looks like a normal buffer (line numbers etc).
+      local w = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(w) == args.buf then
+        vim.wo[w].number = vim.go.number
+        vim.wo[w].relativenumber = vim.go.relativenumber
+        vim.wo[w].signcolumn = "yes"
+        vim.wo[w].cursorline = vim.go.cursorline
+        vim.wo[w].foldcolumn = vim.go.foldcolumn
+        vim.wo[w].winfixwidth = false
+        vim.wo[w].list = vim.go.list
+        vim.wo[w].wrap = vim.go.wrap
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    group = group,
+    pattern = "jupynvim://*",
+    callback = function(args)
+      local alias = vim.b[args.buf].jupynvim_alias
+      local path = vim.b[args.buf].jupynvim_remote_path
+      if not alias or not path then
+        vim.notify("jupynvim: buffer missing remote metadata", vim.log.levels.ERROR)
+        return
+      end
+      local client = M.client_for(alias)
+      local lines = vim.api.nvim_buf_get_lines(args.buf, 0, -1, false)
+      local content = table.concat(lines, "\n") .. "\n"
+      local b64 = vim.base64.encode(content)
+      local err, _ = client:call_sync("fs_write",
+        { path = path, content_b64 = b64 }, 30000)
+      if err then
+        vim.notify("jupynvim: fs_write failed: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+      vim.bo[args.buf].modified = false
+      vim.notify(string.format("written %d lines to %s:%s", #lines, alias, path),
+                 vim.log.levels.INFO)
+    end,
+  })
+
+  -- Guard: Neovim 0.11's vim.lsp auto-enable may try to attach the user's
+  -- LOCAL language servers to a jupynvim:// buffer (same filetype). Those
+  -- can't read the remote file and would duplicate our relay. Detach any
+  -- non-jupynvim client from a jupynvim:// buffer; our relay clients are
+  -- named "jupynvim:..." and are kept.
+  vim.api.nvim_create_autocmd("LspAttach", {
+    group = group,
+    callback = function(args)
+      local name = vim.api.nvim_buf_get_name(args.buf)
+      if not name:match("^jupynvim://") then return end
+      local client = vim.lsp.get_client_by_id(args.data.client_id)
+      if client and not client.name:match("^jupynvim:") then
+        pcall(vim.lsp.buf_detach_client, args.buf, args.data.client_id)
+      end
+    end,
+  })
+
+  -- Remote FILE buffers (not the explorer tree / dashboard) should look like
+  -- normal editable files: restore the window's display options every time the
+  -- buffer is shown. BufWinEnter is the reliable place (the BufReadCmd reset
+  -- can run before the window actually displays the buffer, and the file often
+  -- lands in a window the dashboard/explorer left with number/signcolumn off).
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = group,
+    pattern = "jupynvim://*",
+    callback = function(args)
+      if vim.b[args.buf].jupynvim_browser or vim.b[args.buf].jupynvim_dashboard then return end
+      local w = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(w) ~= args.buf then return end
+      vim.wo[w].number = vim.go.number
+      vim.wo[w].relativenumber = vim.go.relativenumber
+      vim.wo[w].signcolumn = "yes"
+      vim.wo[w].cursorline = vim.go.cursorline
+      vim.wo[w].foldcolumn = vim.go.foldcolumn
+      vim.wo[w].winfixwidth = false
+      vim.wo[w].wrap = vim.go.wrap
+      vim.wo[w].list = vim.go.list
+    end,
+  })
+
+  -- :JupynvimGrep <alias> <pattern>  — ripgrep-equivalent on remote.
+  -- Populates the quickfix list with matches. Uses the search RPC (ignore +
+  -- regex on the backend — no remote ripgrep binary required). Search root
+  -- defaults to the remote home; pass `:JupynvimGrep alias pattern path` to
+  -- scope it.
+  vim.api.nvim_create_user_command("JupynvimGrep", function(o)
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    if #parts < 2 then
+      vim.notify("usage: :JupynvimGrep <alias> <pattern> [<path>]", vim.log.levels.WARN)
+      return
+    end
+    local alias = parts[1]
+    local pattern = parts[2]
+    local path = parts[3] or "~"
+    local client = M.client_for(alias)
+    vim.notify("jupynvim: searching " .. alias .. ":" .. path .. " for " .. pattern)
+    client:call("search", { path = path, pattern = pattern }, function(err, res)
+      if err then
+        vim.notify("jupynvim: search failed: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+      vim.schedule(function()
+        local qf = {}
+        for _, m in ipairs(res.matches or {}) do
+          table.insert(qf, {
+            filename = "jupynvim://" .. alias .. m.path,
+            lnum = m.line,
+            col = m.col,
+            text = m.text,
+          })
+        end
+        vim.fn.setqflist({}, "r", {
+          title = string.format("jupynvim %s:%s `%s`", alias, path, pattern),
+          items = qf,
+        })
+        local msg = string.format("found %d matches%s", #qf, res.truncated and " (truncated)" or "")
+        vim.notify(msg, vim.log.levels.INFO)
+        if #qf > 0 then vim.cmd("copen") end
+      end)
+    end)
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
+    end,
+  })
+
+  -- :JupynvimTerm <alias>  — open a PTY-backed remote shell in a split.
+  -- :JupynvimTerm [alias] [below|left|right|tab]
+  --   Opens a plain remote shell. With a position it's an extra terminal
+  --   alongside the <C-/> one (e.g. `:JupynvimTerm psc right` for a second
+  --   shell on the right to use however you like); bare form opens/uses the
+  --   primary <C-/> terminal.
+  vim.api.nvim_create_user_command("JupynvimTerm", function(o)
+    local parts = vim.split(o.args or "", "%s+", { trimempty = true })
+    local alias = parts[1] or M._active_alias
+    if not alias or alias == "" then
+      vim.notify("usage: :JupynvimTerm <alias> [below|left|right|tab]", vim.log.levels.WARN)
+      return
+    end
+    local positions = { below = true, left = true, right = true, tab = true }
+    local split = (parts[2] and positions[parts[2]]) and parts[2] or "below"
+    require("jupynvim.remote_term").toggle(alias, { split = split })
+  end, {
+    nargs = "*",
+    complete = function(_, line)
+      local words = vim.split(line, "%s+", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      elseif #words == 3 then
+        return { "below", "left", "right", "tab" }
+      end
+      return {}
+    end,
+  })
+
+  -- :JupynvimEdit <alias>:<path>  — convenience wrapper for opening a remote
+  -- file. Equivalent to `:e jupynvim://<alias>/<path>` (which also works).
+  vim.api.nvim_create_user_command("JupynvimEdit", function(o)
+    local alias, path = o.args:match("^([^:]+):(.+)$")
+    if not alias or not path then
+      vim.notify("usage: :JupynvimEdit <alias>:<path>", vim.log.levels.WARN)
+      return
+    end
+    if not path:match("^/") then path = "/" .. path end  -- relative → home-relative
+    vim.cmd("edit jupynvim://" .. alias .. path)
+  end, {
+    nargs = 1,
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 and not line:find(":") then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
     end,
   })
 
@@ -1754,6 +3205,350 @@ function M.setup(opts)
     M.delete_image(vim.api.nvim_get_current_buf())
   end, {})
   vim.api.nvim_create_user_command("JupynvimOpen", function(o) M.open(o.args) end, { nargs = 1, complete = "file" })
+
+  -- :JupynvimOpenRemote alias:path  (alias from config.remote)
+  -- :JupynvimOpenRemote user@host:/abs/path  (one-off)
+  -- Switches the active backend to an SSH-spawned one on the named host,
+  -- then opens the notebook at the given remote path.
+  vim.api.nvim_create_user_command("JupynvimOpenRemote", function(o)
+    local spec, perr = M._parse_remote_spec(o.args)
+    if not spec then
+      vim.notify("jupynvim: " .. tostring(perr), vim.log.levels.ERROR)
+      return
+    end
+    M.use_remote(spec)
+    -- For remote opens, the path is whatever the user wrote (we don't expand
+    -- ~ or resolve relative against the local CWD). Backend opens it on the
+    -- remote filesystem.
+    M.open(spec.path, { remote_label = spec.label })
+  end, { nargs = 1 })
+
+  vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
+
+  -- :JupynvimDebugFrames — dump the exact frame state so a broken render can
+  -- be diagnosed without screenshots. Run it right after the breakage.
+  vim.api.nvim_create_user_command("JupynvimDebugFrames", function()
+    local buf = vim.api.nvim_get_current_buf()
+    local nb = Notebook.get(buf)
+    if not nb then print("not a jupynvim buffer"); return end
+    local CellMode = require("jupynvim.cellmode")
+    local win = vim.fn.bufwinid(buf)
+    local info = win ~= -1 and vim.fn.getwininfo(win)[1] or {}
+    local out = {}
+    table.insert(out, string.format("win=%d width=%s textoff=%s win_get_width=%s wins_showing_buf=%s",
+      win, tostring(info.width), tostring(info.textoff),
+      tostring(win ~= -1 and vim.api.nvim_win_get_width(win)), vim.inspect(vim.fn.win_findbuf(buf))))
+    -- collect header/footer extmark widths per row
+    local marks = vim.api.nvim_buf_get_extmarks(buf, nb.border_ns, 0, -1, { details = true })
+    local frames = {}
+    for _, m in ipairs(marks) do
+      for _, vl in ipairs(m[4].virt_lines or {}) do
+        local s = ""
+        for _, c in ipairs(vl) do s = s .. (c[1] or "") end
+        if s:find("#%d") or s:find("Python") or s:find("Markdown") then
+          table.insert(frames, string.format("  row %d  width=%d  %q", m[2], vim.fn.strwidth(s), s:sub(1, 24)))
+        end
+      end
+    end
+    table.insert(out, "frames (want width == win width " .. tostring(info.width) .. "):")
+    vim.list_extend(out, frames)
+    -- statuscolumn sample for the first source line of each cell
+    for i, r in ipairs(CellMode.ranges(buf)) do
+      local sc = CellMode._statuscol_for(buf, r.start + 1, 0):gsub("%%#%w+#", ""):gsub("%%%*", "")
+      table.insert(out, string.format("  cell %d line %d statuscol=%q", i, r.start + 1, sc))
+    end
+    local msg = table.concat(out, "\n")
+    print(msg)
+    -- also stash to a register + a file so it's easy to copy
+    pcall(vim.fn.setreg, "+", msg)
+    pcall(function()
+      local f = io.open(vim.fn.stdpath("cache") .. "/jupynvim_debug.txt", "w")
+      if f then f:write(msg); f:close() end
+    end)
+  end, {})
+
+  -- :JupynvimDebugHl — dump every highlight source at the cursor (treesitter,
+  -- semantic tokens, syntax, jupynvim extmarks) with each group's resolved
+  -- foreground. Put the cursor on a line that looks wrong (e.g. gray output)
+  -- and run this; it tells us exactly which group is painting it instead of
+  -- guessing from a screenshot.
+  vim.api.nvim_create_user_command("JupynvimDebugHl", function()
+    local buf = vim.api.nvim_get_current_buf()
+    local win = vim.api.nvim_get_current_win()
+    local pos = vim.api.nvim_win_get_cursor(win)
+    local row, col = pos[1] - 1, pos[2]
+    local function fg_of(group)
+      local seen = {}
+      local name = group
+      while name and not seen[name] do
+        seen[name] = true
+        local h = vim.api.nvim_get_hl(0, { name = name })
+        if h.fg then return string.format("#%06x", h.fg) end
+        if h.link then name = h.link else break end
+      end
+      return "(no fg" .. (group ~= name and " via " .. tostring(name) or "") .. ")"
+    end
+    local out = {}
+    local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
+    table.insert(out, string.format("row=%d col=%d text=%q", row, col, line:sub(1, 40)))
+    table.insert(out, "Normal fg = " .. fg_of("Normal")
+      .. " | JupynvimOutputText -> " .. fg_of("JupynvimOutputText"))
+    local winhl = vim.wo[win].winhighlight
+    table.insert(out, "winhighlight = " .. (winhl ~= "" and winhl or "(none)"))
+    local info = vim.inspect_pos(buf, row, math.max(col, 0))
+    for _, t in ipairs(info.treesitter or {}) do
+      local g = "@" .. (t.capture or "?") .. "." .. (t.lang or "?")
+      table.insert(out, "  treesitter " .. g .. "  fg=" .. fg_of(g) .. " (hl=" .. tostring(t.hl_group) .. ")")
+    end
+    for _, s in ipairs(info.semantic_tokens or {}) do
+      local g = s.opts and s.opts.hl_group or "?"
+      table.insert(out, "  semantic " .. tostring(g) .. "  fg=" .. fg_of(g)
+        .. " prio=" .. tostring(s.opts and s.opts.priority))
+    end
+    for _, sy in ipairs(info.syntax or {}) do
+      table.insert(out, "  syntax " .. tostring(sy.hl_group) .. "  fg=" .. fg_of(sy.hl_group))
+    end
+    for _, e in ipairs(info.extmarks or {}) do
+      local g = e.opts and (e.opts.hl_group or e.opts.line_hl_group)
+      if g then
+        table.insert(out, "  extmark[" .. tostring(e.ns) .. "] " .. tostring(g)
+          .. "  fg=" .. fg_of(g) .. " prio=" .. tostring(e.opts.priority))
+      end
+    end
+    if #info.treesitter == 0 and #(info.semantic_tokens or {}) == 0 and #(info.syntax or {}) == 0 then
+      table.insert(out, "  (no treesitter / semantic / syntax at this position)")
+    end
+    local msg = table.concat(out, "\n")
+    print(msg)
+    pcall(vim.fn.setreg, "+", msg)
+    pcall(function()
+      local f = io.open(vim.fn.stdpath("cache") .. "/jupynvim_debug.txt", "w")
+      if f then f:write(msg); f:close() end
+    end)
+  end, {})
+
+  -- :JupynvimExplorer — open the explorer dispatcher (remote tree if an SSH
+  -- session is active, else local). Same as the explorer_keys binding.
+  vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
+
+  -- :JupynvimRemoteCd <alias> <path> — re-root the remote explorer at <path>
+  -- (absolute remote path, e.g. /ocean/projects/<alloc>/shared). Lets you
+  -- browse/edit anywhere on the remote, not just $HOME. In the tree, `-` roots
+  -- up one level and `.` prompts for a path.
+  vim.api.nvim_create_user_command("JupynvimRemoteCd", function(o)
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    local alias = parts[1] or M._active_alias
+    local path = parts[2] or parts[1]
+    if not alias or not path or (#parts < 2 and not M._active_alias) then
+      vim.notify("usage: :JupynvimRemoteCd <alias> <path>", vim.log.levels.WARN)
+      return
+    end
+    if #parts == 1 and M._active_alias then alias = M._active_alias; path = parts[1] end
+    M._active_alias = alias
+    require("jupynvim.remote_explorer").set_root(alias, path)
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
+    end,
+  })
+
+  -- :JupynvimCrossBuild — cross-compile the linux backend binary locally
+  -- (static musl, runs on PSC's old glibc). Output is auto-uploaded to remotes
+  -- on the next connect. One-time setup: brew install zig; cargo install
+  -- cargo-zigbuild; rustup target add x86_64-unknown-linux-musl.
+  -- Builds every installed linux-musl rustup target (x86_64 always once
+  -- added; add aarch64-unknown-linux-musl for arm64 remotes like AWS
+  -- Graviton). Auto-upload then picks the right one per remote via uname -m.
+  vim.api.nvim_create_user_command("JupynvimCrossBuild", function()
+    local root = plugin_root()
+    local manifest = root .. "/core/Cargo.toml"
+    local installed = vim.fn.systemlist({ "rustup", "target", "list", "--installed" }) or {}
+    local targets = {}
+    for _, t in ipairs(installed) do
+      if t:match("linux%-musl$") then table.insert(targets, t) end
+    end
+    if #targets == 0 then
+      vim.notify("jupynvim: no linux-musl rustup targets installed.\n" ..
+                 "  rustup target add x86_64-unknown-linux-musl" ..
+                 "  (and aarch64-unknown-linux-musl for arm64 remotes)", vim.log.levels.WARN)
+      return
+    end
+    local function build(i)
+      if i > #targets then return end
+      local triple = targets[i]
+      vim.notify("jupynvim: cross-building " .. triple .. " ...", vim.log.levels.INFO)
+      vim.system({
+        "cargo", "zigbuild", "--release", "--target", triple, "--manifest-path", manifest,
+      }, { text = true }, function(res)
+        vim.schedule(function()
+          if res.code == 0 then
+            M._binary_verified = {}  -- force re-upload check on next connect
+            vim.notify("jupynvim: " .. triple .. " OK -> " ..
+              root .. "/core/target/" .. triple .. "/release/jupynvim-core",
+              vim.log.levels.INFO)
+          else
+            vim.notify("jupynvim: " .. triple .. " build failed:\n" ..
+              (res.stderr or res.stdout or "?"), vim.log.levels.ERROR)
+          end
+          build(i + 1)
+        end)
+      end)
+    end
+    build(1)
+  end, {})
+
+  -- :JupynvimUseJob <alias> [<jobid>]  — route next backend spawn through
+  -- srun --jobid=N --overlap. Omit jobid to clear (back to login node).
+  vim.api.nvim_create_user_command("JupynvimUseJob", function(o)
+    local parts = vim.split(o.args, " ", { trimempty = true })
+    if #parts == 0 then
+      vim.notify("usage: :JupynvimUseJob <alias> [<jobid>]", vim.log.levels.WARN)
+      return
+    end
+    M.use_job(parts[1], parts[2] or "")
+  end, {
+    nargs = "+",
+    complete = function(_, line)
+      local words = vim.split(line, " ", { trimempty = true })
+      if #words <= 2 then
+        local names = {}
+        for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+        return names
+      end
+      return {}
+    end,
+  })
+
+  -- :JupynvimConnect <alias>  — open a terminal split for interactive SSH
+  -- auth (password / 2FA). Sets up a ControlMaster socket; future
+  -- :JupynvimOpenRemote calls for this alias reuse it without prompting.
+  -- :JupynvimConnect                 -> pick a profile (or "new connection")
+  -- :JupynvimConnect <alias>         -> connect a configured profile
+  -- :JupynvimConnect <user@host>     -> ad-hoc connection (session profile;
+  --                                     add to config.remote to persist)
+  vim.api.nvim_create_user_command("JupynvimConnect", function(o)
+    local arg = vim.trim(o.args or "")
+    if arg == "" then return M.connect_choose() end
+    if (M.config.remote or {})[arg] then return M.connect(arg) end
+    -- ssh-config aliases (e.g. a gcloud/EC2 Host entry) have no @ or dot;
+    -- accept them when they exist in ~/.ssh/config.
+    if vim.tbl_contains(M._ssh_config_hosts(), arg)
+       or arg:find("@") or arg:find("%.") then
+      return M.connect_adhoc(arg)
+    end
+    vim.notify("jupynvim: no profile or ssh-config host '" .. arg ..
+      "'. Use <user@host> for a new connection.", vim.log.levels.WARN)
+  end, {
+    nargs = "?",
+    complete = function()
+      -- Same filtered/deduped list as the chooser: one name per real machine.
+      local names = {}
+      for _, t in ipairs(M._connect_targets()) do table.insert(names, t.name) end
+      return names
+    end,
+  })
+
+  -- :JupynvimLspStatus — dump the remote-LSP attach chain breadcrumbs
+  -- (resolved servers, probe/install results, root, server/client state).
+  vim.api.nvim_create_user_command("JupynvimLspStatus", function()
+    require("jupynvim.remote_lsp").status()
+  end, {})
+
+  -- :JupynvimRpcStats — print per-method RPC counts since the last reset, then
+  -- reset. Run once to clear, do the laggy action (e.g. j/k around a big cell),
+  -- run again: the counts are exactly what crossed the link during that window.
+  vim.api.nvim_create_user_command("JupynvimRpcStats", function()
+    local rpc = require("jupynvim.rpc")
+    local function fmt(label, t)
+      local rows = {}
+      for k, v in pairs(t) do rows[#rows + 1] = { k, v } end
+      table.sort(rows, function(a, b) return a[2] > b[2] end)
+      local lines = { label .. ":" }
+      if #rows == 0 then lines[#lines + 1] = "    (none)" end
+      for _, r in ipairs(rows) do lines[#lines + 1] = string.format("    %5d  %s", r[2], r[1]) end
+      return table.concat(lines, "\n")
+    end
+    local out = fmt("outgoing (nvim -> backend)", rpc.stats.out)
+    local inc = fmt("incoming (backend -> nvim)", rpc.stats.inc)
+    rpc.reset_stats()
+    vim.notify("jupynvim RPC since last reset (now reset):\n" .. out .. "\n" .. inc, vim.log.levels.INFO)
+  end, {})
+
+  -- :JupynvimRenderStats — local-render counters (frame re-renders, tty/kitty
+  -- writes and their byte volume) since last reset, then reset. Pairs with
+  -- JupynvimRpcStats: if RPC is zero but these are high during the laggy
+  -- action, the cost is local rendering, not the link.
+  vim.api.nvim_create_user_command("JupynvimRenderStats", function()
+    local img = require("jupynvim.image")
+    local rnd = require("jupynvim.render")
+    local msg = string.format(
+      "jupynvim render since last reset (now reset):\n    renders:   %d\n    tty writes: %d  (%d KB)",
+      rnd._render_n or 0, img._tty_n or 0, math.floor((img._tty_bytes or 0) / 1024))
+    rnd._render_n, img._tty_n, img._tty_bytes = 0, 0, 0
+    vim.notify(msg, vim.log.levels.INFO)
+  end, {})
+
+  -- :JupynvimPauseAnimations — toggle all gif animation timers. A/B test for
+  -- whether animation drives navigation lag over a remote backend, and a
+  -- workaround if it does.
+  vim.api.nvim_create_user_command("JupynvimPauseAnimations", function()
+    local img = require("jupynvim.image")
+    if img.animations_paused() then
+      img.resume_animations()
+      vim.notify("jupynvim: animations resumed", vim.log.levels.INFO)
+    else
+      img.pause_animations()
+      vim.notify("jupynvim: animations paused", vim.log.levels.INFO)
+    end
+  end, {})
+
+  -- :JupynvimLspRetry [alias] — clear cached LSP provisioning failures and
+  -- re-attach remote language servers for open jupynvim:// buffers.
+  vim.api.nvim_create_user_command("JupynvimLspRetry", function(o)
+    local alias = vim.trim(o.args or "")
+    require("jupynvim.remote_lsp").retry(alias ~= "" and alias or M._active_alias)
+  end, {
+    nargs = "?",
+    complete = function()
+      local names = {}
+      for name, _ in pairs(M.config.remote or {}) do table.insert(names, name) end
+      return names
+    end,
+  })
+
+  -- :JupynvimDisconnect <alias>  — close the ControlMaster socket. Completes
+  -- with the same target list as Connect (profiles + ssh-config hosts), with
+  -- live-socket targets first.
+  vim.api.nvim_create_user_command("JupynvimDisconnect", function(o) M.disconnect(o.args) end, {
+    nargs = 1,
+    complete = function()
+      local names = {}
+      for _, t in ipairs(M._connect_targets()) do table.insert(names, t.name) end
+      return names
+    end,
+  })
+
+  -- On nvim exit we only stop the backend SUBPROCESSES (clean shutdown of
+  -- jupynvim-core over each transport), but DELIBERATELY LEAVE the SSH
+  -- ControlMaster sockets alive. ControlPersist keeps them for their TTL
+  -- (4h), so the next nvim session reuses them WITHOUT re-auth — critical
+  -- with password+2FA logins where re-auth every restart is painful.
+  -- Use :JupynvimDisconnect <alias> for explicit teardown.
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = group,
+    callback = function()
+      for _, client in pairs(M.clients or {}) do
+        pcall(function() client:stop() end)
+      end
+    end,
+  })
   vim.api.nvim_create_user_command("JupynvimRunCell", function() M.run_cell(0, { advance = false }) end, {})
   vim.api.nvim_create_user_command("JupynvimRunAll", function() M.run_all(0) end, {})
   vim.api.nvim_create_user_command("JupynvimKernel", function() M.kernel_picker(0) end, {})

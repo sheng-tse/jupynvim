@@ -15,6 +15,27 @@ use tokio::sync::RwLock as AsyncRwLock;
 use crate::kernel::{Kernel, KernelEvent};
 use crate::notebook::{Cell, CellType, Notebook};
 
+/// Record the Jupyter end-of-execution time (`shell.execute_reply`) on a cell.
+/// Only stamps when the start (`iopub.execute_input`) is already present and the
+/// end isn't yet, so it is idempotent: the iopub status:idle path and the shell
+/// execute_reply path can both call it and whichever runs first wins. Requiring
+/// the start to exist is what makes this race-proof — status:idle is always
+/// applied after execute_input on the shared iopub stream.
+fn stamp_end(cell: &mut Cell) {
+    if let Some(exec) = cell
+        .metadata
+        .get_mut("execution")
+        .and_then(|v| v.as_object_mut())
+    {
+        if exec.contains_key("iopub.execute_input") && !exec.contains_key("shell.execute_reply") {
+            exec.insert(
+                "shell.execute_reply".into(),
+                json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CellSnapshot {
     pub id: String,
@@ -22,6 +43,7 @@ pub struct CellSnapshot {
     pub source: String,
     pub execution_count: Option<u64>,
     pub outputs: Vec<Value>,
+    pub metadata: Value,
 }
 
 impl From<&Cell> for CellSnapshot {
@@ -32,6 +54,7 @@ impl From<&Cell> for CellSnapshot {
             source: c.source.clone(),
             execution_count: c.execution_count,
             outputs: c.outputs.clone(),
+            metadata: c.metadata.clone(),
         }
     }
 }
@@ -166,15 +189,23 @@ impl Session {
         for cell in nb.cells.iter_mut() {
             cell.outputs.clear();
             cell.execution_count = None;
+            // drop the execution-timing stamp too, so it isn't re-saved and the
+            // frontend can't rebuild the "✓ 1.6s" badge from it after a clear
+            if let Some(obj) = cell.metadata.as_object_mut() {
+                obj.remove("execution");
+            }
         }
     }
 
-    /// Wipe outputs and execution_count for a single cell by id.
+    /// Wipe outputs, execution_count and timing for a single cell by id.
     pub fn clear_cell_output(&self, cell_id: &str) {
         let mut nb = self.notebook.write();
         if let Some(cell) = nb.cells.iter_mut().find(|c| c.id == cell_id) {
             cell.outputs.clear();
             cell.execution_count = None;
+            if let Some(obj) = cell.metadata.as_object_mut() {
+                obj.remove("execution");
+            }
         }
     }
 
@@ -334,9 +365,35 @@ impl Session {
             KernelEvent::ExecuteInput { execution_count, .. } => {
                 cell.execution_count = Some(*execution_count);
                 cell.outputs.clear(); // clear previous outputs at start of new execution
+                // Record Jupyter-standard timing metadata (the same keys
+                // JupyterLab's "record timing" writes and VSCode reads), so
+                // the execution duration survives save + reopen.
+                if !cell.metadata.is_object() {
+                    cell.metadata = json!({});
+                }
+                cell.metadata["execution"] = json!({
+                    "iopub.execute_input":
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                });
                 json!({ "kind": "execute_input", "execution_count": execution_count })
             }
             KernelEvent::Status { execution_state, .. } => {
+                // Stamp the end-of-execution time here, on the iopub
+                // status:idle event, rather than relying solely on the shell
+                // execute_reply. execute_input (iopub) and execute_reply
+                // (shell) arrive on two sockets drained by two tasks into one
+                // channel, so execute_reply can be applied BEFORE the
+                // execute_input that creates metadata.execution — and the end
+                // stamp is then dropped, so the duration vanishes after
+                // save+reopen. status:idle rides the same iopub stream as
+                // execute_input, so it is always applied after it. We write
+                // the JupyterLab/VSCode key shell.execute_reply so the timing
+                // round-trips for those tools too. stamp_end is idempotent, so
+                // this and the execute_reply arm below cooperate: whichever
+                // runs first records the end and the other is a no-op.
+                if execution_state == "idle" {
+                    stamp_end(cell);
+                }
                 json!({ "kind": "status", "state": execution_state })
             }
             KernelEvent::ExecuteReply {
@@ -344,6 +401,7 @@ impl Session {
                 execution_count,
                 ..
             } => {
+                stamp_end(cell); // fallback; status:idle above is the primary path
                 json!({ "kind": "execute_reply", "status": status, "execution_count": execution_count })
             }
             KernelEvent::ClearOutput { wait, .. } => {
@@ -367,4 +425,120 @@ pub struct SessionSnapshot {
     pub cells: Vec<CellSnapshot>,
     pub kernel_name: Option<String>,
     pub metadata: Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::KernelEvent;
+
+    fn session_with_one_code_cell() -> (Session, String) {
+        let nb = Notebook::empty(); // one empty code cell
+        let cell_id = nb.cells[0].id.clone();
+        let s = Session {
+            id: "s1".into(),
+            path: PathBuf::from("/tmp/jupynvim-test.ipynb"),
+            notebook: RwLock::new(nb),
+            kernel: AsyncRwLock::new(None),
+            msg_to_cell: DashMap::new(),
+        };
+        s.msg_to_cell.insert("msg1".into(), cell_id.clone());
+        (s, cell_id)
+    }
+
+    fn execution(s: &Session, cell_id: &str) -> Value {
+        let nb = s.notebook.read();
+        nb.cells
+            .iter()
+            .find(|c| c.id == cell_id)
+            .unwrap()
+            .metadata
+            .get("execution")
+            .cloned()
+            .unwrap_or(json!(null))
+    }
+
+    #[test]
+    fn clear_outputs_drops_execution_metadata() {
+        // Clearing a cell's output must also drop metadata.execution, else the
+        // frontend's saved_duration_ns rebuilds the "✓ 1.6s" badge from it.
+        let (s, cid) = session_with_one_code_cell();
+        {
+            let mut nb = s.notebook.write();
+            let cell = nb.cells.iter_mut().find(|c| c.id == cid).unwrap();
+            cell.execution_count = Some(4);
+            cell.metadata["execution"] = json!({
+                "iopub.execute_input": "2026-06-13T00:00:00.100Z",
+                "shell.execute_reply": "2026-06-13T00:00:00.450Z",
+            });
+        }
+        assert!(execution(&s, &cid) != json!(null), "setup: timing should be set");
+        s.clear_outputs();
+        let nb = s.notebook.read();
+        let cell = nb.cells.iter().find(|c| c.id == cid).unwrap();
+        assert!(cell.execution_count.is_none(), "execution_count not cleared");
+        assert!(
+            cell.metadata.get("execution").is_none(),
+            "timing metadata not cleared by clear_outputs"
+        );
+    }
+
+    #[test]
+    fn end_stamp_survives_reply_before_input_race() {
+        // The bug: shell execute_reply (its own socket/task) gets applied
+        // BEFORE the iopub execute_input that creates metadata.execution, so
+        // the old code dropped the end stamp and the duration vanished after
+        // save+reopen. status:idle (same iopub stream as execute_input, always
+        // applied after it) must still record the end.
+        let (s, cell_id) = session_with_one_code_cell();
+        s.apply_event(&KernelEvent::ExecuteReply {
+            parent_msg_id: Some("msg1".into()),
+            status: "ok".into(),
+            execution_count: 4,
+        });
+        s.apply_event(&KernelEvent::ExecuteInput {
+            parent_msg_id: Some("msg1".into()),
+            execution_count: 4,
+            code: "x = 1".into(),
+        });
+        s.apply_event(&KernelEvent::Status {
+            parent_msg_id: Some("msg1".into()),
+            execution_state: "idle".into(),
+        });
+        let exec = execution(&s, &cell_id);
+        assert!(exec.get("iopub.execute_input").is_some(), "start missing");
+        assert!(
+            exec.get("shell.execute_reply").is_some(),
+            "end stamp lost to the reply-before-input race"
+        );
+    }
+
+    #[test]
+    fn end_stamp_normal_order() {
+        let (s, cell_id) = session_with_one_code_cell();
+        s.apply_event(&KernelEvent::ExecuteInput {
+            parent_msg_id: Some("msg1".into()),
+            execution_count: 1,
+            code: "x = 1".into(),
+        });
+        s.apply_event(&KernelEvent::ExecuteReply {
+            parent_msg_id: Some("msg1".into()),
+            status: "ok".into(),
+            execution_count: 1,
+        });
+        let exec = execution(&s, &cell_id);
+        assert!(exec.get("shell.execute_reply").is_some(), "end missing");
+    }
+
+    #[test]
+    fn status_idle_without_execution_is_noop() {
+        // A bare status:idle (e.g. from kernel startup, no execute_input) must
+        // not invent an execution object.
+        let (s, cell_id) = session_with_one_code_cell();
+        s.apply_event(&KernelEvent::Status {
+            parent_msg_id: Some("msg1".into()),
+            execution_state: "idle".into(),
+        });
+        assert!(execution(&s, &cell_id).is_null(), "idle fabricated execution metadata");
+    }
 }

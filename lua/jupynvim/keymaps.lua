@@ -44,6 +44,7 @@ M.defaults = {
   save_image       = { mode = "n",          lhs = "<leader>nI", desc = "Save cell image" },
   delete_image     = { mode = "n",          lhs = "<leader>nD", desc = "Delete cell image" },
   refresh          = { mode = "n",          lhs = "<leader>nL", desc = "Refresh notebook display" },
+  open_link        = { mode = "n",          lhs = "gx",         desc = "Open link under cursor" },
 }
 
 -- Action name → function-builder taking (buf, api).
@@ -78,6 +79,7 @@ local actions = {
   save_image       = function(buf, api) return function() api.save_image(buf) end end,
   delete_image     = function(buf, api) return function() api.delete_image(buf) end end,
   refresh          = function(buf, api) return function() api.refresh(buf) end end,
+  open_link        = function(buf, api) return function() api.open_link(buf) end end,
 }
 
 function M.attach(buf, api)

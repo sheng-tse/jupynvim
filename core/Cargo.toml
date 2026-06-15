@@ -49,6 +49,21 @@ dashmap = "6"
 once_cell = "1"
 base64 = "0.22"
 
+# Pseudo-terminal allocation (Phase 3: remote terminals). Lets the spawned
+# shell behave like a real terminal — colors, line editing, $TERM etc. —
+# rather than line-buffered piped stdio.
+portable-pty = "0.8"
+
+# Search (Phase 4). Same crates that power ripgrep: `ignore` for the
+# .gitignore-aware directory walker, `regex` for the matching engine.
+ignore = "0.4"
+regex = "1"
+
+# Filesystem watching (Phase 5). Cross-platform: FSEvent on macOS,
+# inotify on Linux, kqueue on BSD. Notifies client via fs_event for
+# auto-refresh in the file browser and external-change detection.
+notify = "6"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
