@@ -205,9 +205,10 @@ Once connected:
   active, `<leader>e` and your file/grep pickers target the remote and fall
   back to local when not.
 - **Terminals, VSCode-style.** A bottom PTY shell (`:JupynvimTerm` or
-  `<C-/>`) and a second one on the right (`<leader>tr`) tile and resize
-  together, so you can run a job in one and a tool like Claude Code in the
-  other. Both run on the remote, with vi editing on the shell prompt.
+  `<C-/>`) and a second one on the right (`<leader>tr`) tile together, so you
+  can run a job in one and a tool like Claude Code in the other. Resize with
+  Shift+hjkl in normal mode (or Ctrl+arrows, also in insert). Both run on the
+  remote, with vi editing on the shell prompt.
 - **Search.** `:JupynvimGrep <alias> <pattern> [<path>]` runs ripgrep on the
   remote and fills the quickfix list.
 - **Slurm.** `:JupynvimUseJob <alias> [<jobid>]` routes the kernel through an
