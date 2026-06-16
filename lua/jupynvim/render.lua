@@ -35,6 +35,7 @@ local HL_STREAM     = "JupynvimStream"
 local HL_RESULT     = "JupynvimResult"
 local HL_OK         = "JupynvimExecOk"
 local HL_MORE       = "JupynvimOutputMore"
+local HL_SEPARATOR  = "JupynvimSeparator"
 
 local function repeat_char(ch, n)
   if n <= 0 then return "" end
@@ -697,17 +698,17 @@ end
 function M.setup_highlights()
   local hl = vim.api.nvim_set_hl
   -- Visible borders; the selected cell's border goes bright + heavy glyphs.
-  hl(0, HL_BORDER,     { default = true, fg = "#7aa2f7" })
-  hl(0, HL_BORDER_SEL, { default = true, fg = "#7dcfff", bold = true })
-  hl(0, HL_HEADER,     { default = true, fg = "#565f89" })
-  hl(0, HL_BUSY,       { default = true, fg = "#e0af68", bold = true })
-  hl(0, HL_OUTPUT,     { default = true, fg = "#a9b1d6" })
-  hl(0, HL_ERROR,      { default = true, fg = "#f7768e", bold = true })
-  hl(0, HL_STREAM,     { default = true, fg = "#c0caf5" })
-  hl(0, HL_RESULT,     { default = true, fg = "#bb9af7" })
-  hl(0, HL_OK,         { default = true, fg = "#9ece6a" })
-  hl(0, HL_MORE,       { default = true, fg = "#565f89", italic = true })
-  hl(0, "JupynvimSeparator", { default = true, fg = "#414868" })
+  hl(0, HL_BORDER,     { default = true, link = "Comment" })
+  hl(0, HL_BORDER_SEL, { default = true, link = "DiagnosticInfo" })   --unused
+  hl(0, HL_HEADER,     { default = true, link = "Comment" })
+  hl(0, HL_BUSY,       { default = true, link = "DiagnosticWarn" })
+  hl(0, HL_OUTPUT,     { default = true, link = "NonText" })
+  hl(0, HL_ERROR,      { default = true, link = "DiagnosticError" })
+  hl(0, HL_STREAM,     { default = true, link = "Normal" })           --unused
+  hl(0, HL_RESULT,     { default = true, link = "Constant" })         --unused
+  hl(0, HL_OK,         { default = true, link = "DiagnosticOk" })
+  hl(0, HL_MORE,       { default = true, link = "Comment" })          --unused
+  hl(0, HL_SEPARATOR,  { default = true, link = "WinSeparator" })     --unused
   -- Output regions render as plain TEXT (mask treesitter/LSP code colors).
   -- A whole block of output drawn in the theme's plain Normal can read as
   -- "gray" sitting next to syntax-highlighted code. So by default lift the
