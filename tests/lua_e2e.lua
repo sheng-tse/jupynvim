@@ -72,6 +72,23 @@ test_pcall("open populates buffer with single set of cell sources", function()
   os.remove(p)
 end)
 
+-- T2b: Notebook.get(0) must resolve to the current buffer. The :Jupynvim*
+-- commands call run_cell(0)/run_all(0)/clear_outputs(0)/etc, and `notebooks` is
+-- keyed by real bufnr, so without the 0->current resolution NB.get(0) is nil and
+-- every command silently no-ops (PR #19). Keymaps pass the real buf, masking it.
+test_pcall("Notebook.get(0) resolves to the current buffer", function()
+  local p = vim.fn.tempname() .. ".ipynb"
+  fresh_nb(p)
+  local buf = J.open(p)
+  wait_until(function() return NB.get(buf) ~= nil end, 3000)
+  vim.api.nvim_set_current_buf(buf)
+  local by_zero = NB.get(0)
+  report("Notebook.get(0) resolves to the current buffer",
+         by_zero ~= nil and by_zero == NB.get(buf),
+         by_zero == nil and "get(0) returned nil (commands would no-op)" or "mismatch")
+  os.remove(p)
+end)
+
 -- T3: Idempotency — opening the same path twice doesn't double the buffer
 test_pcall("re-open doesn't duplicate buffer content", function()
   local p = vim.fn.tempname() .. ".ipynb"
