@@ -161,7 +161,14 @@ function M.create(buf, path, session_id, snapshot)
   return nb
 end
 
-function M.get(buf) return notebooks[buf] end
+function M.get(buf)
+    -- arrays start from 1, passing 0 is equivalent to passing current buffer
+    -- fixes commands JupynvimRunCell and others not working
+    if buf == 0 then
+        buf = vim.api.nvim_get_current_buf()
+    end
+    return notebooks[buf]
+end
 
 function M.remove(buf)
   notebooks[buf] = nil
