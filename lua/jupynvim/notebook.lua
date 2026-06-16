@@ -161,7 +161,12 @@ function M.create(buf, path, session_id, snapshot)
   return nb
 end
 
-function M.get(buf) return notebooks[buf] end
+function M.get(buf)
+  -- 0 means the current buffer (the :Jupynvim* commands pass 0); the table is
+  -- keyed by real bufnr, so resolve 0 before the lookup.
+  if buf == 0 then buf = vim.api.nvim_get_current_buf() end
+  return notebooks[buf]
+end
 
 function M.remove(buf)
   notebooks[buf] = nil
