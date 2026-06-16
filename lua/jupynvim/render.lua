@@ -697,17 +697,17 @@ end
 function M.setup_highlights()
   local hl = vim.api.nvim_set_hl
   -- Visible borders; the selected cell's border goes bright + heavy glyphs.
-  hl(0, HL_BORDER,     { fg = "#7aa2f7" })
-  hl(0, HL_BORDER_SEL, { fg = "#7dcfff", bold = true })
-  hl(0, HL_HEADER,     { fg = "#565f89" })
-  hl(0, HL_BUSY,       { fg = "#e0af68", bold = true })
-  hl(0, HL_OUTPUT,     { fg = "#a9b1d6" })
-  hl(0, HL_ERROR,      { fg = "#f7768e", bold = true })
-  hl(0, HL_STREAM,     { fg = "#c0caf5" })
-  hl(0, HL_RESULT,     { fg = "#bb9af7" })
-  hl(0, HL_OK,         { fg = "#9ece6a" })
-  hl(0, HL_MORE,       { fg = "#565f89", italic = true })
-  hl(0, "JupynvimSeparator", { fg = "#414868" })
+  hl(0, HL_BORDER,     { default = true, fg = "#7aa2f7" })
+  hl(0, HL_BORDER_SEL, { default = true, fg = "#7dcfff", bold = true })
+  hl(0, HL_HEADER,     { default = true, fg = "#565f89" })
+  hl(0, HL_BUSY,       { default = true, fg = "#e0af68", bold = true })
+  hl(0, HL_OUTPUT,     { default = true, fg = "#a9b1d6" })
+  hl(0, HL_ERROR,      { default = true, fg = "#f7768e", bold = true })
+  hl(0, HL_STREAM,     { default = true, fg = "#c0caf5" })
+  hl(0, HL_RESULT,     { default = true, fg = "#bb9af7" })
+  hl(0, HL_OK,         { default = true, fg = "#9ece6a" })
+  hl(0, HL_MORE,       { default = true, fg = "#565f89", italic = true })
+  hl(0, "JupynvimSeparator", { default = true, fg = "#414868" })
   -- Output regions render as plain TEXT (mask treesitter/LSP code colors).
   -- A whole block of output drawn in the theme's plain Normal can read as
   -- "gray" sitting next to syntax-highlighted code. So by default lift the
@@ -718,7 +718,7 @@ function M.setup_highlights()
   -- ColorScheme, so it always reflects the active Normal, never a stale snap.
   local out_color = (require("jupynvim").config or {}).output_color
   if type(out_color) == "string" and out_color ~= "" then
-    hl(0, "JupynvimOutputText", { fg = out_color })
+    hl(0, "JupynvimOutputText", { default = true, fg = out_color })
   else
     local nrm = vim.api.nvim_get_hl(0, { name = "Normal" })
     if vim.o.background ~= "light" and type(nrm.fg) == "number" then
@@ -727,9 +727,9 @@ function M.setup_highlights()
       local b = nrm.fg % 256
       local function lift(c) return math.floor(c + (255 - c) * 0.45) end
       hl(0, "JupynvimOutputText",
-        { fg = string.format("#%02x%02x%02x", lift(r), lift(g), lift(b)) })
+        { default = true, fg = string.format("#%02x%02x%02x", lift(r), lift(g), lift(b)) })
     else
-      hl(0, "JupynvimOutputText", { link = "Normal" })
+      hl(0, "JupynvimOutputText", { default = true, link = "Normal" })
     end
   end
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
