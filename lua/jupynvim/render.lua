@@ -698,7 +698,7 @@ end
 function M.setup_highlights()
   local hl = vim.api.nvim_set_hl
   -- Visible borders; the selected cell's border goes bright + heavy glyphs.
-  hl(0, HL_BORDER,     { default = true, link = "Comment" })
+  hl(0, HL_BORDER,     { default = true, link = "FloatBorder" })
   hl(0, HL_BORDER_SEL, { default = true, link = "DiagnosticInfo" })   --unused
   hl(0, HL_HEADER,     { default = true, link = "Comment" })
   hl(0, HL_BUSY,       { default = true, link = "DiagnosticWarn" })
@@ -719,7 +719,8 @@ function M.setup_highlights()
   -- ColorScheme, so it always reflects the active Normal, never a stale snap.
   local out_color = (require("jupynvim").config or {}).output_color
   if type(out_color) == "string" and out_color ~= "" then
-    hl(0, "JupynvimOutputText", { default = true, fg = out_color })
+    -- explicit user config: a hard set so it always overrides, no `default`.
+    hl(0, "JupynvimOutputText", { fg = out_color })
   else
     local nrm = vim.api.nvim_get_hl(0, { name = "Normal" })
     if vim.o.background ~= "light" and type(nrm.fg) == "number" then
