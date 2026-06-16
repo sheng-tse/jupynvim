@@ -70,6 +70,12 @@ jobs:
       - name: list artifacts
         run: ls -lah artifacts/
 
+      - name: generate SHA256SUMS
+        run: |
+          cd artifacts
+          sha256sum jupynvim-core-* > SHA256SUMS
+          cat SHA256SUMS
+
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*

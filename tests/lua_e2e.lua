@@ -55,6 +55,20 @@ test_pcall("plugin loads and ipynb autocmd registered", function()
   report("plugin loads and ipynb autocmd registered", #autos >= 1, "got " .. #autos .. " autocmds")
 end)
 
+-- T1b: install.lua SHA256SUMS parsing (prebuilt-binary integrity check).
+test_pcall("install: _expected_hash parses SHA256SUMS", function()
+  local install = require("jupynvim.install")
+  local sums =
+    "abc123  jupynvim-core-x86_64-unknown-linux-gnu\n" ..
+    "def456 *jupynvim-core-aarch64-apple-darwin\n"
+  local h1 = install._expected_hash(sums, "jupynvim-core-x86_64-unknown-linux-gnu")
+  local h2 = install._expected_hash(sums, "jupynvim-core-aarch64-apple-darwin")
+  local h3 = install._expected_hash(sums, "jupynvim-core-missing")
+  report("install: _expected_hash parses SHA256SUMS",
+         h1 == "abc123" and h2 == "def456" and h3 == nil,
+         ("h1=%s h2=%s h3=%s"):format(tostring(h1), tostring(h2), tostring(h3)))
+end)
+
 -- T2: Open notebook → buffer populated, no duplicates
 test_pcall("open populates buffer with single set of cell sources", function()
   local p = vim.fn.tempname() .. ".ipynb"
