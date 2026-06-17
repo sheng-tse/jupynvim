@@ -55,6 +55,20 @@ test_pcall("plugin loads and ipynb autocmd registered", function()
   report("plugin loads and ipynb autocmd registered", #autos >= 1, "got " .. #autos .. " autocmds")
 end)
 
+-- T1b: install.lua SHA256SUMS parsing (prebuilt-binary integrity check).
+test_pcall("install: _expected_hash parses SHA256SUMS", function()
+  local install = require("jupynvim.install")
+  local sums =
+    "abc123  jupynvim-core-x86_64-unknown-linux-gnu\n" ..
+    "def456 *jupynvim-core-aarch64-apple-darwin\n"
+  local h1 = install._expected_hash(sums, "jupynvim-core-x86_64-unknown-linux-gnu")
+  local h2 = install._expected_hash(sums, "jupynvim-core-aarch64-apple-darwin")
+  local h3 = install._expected_hash(sums, "jupynvim-core-missing")
+  report("install: _expected_hash parses SHA256SUMS",
+         h1 == "abc123" and h2 == "def456" and h3 == nil,
+         ("h1=%s h2=%s h3=%s"):format(tostring(h1), tostring(h2), tostring(h3)))
+end)
+
 -- T2: Open notebook → buffer populated, no duplicates
 test_pcall("open populates buffer with single set of cell sources", function()
   local p = vim.fn.tempname() .. ".ipynb"
@@ -69,6 +83,23 @@ test_pcall("open populates buffer with single set of cell sources", function()
   report("open populates buffer with single set of cell sources",
          #lines == 7 and #nb.cells == 3,
          "buf has " .. #lines .. " lines, " .. #nb.cells .. " cells")
+  os.remove(p)
+end)
+
+-- T2b: Notebook.get(0) must resolve to the current buffer. The :Jupynvim*
+-- commands call run_cell(0)/run_all(0)/clear_outputs(0)/etc, and `notebooks` is
+-- keyed by real bufnr, so without the 0->current resolution NB.get(0) is nil and
+-- every command silently no-ops (PR #19). Keymaps pass the real buf, masking it.
+test_pcall("Notebook.get(0) resolves to the current buffer", function()
+  local p = vim.fn.tempname() .. ".ipynb"
+  fresh_nb(p)
+  local buf = J.open(p)
+  wait_until(function() return NB.get(buf) ~= nil end, 3000)
+  vim.api.nvim_set_current_buf(buf)
+  local by_zero = NB.get(0)
+  report("Notebook.get(0) resolves to the current buffer",
+         by_zero ~= nil and by_zero == NB.get(buf),
+         by_zero == nil and "get(0) returned nil (commands would no-op)" or "mismatch")
   os.remove(p)
 end)
 

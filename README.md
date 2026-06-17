@@ -146,6 +146,18 @@ With [`lazy.nvim`](https://github.com/folke/lazy.nvim):
 That's it. Open any `.ipynb` and the kernel auto-starts based on the
 notebook's `kernelspec` metadata.
 
+## Security of the prebuilt binary
+
+The build step downloads `jupynvim-core` from the GitHub release over HTTPS and
+runs it. HTTPS protects the download in transit; on top of that the installer
+verifies the binary against the release's published `SHA256SUMS` and refuses to
+run it (building from source instead) if the hash does not match, which catches
+a corrupted or swapped artifact. It does not yet catch a release where both the
+binary and `SHA256SUMS` were replaced; signature verification for that is on the
+roadmap. If you would rather not trust the prebuilt at all, point `core_path` at
+a binary you built yourself, or build from source (the installer falls back to
+`cargo build` on unsupported platforms).
+
 ## Quick start
 
 Open an existing notebook with `:edit my-notebook.ipynb` or create a fresh
