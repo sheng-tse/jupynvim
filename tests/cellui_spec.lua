@@ -197,6 +197,25 @@ for _, c in ipairs(chunks) do s = s .. c[1] end
 assert(s:find("✗"), "error bar should show cross: " .. s)
 print("F. execution timing ok: " .. s)
 
+-- F3. a RUNNING cell paints the WHOLE frame in the busy color, not only the
+-- top: footer dashes thread border_hl and the statuscolumn left edge flips to
+-- JupynvimBusy. Previously only the top border reacted.
+nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 4 })
+assert(nb.cell_state["c3"].exec_state == "busy", "c3 should be busy")
+local bc3 = { bl = "╰", h = "─", br = "╯" }
+local fbusy = Render._footer_chunks(80, 7, bc3, "Python", nb.cells[3], nb.cell_state["c3"], "JupynvimBusy")
+-- check the corner + tail (pure border; the exec badge is busy-colored anyway,
+-- so "find any JupynvimBusy" would pass even without the fix).
+assert(fbusy[1][2] == "JupynvimBusy" and fbusy[#fbusy][2] == "JupynvimBusy",
+  "footer corner/tail dashes must use the busy border color while running")
+local r3 = CellMode.ranges(buf)[3]
+local sc3 = CellMode._statuscol_for(buf, r3.start + 1, 0)
+assert(sc3:find("JupynvimBusy", 1, true), "left edge must be JupynvimBusy while running: " .. sc3)
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+local sc3i = CellMode._statuscol_for(buf, r3.start + 1, 0)
+assert(sc3i:find("JupynvimBorder", 1, true), "left edge returns to JupynvimBorder when idle: " .. sc3i)
+print("F3. running cell paints the whole frame busy ok")
+
 -- F2. duration survives save + reopen: restored from jupyter-standard
 --     timing metadata (metadata.execution stamps)
 local ns2 = Notebook.saved_duration_ns({ execution = {

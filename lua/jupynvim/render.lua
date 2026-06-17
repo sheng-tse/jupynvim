@@ -299,28 +299,29 @@ M._exec_status_chunks = exec_status_chunks
 -- below the box. Returns a virt_line chunk array (the exec badge keeps its own
 -- highlights; the dashes/corners use HL_BORDER). Layout:
 --   ╰─ [n] ✓ 0.1s ───────────────────────────────────── Python ─╯
-local function footer_chunks(total_w, gut, bc, label, cell, st)
+local function footer_chunks(total_w, gut, bc, label, cell, st, border_hl)
+  border_hl = border_hl or HL_BORDER   -- busy cells pass HL_BUSY for a full-frame running color
   local prefix = repeat_char(" ", math.max(gut - 2, 0))
   local left = prefix .. bc.bl                                   -- "     ╰"
   local tail = label and (bc.h .. " " .. label .. " " .. bc.h .. bc.br) or bc.br
-  local chunks = { { left, HL_BORDER } }
+  local chunks = { { left, border_hl } }
   local mid_w = 0
   if cell and cell.cell_type == "code" then
     local exec = exec_status_chunks(cell, st)   -- {{" [n] ", hl}, {"✓ 0.1s", hl}}
     local lead = bc.h                            -- "─" (exec badge already starts with a space)
-    chunks[#chunks + 1] = { lead, HL_BORDER }
+    chunks[#chunks + 1] = { lead, border_hl }
     mid_w = mid_w + dw(lead)
     for _, c in ipairs(exec) do
       chunks[#chunks + 1] = c
       mid_w = mid_w + dw(c[1])
     end
     local sep = " " .. bc.h                       -- " ─" after the badge
-    chunks[#chunks + 1] = { sep, HL_BORDER }
+    chunks[#chunks + 1] = { sep, border_hl }
     mid_w = mid_w + dw(sep)
   end
   local pad = total_w - dw(left) - mid_w - dw(tail)
-  chunks[#chunks + 1] = { repeat_char(bc.h, math.max(pad, 0)), HL_BORDER }
-  chunks[#chunks + 1] = { tail, HL_BORDER }
+  chunks[#chunks + 1] = { repeat_char(bc.h, math.max(pad, 0)), border_hl }
+  chunks[#chunks + 1] = { tail, border_hl }
   return chunks
 end
 M._footer_chunks = footer_chunks
@@ -404,11 +405,11 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
 
   -- ── boxed editor: code cells always; markdown while being edited ──
   local bc = box_chars(selected)
-  local border_hl = HL_BORDER
+  local border_hl = busy and HL_BUSY or HL_BORDER   -- whole frame runs the busy color while executing
   local label = cell.cell_type == "code" and "Python" or "Markdown"
   local hdr = header_line(total_w, gut, cellno, busy, bc)
   vim.api.nvim_buf_set_extmark(buf, nb.border_ns, range.start, 0, {
-    virt_lines = { { { hdr, busy and HL_BUSY or border_hl } } },
+    virt_lines = { { { hdr, border_hl } } },
     virt_lines_above = true,
     virt_lines_leftcol = true,
   })
@@ -420,7 +421,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   local lines_below = {}
   -- Bottom border carries the exec status inline (see footer_chunks); no
   -- separate "[n] ✓ 0.1s" line below the box anymore.
-  table.insert(lines_below, footer_chunks(total_w, gut, bc, label, cell, st))
+  table.insert(lines_below, footer_chunks(total_w, gut, bc, label, cell, st, border_hl))
   local sub_lead = repeat_char(" ", gut)
   if cell.cell_type == "code" then
     if #(cell.outputs or {}) > 0 then

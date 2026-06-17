@@ -136,7 +136,9 @@ function M._statuscol_for(buf, lnum, virtnum)
   if virtnum < 0 or not in_src or not boxed then
     return bar .. string.rep(" ", M.GUTTER - 1)
   end
-  local edge = "%#JupynvimBorder#│%* "
+  local cbusy = cell and nb.cell_state and nb.cell_state[cell.id]
+    and nb.cell_state[cell.id].exec_state == "busy"
+  local edge = "%#" .. (cbusy and "JupynvimBusy" or "JupynvimBorder") .. "#│%* "
   if virtnum > 0 then
     return bar .. "    " .. edge  -- wrap continuation rows carry no number
   end
