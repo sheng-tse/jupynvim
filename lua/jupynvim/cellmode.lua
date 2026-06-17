@@ -644,8 +644,8 @@ end
 
 function M.setup_hl()
   local hl = vim.api.nvim_set_hl
-  hl(0, "JupynvimBarSel", { fg = "#7aa2f7", bold = true })
-  hl(0, "JupynvimHiddenCursor", { blend = 100, nocombine = true })
+  hl(0, "JupynvimBarSel", { default = true, link = "DiagnosticInfo" })
+  hl(0, "JupynvimHiddenCursor", { default = true, blend = 100, nocombine = true })
 end
 
 return M
