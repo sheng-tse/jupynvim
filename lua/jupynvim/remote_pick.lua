@@ -42,17 +42,114 @@ function M.editor_win()
   return best
 end
 
+-- After opening a file, an empty unnamed scratch buffer can linger in the
+-- bufferline (the [No Name] LazyVim/snacks leaves behind when `leader-bd`
+-- closes the last file). Wipe such buffers once nothing displays them, so they
+-- don't show as a redundant tab. Never touches named, modified, special, or
+-- VISIBLE buffers (the snacks picker's main [No Name] is visible, so it's safe).
+local function wipe_stray_noname()
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(b)
+       and vim.bo[b].buflisted
+       and vim.bo[b].buftype == ""
+       and not vim.bo[b].modified
+       and vim.api.nvim_buf_get_name(b) == ""
+       and #vim.fn.win_findbuf(b) == 0
+       and vim.api.nvim_buf_line_count(b) <= 1
+       and (vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] or "") == "" then
+      pcall(vim.api.nvim_buf_delete, b, { force = false })
+    end
+  end
+end
+
 -- Open `file` (a jupynvim:// URI) in the editor window, never replacing a
 -- terminal/explorer buffer. `pos` = {line, col0} to jump to (grep results).
 function M.open_in_editor(file, pos)
   local w = M.editor_win()
+  local relocated_slot, term_alias
   if w and vim.api.nvim_win_is_valid(w) then
     vim.api.nvim_set_current_win(w)
   else
-    pcall(vim.cmd, "topleft vsplit")  -- no editor window; make one
+    -- No editor window: the main area is a terminal (e.g. right after closing
+    -- the dashboard with `q`, leaving [explorer | terminal]). Put the file ON
+    -- TOP of that terminal and push the terminal below it (its C-/ home),
+    -- instead of `topleft vsplit`, which dumped the file at the far left and
+    -- shoved the explorer sidebar into the middle.
+    local termwin
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local b = vim.api.nvim_win_get_buf(win)
+      if vim.api.nvim_win_get_config(win).relative == "" and vim.b[b].jupynvim_term_alias then
+        termwin = win
+        term_alias = vim.b[b].jupynvim_term_alias
+        relocated_slot = vim.b[b].jupynvim_term_slot or "below"
+        break
+      end
+    end
+    if termwin then
+      vim.api.nvim_set_current_win(termwin)
+      -- Split direction depends on the terminal's slot: a "below" terminal
+      -- fills the main area, so the file goes ON TOP (horizontal). A "right"
+      -- (or "left") column terminal stays a column, so the file goes BESIDE it
+      -- in the main area (vertical), never cramped on top of the narrow column.
+      if relocated_slot == "below" then
+        vim.cmd("aboveleft split")
+      elseif relocated_slot == "left" then
+        vim.cmd("belowright vsplit")  -- file to the right of a left column
+      else                            -- "right" and default: file to the left
+        vim.cmd("aboveleft vsplit")
+      end
+    else
+      -- No terminal either: only the explorer remains (it goes full-width after
+      -- a `q`). Put the file to the RIGHT of it (the main area); the sidebar
+      -- re-pin below shrinks the explorer back to its left column. `topleft`
+      -- dropped the file on the far LEFT and left the explorer stuck on the right.
+      pcall(vim.cmd, "botright vsplit")
+    end
   end
-  vim.cmd("edit " .. vim.fn.fnameescape(file))
-  if pos then pcall(vim.api.nvim_win_set_cursor, 0, { pos[1], pos[2] or 0 }) end
+  local target = vim.api.nvim_get_current_win()
+  local nb_alias, nb_path = file:match("^jupynvim://([^/]+)(/.*)$")
+  if nb_alias and nb_path and nb_path:sub(-6) == ".ipynb" then
+    -- Notebooks go through the notebook opener (renders, names + lists the
+    -- buffer, manages its own window). A plain :edit of the URI builds a SECOND
+    -- [No Name] buffer (the URI handler calls M.open for the real notebook),
+    -- and the force-into-target logic below would clobber the rendered notebook
+    -- with that empty buffer / drop the terminal.
+    local J = require("jupynvim")
+    J.use_remote(nb_alias)
+    J.open(nb_path, { alias = nb_alias })
+  else
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+    -- A plugin (LazyVim/neo-tree) can auto-split the :edit into a stray window;
+    -- force the file into the intended target and close any OTHER window showing
+    -- it. (Only ever closes windows displaying this file buffer, never the
+    -- picker/explorer, which show their own buffers.)
+    local b = vim.fn.bufnr(file)
+    if b ~= -1 and vim.api.nvim_win_is_valid(target) then
+      pcall(vim.api.nvim_win_set_buf, target, b)
+      for _, win in ipairs(vim.fn.win_findbuf(b)) do
+        if win ~= target then pcall(vim.api.nvim_win_close, win, true) end
+      end
+      pcall(vim.api.nvim_set_current_win, target)
+    end
+    if pos then pcall(vim.api.nvim_win_set_cursor, 0, { pos[1], pos[2] or 0 }) end
+  end
+  -- Shrink the relocated terminal back to its compact slot size, AFTER the file
+  -- loads (resizing before the load gets undone). Scheduled backstop covers
+  -- async (notebook image) renders that resize on a later tick.
+  if relocated_slot and term_alias then
+    local rt = require("jupynvim.remote_term")
+    pcall(rt.restore_size, term_alias, relocated_slot)
+    vim.schedule(function() pcall(rt.restore_size, term_alias, relocated_slot) end)
+  end
+  -- Re-pin the snacks sidebar: the relocation vsplit + the file load can squish
+  -- it off its sidebar width. No-op when the snacks picker isn't the explorer.
+  pcall(function()
+    local rep = require("jupynvim.remote_explorer_picker")
+    rep.repin_sidebar()
+    vim.schedule(rep.repin_sidebar)
+  end)
+  -- Drop the redundant empty [No Name] tab that lingered from a prior leader-bd.
+  vim.schedule(wipe_stray_noname)
 end
 
 local function has_snacks()

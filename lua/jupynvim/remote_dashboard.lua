@@ -48,7 +48,7 @@ local actions = {
       vim.notify("jupynvim: switched to local backend", vim.log.levels.INFO)
       J.explorer()  -- active alias cleared → opens the local (snacks) explorer
     end },
-  { key = "q", icon = ICON.power,  desc = "Quit",            run = function() vim.cmd("qa") end },
+  { key = "q", icon = ICON.power,  desc = "Close",           run = function() vim.cmd("q") end },
 }
 
 local KEYHINT = "notebook:  <leader>nr run · <leader>nR run-all · <leader>nK kernel · <C-j/k> output"

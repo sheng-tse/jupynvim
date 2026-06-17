@@ -216,33 +216,102 @@ local function dir_context(state)
   return parent_of(node.path) or state.root
 end
 
--- find a non-explorer, non-floating window to open files into
+-- find a non-explorer, non-floating, non-terminal window to open files into.
+-- Skipping terminals matters with the bottom/right remote terminals open: a
+-- file must land in the main editor area, never hijack a terminal window.
 local function main_editor_win(state)
   for _, w in ipairs(vim.api.nvim_list_wins()) do
     if w ~= state.win and vim.api.nvim_win_get_config(w).relative == "" then
       local b = vim.api.nvim_win_get_buf(w)
-      if not vim.b[b].jupynvim_explorer then return w end
+      -- Skip the explorer and the remote terminals. The remote terminals are
+      -- `nofile` buffers (nvim_open_term) marked with jupynvim_term_alias, NOT
+      -- buftype="terminal", so check that marker. A file must land in the main
+      -- editor area, never hijack a terminal window.
+      if not vim.b[b].jupynvim_explorer and not vim.b[b].jupynvim_term_alias then
+        return w
+      end
     end
   end
   return nil
 end
+M._main_editor_win = main_editor_win   -- exposed for tests
 
 local function open_node(state, node)
   local J = require("jupynvim")
   local target = main_editor_win(state)
+  local relocated_slot  -- set when a terminal was pushed below the new file
   if not target then
-    vim.api.nvim_set_current_win(state.win)
-    vim.cmd("rightbelow vsplit")
-    target = vim.api.nvim_get_current_win()
+    -- No editor window: the main area is a terminal (e.g. right after closing
+    -- the dashboard). Put the file ON TOP of that terminal and push the
+    -- terminal below it (its C-/ home), instead of splitting off the explorer,
+    -- which dumped the file at the far left.
+    local termwin, tslot
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      local b = vim.api.nvim_win_get_buf(w)
+      if w ~= state.win and vim.api.nvim_win_get_config(w).relative == ""
+         and vim.b[b].jupynvim_term_alias then
+        termwin = w
+        tslot = vim.b[b].jupynvim_term_slot or "below"
+        break
+      end
+    end
+    if termwin then
+      vim.api.nvim_set_current_win(termwin)
+      -- "below" terminal fills the main area -> file on top (horizontal).
+      -- "right"/"left" column terminal stays a column -> file beside it.
+      if tslot == "below" then
+        vim.cmd("aboveleft split")
+      elseif tslot == "left" then
+        vim.cmd("belowright vsplit")
+      else
+        vim.cmd("aboveleft vsplit")
+      end
+      target = vim.api.nvim_get_current_win()
+      relocated_slot = tslot
+    else
+      vim.api.nvim_set_current_win(state.win)
+      vim.cmd("rightbelow vsplit")
+      target = vim.api.nvim_get_current_win()
+    end
   end
   vim.api.nvim_set_current_win(target)
   if node.name:sub(-6) == ".ipynb" then
     J.use_remote(state.alias)
     J.open(node.path, { alias = state.alias })
   else
-    vim.cmd("edit jupynvim://" .. state.alias .. node.path)
+    local uri = "jupynvim://" .. state.alias .. node.path
+    vim.cmd("edit " .. uri)
+    -- Force the file into the INTENDED target window. LazyVim/neo-tree/snacks
+    -- can auto-split on :edit and move focus to a stray window (the file showed
+    -- up at the far left); keying off the focused window would then close the
+    -- real target. Resolve the buffer by URI (focus may have moved), set it in
+    -- target, and close every OTHER window showing it. The scheduled repeat
+    -- catches DEFERRED plugin auto-splits that happen on the next tick.
+    local function force_into_target()
+      if not (target and vim.api.nvim_win_is_valid(target)) then return end
+      local b = vim.fn.bufnr(uri)
+      if b == -1 then return end
+      pcall(vim.api.nvim_win_set_buf, target, b)
+      for _, w in ipairs(vim.fn.win_findbuf(b)) do
+        if w ~= target then pcall(vim.api.nvim_win_close, w, true) end
+      end
+      pcall(vim.api.nvim_set_current_win, target)
+    end
+    force_into_target()
+    vim.schedule(force_into_target)
+  end
+  -- The relocated terminal had expanded to fill the main area; shrink it back
+  -- to its compact slot size. MUST run AFTER opening the file: resizing before
+  -- the :edit/render gets undone when the file loads. The scheduled backstop
+  -- covers async (notebook image) renders that resize on a later tick.
+  if relocated_slot then
+    local rt = require("jupynvim.remote_term")
+    pcall(rt.restore_size, state.alias, relocated_slot)
+    vim.schedule(function() pcall(rt.restore_size, state.alias, relocated_slot) end)
   end
 end
+M._open_node = open_node   -- exposed for tests
+M._states = states         -- exposed for tests
 
 local function set_expanded(state, node, want)
   state.expanded[node.path] = want or nil
