@@ -804,7 +804,11 @@ function M.remote_browse(alias, subpath)
     return
   end
   M._active_alias = alias
-  require("jupynvim.remote_explorer").open(alias, (subpath ~= nil and subpath ~= "") and subpath or "~")
+  -- Pass nil (not "~") when no subpath: the explorer then KEEPS its current root
+  -- across a close/reopen toggle (only a first-ever open with no state falls
+  -- back to "~"). Passing "~" here reset a :JupynvimRemoteCd'd root every toggle.
+  local subroot = (subpath ~= nil and subpath ~= "") and subpath or nil
+  require("jupynvim.remote_explorer").open(alias, subroot)
 end
 
 -- Re-render every visible notebook's frames. Toggling the explorer or a
@@ -1191,6 +1195,9 @@ function M.open(path, opts)
   vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
   vim.api.nvim_buf_set_option(buf, "modifiable", true)
+  -- List it so it shows in the bufferline as a tab, like the .py/.rs files the
+  -- explorer opens via :edit (bufnr(abs, true) creates it UNLISTED otherwise).
+  vim.api.nvim_buf_set_option(buf, "buflisted", true)
   local ft = language_filetype(snap)
   vim.b[buf].jupynvim_filetype = ft
 

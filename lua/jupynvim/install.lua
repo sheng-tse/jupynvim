@@ -68,8 +68,10 @@ end
 
 -- Verify `dest` against the release's published SHA256SUMS.
 --   true       -> verified
---   false, why -> mismatch (caller MUST refuse the binary)
---   nil,  why  -> can't verify (no SHA256SUMS / no tool); caller may proceed
+--   false, why -> check failed: hash mismatch, or the release publishes a
+--                 SHA256SUMS that does not list this binary. caller MUST refuse.
+--   nil,  why  -> nothing to check against (no SHA256SUMS at all, no shasum
+--                 tool); caller may proceed with a warning.
 local function verify_checksum(dest, tag, target)
   local sums_url = string.format(
     "https://github.com/%s/releases/download/%s/SHA256SUMS", REPO, tag)
@@ -77,8 +79,10 @@ local function verify_checksum(dest, tag, target)
   if vim.v.shell_error ~= 0 then
     return nil, "no SHA256SUMS published for " .. tag
   end
+  -- A release that publishes SHA256SUMS lists every binary it ships, so an
+  -- unlisted one is as untrustworthy as a mismatch. Fail closed, do not skip.
   local expected = M._expected_hash(sums, "jupynvim-core-" .. target)
-  if not expected then return nil, "binary not listed in SHA256SUMS" end
+  if not expected then return false, "binary not listed in published SHA256SUMS" end
   local actual = sha256_of(dest)
   if not actual then return nil, "no shasum/sha256sum available" end
   if actual ~= expected then
@@ -128,12 +132,13 @@ function M.run(plugin)
 
   -- Integrity check. The download came over TLS, but TLS only protects transit,
   -- not whether the artifact on the release is the real one. Verify it against
-  -- the release's SHA256SUMS. Fail closed (build from source) only on a real
-  -- mismatch; if no SHA256SUMS is published yet, warn and proceed.
+  -- the release's SHA256SUMS. Fail closed (build from source) on a mismatch or
+  -- an unlisted binary; only when no SHA256SUMS is published at all do we warn
+  -- and proceed, so releases that predate the check still install.
   local vok, vwhy = verify_checksum(dest, tag, target)
   if vok == false then
     vim.fn.delete(dest)
-    vim.notify(("jupynvim: SHA256 checksum mismatch (%s). Refusing the prebuilt, building from source."):format(vwhy),
+    vim.notify(("jupynvim: SHA256 integrity check failed (%s). Refusing the prebuilt, building from source."):format(vwhy),
       vim.log.levels.ERROR)
     build_from_source(plugin_dir)
     return false

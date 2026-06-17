@@ -183,7 +183,7 @@ local function tty_write(s)
   if vim.v.stderr and vim.v.stderr ~= 0 then
     local ok, ret = pcall(vim.api.nvim_chan_send, vim.v.stderr, s)
     if ok then
-      log.info(string.format("tty_write chansend(stderr=%d) %d bytes ok", vim.v.stderr, #s))
+      log.debug(string.format("tty_write chansend(stderr=%d) %d bytes ok", vim.v.stderr, #s))
       return true
     else
       log.warn("chansend stderr failed: " .. tostring(ret))
@@ -193,7 +193,7 @@ local function tty_write(s)
   -- 2) io.stdout (works for some nvim launches)
   local ok = pcall(function() io.stdout:write(s); io.stdout:flush() end)
   if ok then
-    log.info(string.format("tty_write stdout %d bytes ok", #s))
+    log.debug(string.format("tty_write stdout %d bytes ok", #s))
     return true
   end
 
@@ -205,7 +205,7 @@ local function tty_write(s)
       local _, werr = uv.fs_write(fd, s, -1)
       uv.fs_close(fd)
       if not werr then
-        log.info(string.format("tty_write resolved=%s %d bytes ok", tty, #s))
+        log.debug(string.format("tty_write resolved=%s %d bytes ok", tty, #s))
         return true
       end
     end
@@ -217,7 +217,7 @@ local function tty_write(s)
     local _, werr2 = uv.fs_write(fd, s, -1)
     uv.fs_close(fd)
     if not werr2 then
-      log.info(string.format("tty_write libuv-tty %d bytes ok", #s))
+      log.debug(string.format("tty_write libuv-tty %d bytes ok", #s))
       return true
     end
   end
@@ -227,7 +227,7 @@ local function tty_write(s)
   if f then
     local ok2 = pcall(function() f:write(s); f:close() end)
     if ok2 then
-      log.info(string.format("tty_write io-tty %d bytes ok", #s))
+      log.debug(string.format("tty_write io-tty %d bytes ok", #s))
       return true
     end
   end
@@ -638,7 +638,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
   if renderer == "placeholder" then
     -- Real PNG via Kitty Unicode placeholder protocol — image stays
     -- anchored to buffer text because placeholders ARE text.
-    log.info(string.format("placeholder: cell=%s id=%d transmitting %d b64 chars (%dx%d cells)",
+    log.debug(string.format("placeholder: cell=%s id=%d transmitting %d b64 chars (%dx%d cells)",
       cell_id, id, #b64, PLACEHOLDER_COLS, PLACEHOLDER_ROWS))
     local _, terr = kitty_call_sync("kitty_transmit_virtual", {
       image_id = id, png_b64 = b64,
@@ -661,7 +661,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     kitty_call_async("kitty_place_virtual", {
       image_id = id, cols = PLACEHOLDER_COLS, rows = PLACEHOLDER_ROWS,
     })
-    log.info(string.format("placeholder: cell=%s id=%d transmitted ok, fg=#%06x",
+    log.debug(string.format("placeholder: cell=%s id=%d transmitted ok, fg=#%06x",
       cell_id, id, id))
     callback(id)
 
@@ -767,7 +767,7 @@ function M.place_at_screen_row(cell_id, screen_row, screen_col, rows, cols)
   if perr then return end
   p.placed_row = screen_row
   p.placed_col = screen_col
-  log.info(string.format("place: cell=%s id=%d row=%d col=%d (locked)", cell_id, p.image_id, screen_row, screen_col))
+  log.debug(string.format("place: cell=%s id=%d row=%d col=%d (locked)", cell_id, p.image_id, screen_row, screen_col))
 end
 
 function M.force_replace(cell_id)

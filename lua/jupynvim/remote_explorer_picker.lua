@@ -14,6 +14,47 @@ local M = {}
 local states = {}
 M._states = states  -- exposed for tests/debugging
 
+-- Snacks sidebar re-pin. When a sibling window closes (the dashboard via `q`, a
+-- closed file), the snacks sidebar absorbs the freed space and balloons out of
+-- its sidebar width, becoming a giant top/left block instead of a sidebar (and
+-- cramping the next file open). Re-pin it to the width it had when it opened so
+-- the main area / terminal reclaims the space instead.
+local sidebar_width
+local function any_picker_open()
+  for _, st in pairs(states) do
+    if st.picker and not st.picker.closed then return true end
+  end
+  return false
+end
+-- Restore the sidebar to its natural width whenever it deviates: ballooning
+-- (a sibling closed) OR collapsing (a file-open vsplit squished it).
+function M.repin_sidebar()
+  if not (sidebar_width and any_picker_open()) then return end
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(w)
+    if (vim.bo[b].filetype or ""):match("^snacks")
+       and vim.api.nvim_win_get_config(w).relative == ""
+       and math.abs(vim.api.nvim_win_get_width(w) - sidebar_width) > 2 then
+      pcall(vim.api.nvim_win_set_width, w, sidebar_width)
+    end
+  end
+end
+vim.api.nvim_create_autocmd("WinClosed", {
+  group = vim.api.nvim_create_augroup("JupynvimPickerRepin", { clear = true }),
+  callback = function() vim.schedule(M.repin_sidebar) end,
+})
+-- Remember the sidebar's natural width once a picker has rendered.
+function M._capture_sidebar_width()
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(w)
+    if (vim.bo[b].filetype or ""):match("^snacks")
+       and vim.api.nvim_win_get_config(w).relative == "" then
+      sidebar_width = vim.api.nvim_win_get_width(w)
+      return
+    end
+  end
+end
+
 local function J() return require("jupynvim") end
 local function client(alias) return J().client_for(alias) end
 
@@ -493,6 +534,7 @@ function M.open(alias, root)
   -- window is fixed at its source in connect's on-exit instead.
   vim.schedule(function()
     pcall(function() require("jupynvim.remote_dashboard").place(alias, state.root) end)
+    M._capture_sidebar_width()
   end)
 end
 

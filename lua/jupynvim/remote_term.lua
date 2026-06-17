@@ -450,6 +450,30 @@ local function apply_size(split, alias, slot)
   end
 end
 
+-- Resize the window currently showing the alias/slot terminal back to its
+-- remembered/default size. Used by the explorer when it relocates a terminal:
+-- after the dashboard closes with `q`, the <C-/> terminal expands to fill the
+-- main area; when a file then opens on top of it, this shrinks it back to its
+-- compact slot size. remember_size only fires on manual resize/toggle (not the
+-- auto-expand), so the remembered size here is never the expanded one.
+function M.restore_size(alias, slot)
+  slot = slot or "below"
+  local buf = slots(alias)[slot]
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then return end
+  local w = win_of(buf)
+  if not w then return end
+  local c = (require("jupynvim").config or {}).terminal or {}
+  local remembered = M._sizes[skey(alias, slot)]
+  if slot == "below" then
+    local h = (remembered and remembered.h) or c.bottom_height or 9
+    pcall(vim.api.nvim_win_set_height, w, h)
+  elseif slot ~= "tab" then
+    local width = (remembered and remembered.w) or c.side_width
+      or math.max(40, math.min(80, math.floor(vim.o.columns * 0.4)) - 27)
+    pcall(vim.api.nvim_win_set_width, w, width)
+  end
+end
+
 -- Opening/hiding a terminal split resizes the notebook window (a side
 -- terminal narrows it), leaving the width-sized frames stale. Re-render via
 -- the shared helper (synchronous + scheduled backstop, before the redraw,
