@@ -150,12 +150,14 @@ notebook's `kernelspec` metadata.
 
 The build step downloads `jupynvim-core` from the GitHub release over HTTPS and
 runs it. HTTPS protects the download in transit; on top of that the installer
-verifies the binary against the release's published `SHA256SUMS` and refuses to
-run it (building from source instead) if the hash does not match, which catches
-a corrupted or swapped artifact. It does not yet catch a release where both the
-binary and `SHA256SUMS` were replaced; signature verification for that is on the
-roadmap. If you would rather not trust the prebuilt at all, point `core_path` at
-a binary you built yourself, or build from source (the installer falls back to
+checks the binary against the release's published `SHA256SUMS` and refuses to
+run it (building from source instead) if the hash does not match or the binary
+is not listed, which catches a corrupted, swapped, or unlisted binary. Releases
+older than this check publish no `SHA256SUMS`, and the installer warns and
+proceeds for those. It does not yet catch a release where both the binary and
+`SHA256SUMS` were replaced; signature verification for that is on the roadmap.
+If you would rather not trust the prebuilt at all, point `core_path` at a binary
+you built yourself, or build from source (the installer falls back to
 `cargo build` on unsupported platforms).
 
 ## Quick start
