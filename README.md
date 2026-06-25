@@ -65,7 +65,11 @@ https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
 ## Requirements
 
 - Neovim 0.11 or newer.
-- A Kitty-graphics terminal. Ghostty 1.3 and later, kitty, or WezTerm.
+- A terminal that implements the Kitty graphics protocol with Unicode
+  placeholders: kitty or Ghostty 1.3+. WezTerm is not yet supported for inline
+  images (its Kitty-graphics support lacks the Unicode placeholders jupynvim
+  uses), so plots and gifs won't render there; the rest of the editor works,
+  and `image_renderer = "chafa"` gives a static ASCII fallback.
 - Rust toolchain (`cargo`) only on platforms without a prebuilt binary.
   Mac arm64 and Linux x86_64 download a prebuilt on install. Other
   platforms fall back to building locally.
