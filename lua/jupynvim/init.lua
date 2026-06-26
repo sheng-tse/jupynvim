@@ -1280,7 +1280,11 @@ function M.open(path, opts)
     -- spaces on blank output lines (the "  " from OUT_INDENT) as listchars
     -- `trail` dashes, which showed as stray gray "—" between output blocks.
     -- A rendered notebook view shouldn't show whitespace markers anyway.
-    vim.cmd("setlocal nolist signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
+    -- nocursorline: notebooks open in command mode where the cursor is hidden;
+    -- cursorline would paint the parked cursor's line and fight the per-cell
+    -- orange anchor. cellmode turns it back on for edit mode (active-line
+    -- highlight, like VSCode) and off again on Esc back to command.
+    vim.cmd("setlocal nolist nocursorline signcolumn=no conceallevel=2 concealcursor=nc wrap linebreak breakindent breakindentopt=min:2 nofoldenable foldmethod=manual")
     vim.cmd([[setlocal showbreak=\ ]])
   end)
   -- Cursor to top of the rendered notebook. The BufReadCmd pre-populates
@@ -1294,6 +1298,9 @@ function M.open(path, opts)
   -- a known limitation - clipped above the window's top edge until the
   -- user scrolls up. Acceptable trade-off vs. a phantom-line refactor.
   pcall(vim.api.nvim_win_set_cursor, cur_win, { 1, 0 })
+  -- Restore where the cursor last sat (each cell's remembered line + the active
+  -- position) from the sidecar, so reopening lands you where you left off.
+  pcall(M._restore_cursor_positions, nb, buf, cur_win)
 
   -- Set filetype AFTER buffer display + window setup so FileType-driven
   -- plugins (treesitter, snippets, copilot) see a fully-prepared buffer.
@@ -1780,6 +1787,7 @@ function M._attach_autocmds(buf)
       local nb = Notebook.get(buf)
       if not nb then return end
       M._save(nb)
+      pcall(M._persist_cursor_positions, nb, buf)
     end,
   })
   -- LSP may attach after the kernel started (timing depends on lazy
@@ -1920,6 +1928,69 @@ function M._attach_autocmds(buf)
   -- at unpredictable screen positions on every re-draw. Placing once at run
   -- time is the cleanest behavior until Ghostty fully implements Unicode
   -- placeholder mode (which lets the image stick to buffer text).
+end
+
+-- Persist where the cursor last sat in each cell + the active position, to a
+-- sidecar state file, so reopening this notebook restores it (see
+-- _restore_cursor_positions). Called on save and on quit.
+-- Cell identity for the sidecar: in-memory cell ids are regenerated on every
+-- open (they aren't written to disk), so they can't key positions across a
+-- reopen. We key by cell INDEX and validate with the cell's first source line
+-- as a fingerprint, so a structurally-changed notebook won't restore a position
+-- into the wrong cell (the fingerprint won't match -> we skip it).
+local function _cell_fp(buf, r)
+  return vim.api.nvim_buf_get_lines(buf, r.start, r.start + 1, false)[1] or ""
+end
+
+function M._persist_cursor_positions(nb, buf)
+  if not (nb and buf and vim.api.nvim_buf_is_valid(buf)) then return end
+  local key = vim.api.nvim_buf_get_name(buf)
+  if not key or key == "" then return end
+  local CellMode = require("jupynvim.cellmode")
+  local ranges = CellMode.ranges(buf)
+  local entry = { cells = {} }
+  for idx, pos in pairs(CellMode.get_positions(buf)) do
+    local r = ranges[idx]
+    if r and pos[1] then
+      table.insert(entry.cells,
+        { idx = idx, line = pos[1] - 1 - r.start, col = pos[2] or 0, fp = _cell_fp(buf, r) })
+    end
+  end
+  local win = vim.fn.bufwinid(buf)
+  if win ~= -1 then
+    local cl = vim.api.nvim_win_get_cursor(win)
+    local idx = CellMode.cell_idx_at(buf, cl[1])
+    local r = ranges[idx]
+    if r then
+      entry.last = { idx = idx, line = cl[1] - 1 - r.start, col = cl[2], fp = _cell_fp(buf, r) }
+    end
+  end
+  pcall(require("jupynvim.cursor_persist").save, key, entry)
+end
+
+-- Restore per-cell remembered lines (the orange anchors) and the active cursor
+-- from the sidecar, after the notebook is populated + attached on open.
+function M._restore_cursor_positions(nb, buf, win)
+  if not (nb and buf and vim.api.nvim_buf_is_valid(buf)) then return end
+  local entry = require("jupynvim.cursor_persist").load(vim.api.nvim_buf_get_name(buf))
+  if not entry then return end
+  local CellMode = require("jupynvim.cellmode")
+  local ranges = CellMode.ranges(buf)
+  local function clamp(r, off)
+    return math.max(r.start + 1, math.min(r.start + (off or 0) + 1, r.stop))
+  end
+  for _, c in ipairs(entry.cells or {}) do
+    local r = ranges[c.idx]
+    if r and _cell_fp(buf, r) == c.fp then
+      CellMode.set_position(buf, c.idx, clamp(r, c.line), c.col or 0)
+    end
+  end
+  if entry.last and win and win ~= -1 then
+    local r = ranges[entry.last.idx]
+    if r and _cell_fp(buf, r) == entry.last.fp then
+      pcall(vim.api.nvim_win_set_cursor, win, { clamp(r, entry.last.line), entry.last.col or 0 })
+    end
+  end
 end
 
 function M._save(nb)
@@ -3551,6 +3622,9 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,
     callback = function()
+      for b, nb in pairs(Notebook.all()) do
+        pcall(M._persist_cursor_positions, nb, b)
+      end
       for _, client in pairs(M.clients or {}) do
         pcall(function() client:stop() end)
       end

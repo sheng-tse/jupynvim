@@ -41,11 +41,12 @@ vim.api.nvim_win_set_cursor(win, { 1, 0 })  -- select markdown cell 1
 local function sc(lnum, virtnum)
   return CellMode._statuscol_for(buf, lnum, virtnum or 0)
 end
--- code cells are numbered even when not selected. Numbers are RELATIVE to the
--- cell's anchor; an unvisited cell (cell 2 here) references its first line, so
--- line 1 reads "1" and line 2 reads its distance "1".
-assert(sc(4):find("  1", 1, true) and sc(4):find("│", 1, true),
-  "code first line shows its number with border: " .. sc(4))
+-- code cells are numbered even when not selected. Each cell's "current line"
+-- is highlighted orange: by default its FIRST line (a cell never entered), so
+-- cell 2's first line reads "1" in CursorLineNr; line 2 reads its distance "1".
+assert(sc(4):find("CursorLineNr", 1, true) and sc(4):find("  1", 1, true)
+  and sc(4):find("│", 1, true),
+  "unvisited cell's first line is the orange current line: " .. sc(4))
 assert(sc(5):find("%d"), "code lines are numbered: " .. sc(5))
 assert(not sc(3):find("%d"), "separator must have blank gutter")
 assert(not sc(1):find("%d"), "markdown lines must have NO numbers: " .. sc(1))
@@ -102,10 +103,10 @@ assert(vim.bo[buf].modifiable == false, "command mode should re-lock")
 assert(sc(5):find("CursorLineNr", 1, true) and sc(5):find("  2", 1, true),
   "after Esc the anchor must stay on the last cursor line: " .. sc(5))
 assert(sc(4):find("  1", 1, true), "after Esc distances stay relative: " .. sc(4))
--- inactive cells show plain per-cell absolute numbers, anchor highlighted
+-- inactive cells also show their current line (first line by default) in orange
 local R3 = CellMode.ranges(buf)[3]
-assert(sc(R3.start + 1):find("  1", 1, true) and not sc(R3.start + 1):find("CursorLineNr"),
-  "inactive cells use plain absolute numbers: " .. sc(R3.start + 1))
+assert(sc(R3.start + 1):find("CursorLineNr", 1, true) and sc(R3.start + 1):find("  1", 1, true),
+  "inactive cell's first line is the orange current line: " .. sc(R3.start + 1))
 feed("<CR>")  -- re-enter: cursor restored to line 5
 assert(vim.api.nvim_win_get_cursor(win)[1] == 5, "cursor position not remembered")
 feed("<Esc>")
@@ -503,6 +504,76 @@ do
   assert(lead and #lead == CellMode.GUTTER - 2,
     "header ╭ must sit at GUTTER (" .. (CellMode.GUTTER - 2) .. " leading spaces), got " .. tostring(lead and #lead))
   print("P. frame corners align to the fixed GUTTER ok")
+end
+
+-- R. cursorline follows the mode: OFF in command mode (the hidden cursor must
+--    not paint a line and steal the per-cell orange anchor), ON in edit mode
+--    (active-line highlight). Regression for the cursorline-steals-the-orange
+--    bug: with the user's cursorline on, Neovim lit the parked cursor's first
+--    line so a visited cell's orange jumped from its remembered line to "1".
+do
+  local rbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(rbuf)
+  local rwin = vim.api.nvim_get_current_win()
+  vim.wo[rwin].cursorline = true  -- the user's setting
+  local rnb = Notebook.create(rbuf, "/tmp/r.ipynb", "rs", { cells = {
+    { id = "r1", cell_type = "code", source = "x=1\ny=2\nz=3", outputs = {} },
+  } })
+  J._populate_buffer(rnb)
+  CellMode.attach(rbuf, J)  -- attaches in command mode -> cursorline off
+  assert(CellMode.is_command(rbuf), "starts in command mode")
+  assert(vim.wo[rwin].cursorline == false,
+    "command mode must force cursorline OFF, got " .. tostring(vim.wo[rwin].cursorline))
+  CellMode.enter_edit(rbuf)
+  assert(vim.wo[rwin].cursorline == true,
+    "edit mode must turn cursorline ON, got " .. tostring(vim.wo[rwin].cursorline))
+  CellMode.enter_command(rbuf)
+  assert(vim.wo[rwin].cursorline == false,
+    "back to command must force cursorline OFF, got " .. tostring(vim.wo[rwin].cursorline))
+  print("R. cursorline follows mode (off in command, on in edit) ok")
+end
+
+-- Q. cursor-position persistence: per-cell remembered lines + the active
+--    position round-trip through the sidecar, so reopening lands where you left
+--    off. Cell ids aren't stable across reopen (they're regenerated, not written
+--    to disk), so this keys by cell index validated by a first-line fingerprint.
+do
+  vim.env.JUPYNVIM_CURSOR_STORE = "/tmp/jup_cursor_store_" .. vim.fn.getpid() .. ".json"
+  local qbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(qbuf, "/tmp/jup_persist_spec.ipynb")
+  vim.api.nvim_set_current_buf(qbuf)
+  local qnb = Notebook.create(qbuf, vim.api.nvim_buf_get_name(qbuf), "qs", { cells = {
+    { id = "q1", cell_type = "markdown", source = "# Q" },
+    { id = "q2", cell_type = "code", source = "a=1\nb=2\nc=3", outputs = {} },
+    { id = "q3", cell_type = "code", source = "x=9\ny=8", outputs = {} },
+  } })
+  J._populate_buffer(qnb)
+  CellMode.attach(qbuf, J)
+  local qwin = vim.api.nvim_get_current_win()
+  local QR = CellMode.ranges(qbuf)
+  local want = QR[2].start + 3  -- cell 2, 3rd source line (c=3)
+  CellMode.set_position(qbuf, 2, want, 0)
+  vim.api.nvim_win_set_cursor(qwin, { want, 0 })
+  J._persist_cursor_positions(qnb, qbuf)
+  -- lose the live state, then restore it from the sidecar
+  CellMode.set_position(qbuf, 2, QR[2].start + 1, 0)
+  vim.api.nvim_win_set_cursor(qwin, { 1, 0 })
+  J._restore_cursor_positions(qnb, qbuf, qwin)
+  assert(CellMode.get_positions(qbuf)[2] and CellMode.get_positions(qbuf)[2][1] == want,
+    "cell 2 remembered line restored: want " .. want .. " got " ..
+    tostring(CellMode.get_positions(qbuf)[2] and CellMode.get_positions(qbuf)[2][1]))
+  assert(vim.api.nvim_win_get_cursor(qwin)[1] == want, "active cursor restored to last position")
+  -- fingerprint guard: a cell whose first source line changed must NOT be
+  -- restored (don't drop a stale position into a now-different cell).
+  vim.bo[qbuf].modifiable = true
+  vim.api.nvim_buf_set_lines(qbuf, QR[2].start, QR[2].start + 1, false, { "DIFFERENT=0" })
+  vim.bo[qbuf].modifiable = false
+  CellMode.set_position(qbuf, 2, QR[2].start + 1, 0)
+  J._restore_cursor_positions(qnb, qbuf, qwin)
+  assert(CellMode.get_positions(qbuf)[2][1] == QR[2].start + 1,
+    "fingerprint mismatch must skip restore, leaving the position untouched")
+  os.remove(vim.env.JUPYNVIM_CURSOR_STORE)
+  print("Q. cursor persistence round-trips + fingerprint guard ok")
 end
 
 print("ALL CELL-UI CHECKS PASSED")

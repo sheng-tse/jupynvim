@@ -92,6 +92,18 @@ function M.selected_idx(buf)
   return idx
 end
 
+-- Per-cell remembered cursor positions (idx -> {line, col}), for the
+-- cursor-persistence module to save and restore across reopen.
+function M.get_positions(buf)
+  return (state[buf] or {}).pos or {}
+end
+
+function M.set_position(buf, idx, line, col)
+  state[buf] = state[buf] or { pos = {} }
+  state[buf].pos = state[buf].pos or {}
+  state[buf].pos[idx] = { line, col or 0 }
+end
+
 -- ── statuscolumn ───────────────────────────────────────────────────────────
 -- Per-cell gutter. Every branch renders exactly M.GUTTER display cells so
 -- the text area never shifts between lines.
@@ -142,32 +154,32 @@ function M._statuscol_for(buf, lnum, virtnum)
   if virtnum > 0 then
     return bar .. "    " .. edge  -- wrap continuation rows carry no number
   end
-  -- RELATIVE numbering in EVERY cell. Each cell has an "anchor": the live
-  -- cursor if it sits in this cell, else the line the cursor last sat on here
-  -- (remembered across Esc and across moving to other cells). The anchor line
-  -- shows its in-cell absolute number highlighted ORANGE; every other line
-  -- shows its distance to the anchor. Cells you've not visited reference their
-  -- first line (no orange). Relative-everywhere keeps a long plot cell's last
-  -- line a small distance near where you were, instead of a big absolute like
-  -- "42" floating at the bottom.
+  -- RELATIVE numbering in EVERY cell, anchored on the cell's "current line",
+  -- which is ALWAYS highlighted ORANGE. The current line is, in order: the live
+  -- cursor while you're editing this cell; else the line you last sat on once
+  -- you've edited it (remembered across Esc and across moving away); else, by
+  -- default, the cell's FIRST line. So a cell you've never entered still shows
+  -- its first line as the current line in orange, like VSCode. Other lines show
+  -- their distance to it. In command mode the orange is a stable per-cell marker
+  -- (first/remembered): j/k moves the selection bar, not the orange; only the
+  -- live cursor while editing moves it.
   local n, num_hl = line0 - r.start + 1, "LineNr"
-  local anchor
+  local anchor = r.start + 1
   local saved = st and st.pos and st.pos[idx]
   if saved and saved[1] - 1 >= r.start and saved[1] - 1 < r.stop then
     anchor = saved[1]
   end
-  do
+  if not command then
     local win = vim.fn.bufwinid(buf)
     if win ~= -1 then
       local cl = vim.api.nvim_win_get_cursor(win)[1]
       if cl - 1 >= r.start and cl - 1 < r.stop then anchor = cl end
     end
   end
-  local ref = anchor or (r.start + 1)
-  if lnum == ref then
-    if anchor then num_hl = "CursorLineNr" end  -- real anchor highlighted; absolute number
+  if lnum == anchor then
+    num_hl = "CursorLineNr"                      -- the current line, in orange
   else
-    n = math.abs(lnum - ref)                    -- distance to the anchor
+    n = math.abs(lnum - anchor)                  -- distance to the current line
   end
   return bar .. "%#" .. num_hl .. "#" .. string.format("%3d", n) .. "%* " .. edge
 end
@@ -227,6 +239,13 @@ function M.enter_command(buf)
   if win ~= -1 and vim.api.nvim_get_current_buf() == buf then
     hide_cursor()
   end
+  -- The hidden command-mode cursor must not paint a line: with the user's
+  -- 'cursorline' on, Neovim would light up the parked cursor's first line (its
+  -- number in CursorLineNr + the CursorLine background), competing with the
+  -- per-cell orange anchor, which is the SOLE current-line indicator here.
+  -- j/k select whole cells; the cursor's exact line is irrelevant in command
+  -- mode, so it must not be highlighted. Restored on edit (see enter_edit).
+  if win ~= -1 then pcall(function() vim.wo[win].cursorline = false end) end
   refresh_render(buf)
   vim.cmd("redraw")
 end
@@ -238,6 +257,10 @@ function M.enter_edit(buf, keys)
   vim.bo[buf].modifiable = true
   show_cursor()
   local win = vim.fn.bufwinid(buf)
+  -- active-line highlight for editing (like VSCode): the visible cursor and the
+  -- orange anchor are on the same line, so cursorline agrees with it. Turned off
+  -- again on Esc (enter_command), so the hidden command cursor never paints a line.
+  if win ~= -1 then pcall(function() vim.wo[win].cursorline = true end) end
   local idx = M.selected_idx(buf)
   state[buf].edit_idx = idx
   state[buf].region = "src"
