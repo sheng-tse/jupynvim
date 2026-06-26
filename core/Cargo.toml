@@ -1,6 +1,6 @@
 [package]
 name = "jupynvim-core"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 description = "Native backend for jupynvim — Jupyter notebooks in Neovim with VSCode-style UX"
 
