@@ -1192,12 +1192,12 @@ function M.open(path, opts)
   -- text to disk, breaking save. Neovim's vim.lsp.enable callback
   -- explicitly skips buftype != '' (runtime/lua/vim/lsp.lua: lsp_enable_callback)
   -- so we attach LSP manually below in M._attach_lsp.
-  vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
-  vim.api.nvim_buf_set_option(buf, "swapfile", false)
-  vim.api.nvim_buf_set_option(buf, "modifiable", true)
+  vim.bo[buf].buftype = "acwrite"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = true
   -- List it so it shows in the bufferline as a tab, like the .py/.rs files the
   -- explorer opens via :edit (bufnr(abs, true) creates it UNLISTED otherwise).
-  vim.api.nvim_buf_set_option(buf, "buflisted", true)
+  vim.bo[buf].buflisted = true
   local ft = language_filetype(snap)
   vim.b[buf].jupynvim_filetype = ft
 
@@ -1602,13 +1602,13 @@ end
 
 function M._populate_buffer(nb)
   local lines = nb:to_lines()
-  vim.api.nvim_buf_set_option(nb.buf, "modifiable", true)
+  vim.bo[nb.buf].modifiable = true
   vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(nb.buf, "modified", false)
+  vim.bo[nb.buf].modified = false
   -- cell command mode keeps the buffer non-modifiable; restore the lock
   -- after this (possibly async) repopulation
   if require("jupynvim.cellmode").is_command(nb.buf) then
-    vim.api.nvim_buf_set_option(nb.buf, "modifiable", false)
+    vim.bo[nb.buf].modifiable = false
   end
   -- Pre-conceal cell separator marker lines synchronously, before the
   -- debounced Render.refresh runs. Without this, the literal
@@ -1852,7 +1852,7 @@ function M._attach_autocmds(buf)
         local current = vim.fn.sha256(
           table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
         if current ~= nb.saved_hash then
-          pcall(vim.api.nvim_buf_set_option, buf, "modified", true)
+          pcall(vim.api.nvim_set_option_value, "modified", true, { buf = buf })
         end
       end
       -- Sync cell.source from buffer so render's content-driven filters
@@ -1892,7 +1892,7 @@ function M._attach_autocmds(buf)
         -- We just rewrote the buffer to swap a pasted data:URI with the
         -- short placeholder; that's a real edit, not a no-op. Keep the
         -- modified flag set so :wqa actually triggers BufWriteCmd.
-        pcall(vim.api.nvim_buf_set_option, buf, "modified", true)
+        pcall(vim.api.nvim_set_option_value, "modified", true, { buf = buf })
       end
       Render.refresh(nb, vim.fn.bufwinid(buf))
       M._sync_treesitter_ranges(nb)
@@ -2030,7 +2030,7 @@ function M._save(nb)
     return
   end
   if vim.api.nvim_buf_is_valid(nb.buf) then
-    vim.api.nvim_buf_set_option(nb.buf, "modified", false)
+    vim.bo[nb.buf].modified = false
     -- Refresh the saved-state hash so subsequent TextChanged checks compare
     -- against the post-save buffer text, not the pre-save one.
     nb.saved_hash = vim.fn.sha256(
@@ -2263,7 +2263,7 @@ function M.set_cell_type(buf, t)
   -- by hand or :wqa skips the buffer entirely.
   cell.cell_type = t
   if t ~= "code" then cell.outputs = {}; cell.execution_count = nil end
-  pcall(vim.api.nvim_buf_set_option, buf, "modified", true)
+  pcall(vim.api.nvim_set_option_value, "modified", true, { buf = buf })
   M._sync_treesitter_ranges(nb)
   Render.refresh(nb, vim.fn.bufwinid(buf))
   -- LSPs aren't notified of cell-type changes (no didChange fires - the
