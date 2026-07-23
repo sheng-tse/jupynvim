@@ -249,7 +249,7 @@ function Notebook:sync_from_buffer()
     end
     for i = n_state + 1, n_buf do
       table.insert(self.cells, {
-        id = "new_" .. tostring(vim.loop.hrtime()) .. "_" .. i,
+        id = "new_" .. tostring(vim.uv.hrtime()) .. "_" .. i,
         cell_type = "code",
         source = new_sources[i],
         outputs = {},

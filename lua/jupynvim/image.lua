@@ -174,7 +174,7 @@ local function tty_write(s)
   M._tty_n = (M._tty_n or 0) + 1
   M._tty_bytes = (M._tty_bytes or 0) + #s
   if IN_TMUX then s = tmux_wrap(s) end
-  local uv = vim.uv or vim.loop
+  local uv = vim.uv
 
   -- 1) chansend(vim.v.stderr, ...) — this is what image.nvim uses. vim.v.stderr
   -- is a channel ID that always points at nvim's stderr stream, which the TUI
@@ -580,7 +580,7 @@ local function start_animation(p, cell_id)
       pcall(p.timer.start, p.timer, d, 0, vim.schedule_wrap(tick))
     end
   end
-  p.timer = vim.loop.new_timer()
+  p.timer = vim.uv.new_timer()
   pcall(p.timer.start, p.timer, p.delays[1] or 100, 0, vim.schedule_wrap(tick))
 end
 

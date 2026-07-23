@@ -673,12 +673,12 @@ function M.connect(alias)
             pcall(vim.api.nvim_buf_delete, term_buf, { force = true })
           end
           -- Poll briefly for master to appear (FSEvent race after fork).
-          local deadline = vim.loop.hrtime() + 3e9  -- 3 seconds
+          local deadline = vim.uv.hrtime() + 3e9  -- 3 seconds
           local function check()
             if master_alive(alias, profile) then
               vim.notify("jupynvim: " .. alias .. " connected", vim.log.levels.INFO)
               M.remote_browse(alias)
-            elseif vim.loop.hrtime() < deadline then
+            elseif vim.uv.hrtime() < deadline then
               vim.defer_fn(check, 200)
             else
               vim.notify("jupynvim: " .. alias .. " auth exited 0 but master not detected",
