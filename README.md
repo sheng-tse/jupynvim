@@ -472,7 +472,7 @@ Neovim's own draw pipeline.
 
 The Lua side hijacks `*.ipynb` via `BufReadCmd`, renders cells with
 virtual-line borders, transmits PNG bytes via the Kitty graphics
-protocol, drives gif animation on a `vim.loop` timer, and owns keymaps
+protocol, drives gif animation on a `vim.uv` timer, and owns keymaps
 and commands.
 
 The Rust backend runs one async task per ZMQ socket so `send` and
