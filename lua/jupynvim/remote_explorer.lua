@@ -198,9 +198,14 @@ render = function(state)
   vim.bo[state.buf].modified = false
   vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
   for _, h in ipairs(hls) do
-    pcall(vim.api.nvim_buf_add_highlight, state.buf, ns, h[4], h[1], h[2], h[3])
+    -- col1 = -1 means "to end of line", which extmarks spell as the next row
+    -- at col 0. Passing end_col = -1 errors and the pcall would eat it.
+    local o = { hl_group = h[4], end_col = h[3] }
+    if h[3] < 0 then o.end_row, o.end_col = h[1] + 1, 0 end
+    pcall(vim.api.nvim_buf_set_extmark, state.buf, ns, h[1], h[2], o)
   end
 end
+M._render = render         -- exposed for tests
 
 -- ── cursor / nodes ──
 local function node_at_cursor(state)

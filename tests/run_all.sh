@@ -5,9 +5,12 @@
 #   1. cargo test (Rust unit tests)
 #   2. backend_integration.py (Python harness against jupynvim-core)
 #   3. lua_e2e.lua (headless Neovim Lua tests)
-#   4. cellui_spec.lua + markdown_spec.lua (headless render/UI specs)
+#   4. cellui_spec.lua + markdown_spec.lua + remote_hl_spec.lua (headless
+#      render/UI specs)
 #   5. frame_layout.sh (real rendered screen via tmux: frame alignment across
 #      terminal-split / floating-window layout changes)
+#      remote_hl_screen.sh (real rendered screen via tmux: dashboard/explorer
+#      highlights actually paint)
 #
 # All must pass for the suite to succeed.
 
@@ -86,9 +89,9 @@ else
   section "lua e2e" "$LUA_RC"
 fi
 
-# ── 4. Cell-UI + markdown specs ─────────────────────────
+# ── 4. Cell-UI + markdown + remote-hl specs ─────────────
 echo
-echo "── 4/5 cell-ui + markdown specs (headless nvim) ─"
+echo "── 4/5 cell-ui + markdown + remote-hl specs (headless nvim) ─"
 ui_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellui_spec.lua" -c 'qa!' 2>&1)
 echo "$ui_out" | tail -1
 echo "$ui_out" | grep -q "ALL CELL-UI CHECKS PASSED"
@@ -97,12 +100,18 @@ md_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c '
 echo "$md_out" | tail -1
 echo "$md_out" | grep -q "ALL MARKDOWN CHECKS PASSED"
 section "markdown spec" "$?"
+hl_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/remote_hl_spec.lua" -c 'qa!' 2>&1)
+echo "$hl_out" | tail -1
+echo "$hl_out" | grep -q "ALL REMOTE-HL CHECKS PASSED"
+section "remote-hl spec" "$?"
 
 # ── 5. Frame-layout (real rendered screen via tmux) ─────
 echo
 echo "── 5/5 frame-layout (tmux rendered screen) ─"
 bash "$ROOT/tests/frame_layout.sh"
 section "frame layout" "$?"
+bash "$ROOT/tests/remote_hl_screen.sh"
+section "remote-hl screen" "$?"
 
 # ── Summary ─────────────────────────────────────────────
 echo
