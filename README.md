@@ -220,8 +220,14 @@ Once connected:
 
 - **Files.** Remote paths use the `jupynvim://<alias>/<path>` URI scheme.
   `:JupynvimExplorer` opens a browser for the remote tree; while a session is
-  active, `<leader>e` and your file/grep pickers target the remote and fall
-  back to local when not.
+  active, `<leader>e` (the project root of the remote file you are in, found
+  by walking up for a `.git`) and `<leader>E` (the remote working directory,
+  which `:JupynvimRemoteCd` moves) mirror what those keys mean locally, and
+  your file and grep pickers target the remote too. These keys are borrowed
+  only for the length of the session: if you already had a mapping, jupynvim
+  restores it exactly when the session ends, so your leader menu is untouched
+  when you are not connected. Keys you had not mapped stay bound and fall
+  back to the local equivalent.
 - **Terminals, VSCode-style.** A bottom PTY shell (`:JupynvimTerm` or
   `<C-/>`) and a second one on the right (`<leader>tr`) tile together, so you
   can run a job in one and a tool like Claude Code in the other. Resize with
@@ -396,10 +402,12 @@ require("jupynvim").setup({
     -- },
   },
 
-  -- While a remote session is active these keys target the remote (and fall
-  -- back to your local mapping when not connected). Set a group to {} to
-  -- leave those keys alone.
-  explorer_keys = { "<leader>e", "<leader>E" },   -- remote file tree
+  -- Borrowed only while a remote session is active. If you already have a
+  -- mapping for one of these, jupynvim takes it on connect and gives it back
+  -- exactly on disconnect; if you don't, it stays bound and falls back to the
+  -- local equivalent. Set a group to {} to leave those keys alone entirely.
+  explorer_keys     = { "<leader>e" },  -- remote tree at the project root
+  explorer_cwd_keys = { "<leader>E" },  -- remote tree at the remote cwd
   terminal_keys = { "<c-/>", "<c-_>" },           -- toggle a remote PTY
   pick_keys = {
     files = { "<leader>ff", "<leader><space>" },
