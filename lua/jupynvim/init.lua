@@ -652,7 +652,11 @@ function M.connect(alias)
   vim.cmd("enew")
   term_buf = vim.api.nvim_get_current_buf()
   vim.bo[term_buf].buflisted = false  -- keep the auth terminal out of the bufferline
-  vim.fn.termopen(args, {
+  -- termopen() was deprecated in 0.11. term=true is the same call underneath:
+  -- same pty, same on_exit signature, same exit code. The pty matters here,
+  -- the password and Duo prompts only appear on a real tty.
+  vim.fn.jobstart(args, {
+    term = true,
     on_exit = function(_, code)
       vim.schedule(function()
         -- Always close the auth terminal on clean exit (code 0). With
