@@ -57,7 +57,7 @@ end)
 
 -- T1b: install.lua SHA256SUMS parsing (prebuilt-binary integrity check).
 test_pcall("install: _expected_hash parses SHA256SUMS", function()
-  local install = require("jupynvim.install")
+  local install = require("jupynvim.backend.install")
   local sums =
     "abc123  jupynvim-core-x86_64-unknown-linux-gnu\n" ..
     "def456 *jupynvim-core-aarch64-apple-darwin\n"
