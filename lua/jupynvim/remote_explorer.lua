@@ -453,6 +453,8 @@ local function bind_keys(state)
   map("R", function() M.refresh(state.alias) end)
   -- Re-root: `-` go up one level (reach /ocean/... from home), `.` jump to a
   -- path. Lets you browse anywhere on the remote, not just $HOME.
+  -- Re-rooting here is BROWSING, not a cd: it must not move where <leader>e
+  -- and <leader>E take you back to. Only :JupynvimRemoteCd designates that.
   map("-", function()
     local up = parent_of(state.root)
     if up then load_root(state, up) end
@@ -599,9 +601,9 @@ end
 -- Open (or focus) the remote explorer for `alias`, rooted at `root_path`
 -- (defaults to remote $HOME via "~"). Tree/expand state persists across
 -- close+reopen.
-function M.open(alias, root_path)
+function M.open(alias, root_path, opts)
   local pi = picker_impl()
-  if pi then return pi.open(alias, root_path) end
+  if pi then return pi.open(alias, root_path, opts) end
   -- Already visible for this alias → just focus it (no new window).
   local shown = M.visible_win(alias)
   if shown then

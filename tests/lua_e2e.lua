@@ -515,6 +515,30 @@ test_pcall("setup deep-merges maps and replaces lists", function()
          "explorer_keys len=" .. #c.explorer_keys)
 end)
 
+-- T13: the linux cross-build staleness check. Nothing used to keep the
+-- uploaded artifact in step with core/, so it went weeks stale while every
+-- connect compared it, found no change, and shipped nothing.
+test_pcall("stale linux cross-build is detected", function()
+  local triple = "x86_64-unknown-linux-musl"
+  local bin = plugin_dir .. "/core/target/" .. triple .. "/release/jupynvim-core"
+  -- a triple we have never built for has no artifact at all
+  local missing = J._linux_core_stale("nonexistent-triple")
+  if vim.fn.filereadable(bin) ~= 1 then
+    report("stale linux cross-build is detected", missing == true,
+           "no local cross-build to age; checked the missing case only")
+    return
+  end
+  -- age the artifact past the source, then bring it back
+  os.execute("touch -t 200001010000 " .. vim.fn.shellescape(bin))
+  local when_old = J._linux_core_stale(triple)
+  os.execute("touch " .. vim.fn.shellescape(bin))
+  local when_new = J._linux_core_stale(triple)
+  report("stale linux cross-build is detected",
+         missing == true and when_old == true and when_new == false,
+         ("missing=%s aged=%s fresh=%s"):format(
+           tostring(missing), tostring(when_old), tostring(when_new)))
+end)
+
 -- ============================================================
 print(string.format("\nlua e2e: %d/%d passed\n", PASS, PASS + FAIL))
 if FAIL > 0 then

@@ -91,6 +91,9 @@ local function fetch_dir(state, dir, cb)
     end
     local resolved = res.path or dir
     if dir == state.root then state.root = resolved end  -- "~" -> absolute
+    if dir ~= resolved then  -- remember it so the next jump skips the placeholder
+      pcall(function() require("jupynvim")._note_resolved_home(state.alias, resolved) end)
+    end
     local items = {}
     for _, e in ipairs(res.entries or {}) do
       table.insert(items, { name = e.name, dir = e.kind == "dir", ignored = e.ignored and true or nil })
@@ -444,7 +447,7 @@ local ACTIONS = {
 
 -- ── public API (same shape remote_explorer delegates to) ───────────────────
 
-function M.open(alias, root)
+function M.open(alias, root, opts)
   local state = states[alias]
   if not state then
     state = { alias = alias, expanded = {}, kids = {} }
@@ -454,8 +457,14 @@ function M.open(alias, root)
     state.root = root
     state.kids = {}
     state.files_cache = nil
-    state.expanded = {}
+    -- expanded is keyed by ABSOLUTE path, so it survives `-` / backspace,
+    -- which is navigation and should keep the folds you already opened.
+    -- An explicit jump to a DIFFERENT root is a different tree though, and
+    -- restoring folds there re-fetches every one of them over the link.
+    if opts and opts.fresh then state.expanded = {} end
   end
+  -- Same root: change nothing. <leader>e twice must be a no-op, exactly like
+  -- the local explorer, not a collapse and a re-listing.
   state.root = state.root or root or "~"
 
   if state.picker and not state.picker.closed then
@@ -563,7 +572,7 @@ function M.set_root(alias, path)
   state.root = path
   state.kids = {}
   state.files_cache = nil
-  state.expanded = {}
+  -- keep `expanded`: absolute keys, still valid after a re-root
   state.picker:find()
 end
 

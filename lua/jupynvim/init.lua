@@ -69,7 +69,20 @@ M.config = {
   -- instead of the local one; with no active session they fall through to the
   -- local explorer (snacks). Set to {} to disable the hijack and bind
   -- M.explorer / :JupynvimExplorer yourself.
-  explorer_keys = { "<leader>e", "<leader>E" },
+  -- Split to mirror what distros put on these keys locally: <leader>e is the
+  -- PROJECT ROOT of the file you are in, <leader>E is the session's base dir.
+  -- Both used to open the same place, so the two keys were indistinguishable
+  -- once you connected.
+  explorer_keys = { "<leader>e" },          -- remote tree at the project root
+  explorer_cwd_keys = { "<leader>E" },      -- remote tree at the session home
+  -- What counts as a project root when walking up for explorer_keys. A `vcs`
+  -- hit wins outright even if a `build` file sits nearer: in a monorepo the
+  -- nearest Cargo.toml is a sub-crate, not the project, and distros root on
+  -- the repo. `build` is the fallback for code that isn't in version control.
+  root_markers = {
+    vcs   = { ".git", ".hg", ".svn" },
+    build = { "pyproject.toml", "setup.py", "package.json", "Cargo.toml", "go.mod" },
+  },
   -- Toggle a remote PTY terminal for the active SSH session (or the local
   -- terminal when not connected). LazyVim's <C-/> is the natural fit; <C-_>
   -- is how many terminals transmit <C-/>. Set to {} to disable + bind yourself.
@@ -148,6 +161,58 @@ local function locate_local_linux_core(profile, triple)
   return plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
 end
 
+-- Newest mtime across the backend sources. Lets a connect tell whether the
+-- cross-built linux binary predates the code it is meant to be carrying.
+local function core_source_mtime()
+  local root = plugin_root() .. "/core"
+  local files = vim.fn.glob(root .. "/src/**/*.rs", false, true)
+  table.insert(files, root .. "/Cargo.toml")
+  table.insert(files, root .. "/Cargo.lock")
+  local newest = 0
+  for _, f in ipairs(files) do
+    local t = vim.fn.getftime(f)
+    if t > newest then newest = t end
+  end
+  return newest
+end
+
+-- Is the linux artifact we would upload older than the source it came from?
+local function linux_core_stale(triple)
+  local bin = plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
+  local bin_t = vim.fn.getftime(bin)
+  if bin_t < 0 then return true, "missing" end
+  if bin_t < core_source_mtime() then return true, "older than core/" end
+  return false
+end
+M._core_source_mtime = core_source_mtime   -- exposed for tests
+M._linux_core_stale = linux_core_stale     -- exposed for tests
+
+-- Cross-build the linux binary HERE if it has fallen behind the source. We
+-- never build on the remote: a login node is not a build box, and PSC would
+-- not thank us for it. Nothing used to keep this artifact in step, so it went
+-- weeks stale while every connect compared it, found no change, and uploaded
+-- nothing. Synchronous, because the upload right after depends on it.
+local function cross_build_if_stale(triple)
+  local stale, why = linux_core_stale(triple)
+  if not stale then return true end
+  vim.notify("jupynvim: linux binary " .. why .. ", cross-building " .. triple .. " ...",
+             vim.log.levels.INFO)
+  local res = vim.system({
+    "cargo", "zigbuild", "--release", "--target", triple,
+    "--manifest-path", plugin_root() .. "/core/Cargo.toml",
+  }, { text = true }):wait()
+  local bin = plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
+  if res.code ~= 0 then
+    vim.notify("jupynvim: cross-build failed; the remote keeps whatever it has.\n" ..
+               "  one-time setup: brew install zig; cargo install cargo-zigbuild; " ..
+               "rustup target add " .. triple .. "\n" ..
+               ((res.stderr or ""):sub(1, 300)), vim.log.levels.WARN)
+    return vim.fn.filereadable(bin) == 1
+  end
+  vim.notify("jupynvim: cross-build done, uploading to the remote", vim.log.levels.INFO)
+  return true
+end
+
 -- Ensure the remote alias has the current backend binary at profile.core_path,
 -- uploading the locally cross-built linux binary over the SSH ControlMaster if
 -- the remote copy is missing or stale (sha256 mismatch). PSC blocks scp/sftp,
@@ -170,6 +235,9 @@ local function ensure_remote_binary(alias, profile)
                " - deploy jupynvim-core manually (profile.core_path)", vim.log.levels.WARN)
     return
   end
+  -- Line the artifact up with the source before comparing hashes, unless the
+  -- profile pins its own binary (then it is the user's to manage).
+  if not (profile and profile.local_core) then cross_build_if_stale(triple) end
   local local_bin = locate_local_linux_core(profile, triple)
   if vim.fn.filereadable(local_bin) ~= 1 then
     vim.notify("jupynvim: no local linux binary at " .. local_bin ..
@@ -435,7 +503,7 @@ function M.use_remote(alias_or_spec)
   M._remote_spec = spec
   -- Only treat named-profile aliases as the "active" explorer target
   -- (one-off user@host specs aren't in M.config.remote).
-  if M.config.remote and M.config.remote[alias] then M._active_alias = alias end
+  if M.config.remote and M.config.remote[alias] then M._set_active_alias(alias) end
   M.client = M.client_for(alias)  -- reuse existing alive client
   return M.client
 end
@@ -760,7 +828,7 @@ function M.use_job(alias, jobid)
   end
   -- New backend → the cached tree is stale; drop it and (re)open the explorer.
   require("jupynvim.remote_explorer").reset(alias)
-  M._active_alias = alias
+  M._set_active_alias(alias)
   M.remote_browse(alias)
   vim.notify(string.format("jupynvim: %s -> %s", alias, desc), vim.log.levels.INFO)
 end
@@ -784,7 +852,9 @@ function M.disconnect(alias)
   local cl = M.clients[alias]
   if cl then pcall(function() cl:stop() end); M.clients[alias] = nil end
   pcall(function() require("jupynvim.remote_explorer").reset(alias) end)
-  if M._active_alias == alias then M._active_alias = nil end
+  if M._active_alias == alias then M._set_active_alias(nil) end
+  M._session_cwd[alias] = nil
+  M._resolved_home[alias] = nil
   if M._binary_verified then M._binary_verified[alias] = nil end
   vim.notify("jupynvim: " .. alias .. " control socket closed")
 end
@@ -794,7 +864,7 @@ end
 -- sidebar: icons + indented tree, <CR>/l expand-or-open, h collapse, a/d/r
 -- create/delete/rename, R refresh, q close. Notebooks open via the notebook
 -- flow; other files via the jupynvim:// URI scheme.
-function M.remote_browse(alias, subpath)
+function M.remote_browse(alias, subpath, opts)
   local profile = M.config.remote and M.config.remote[alias]
   if not profile then
     vim.notify("jupynvim: no remote profile '" .. tostring(alias or "?") .. "'", vim.log.levels.ERROR)
@@ -807,12 +877,12 @@ function M.remote_browse(alias, subpath)
                vim.log.levels.WARN)
     return
   end
-  M._active_alias = alias
+  M._set_active_alias(alias)
   -- Pass nil (not "~") when no subpath: the explorer then KEEPS its current root
   -- across a close/reopen toggle (only a first-ever open with no state falls
   -- back to "~"). Passing "~" here reset a :JupynvimRemoteCd'd root every toggle.
   local subroot = (subpath ~= nil and subpath ~= "") and subpath or nil
-  require("jupynvim.remote_explorer").open(alias, subroot)
+  require("jupynvim.remote_explorer").open(alias, subroot, opts)
 end
 
 -- Re-render every visible notebook's frames. Toggling the explorer or a
@@ -850,10 +920,79 @@ function M._refresh_notebooks_soon()
   vim.defer_fn(function() pcall(vim.cmd, "redraw") end, 90)
 end
 
--- <leader>e dispatcher / TOGGLE. When an SSH session is active, toggle the
--- REMOTE tree explorer (open if hidden, close if shown); otherwise fall
--- through to the local explorer (snacks). Bound to explorer_keys in M.setup.
-function M.explorer()
+-- "~" resolved to an absolute path, learned from the first fs_list that
+-- returns it. Rooting at the literal "~" makes the tree show a placeholder
+-- row until the listing lands and renames it; once we know the real path we
+-- can root there directly and skip that flicker.
+M._resolved_home = {}
+function M._note_resolved_home(alias, path)
+  if alias and path and path ~= "" and path ~= "~" then
+    M._resolved_home[alias] = path
+  end
+end
+
+-- Where the session starts out, before any re-rooting.
+local function session_home(alias)
+  local profile = M.config.remote and M.config.remote[alias]
+  return M._resolved_home[alias] or (profile and profile.home) or "~"
+end
+
+-- The remote analogue of vim's cwd, tracked per alias.
+M._session_cwd = {}
+
+-- Record an explicit cd: :JupynvimRemoteCd, or `-` / `.` in the tree. This is
+-- deliberately NOT the tree's current root. <leader>e re-roots the tree at the
+-- project root of the file you are in, and if cwd followed that, one press of
+-- <leader>e would overwrite the very thing <leader>E exists to remember and
+-- you could never get back to where you cd'd.
+function M._note_session_cwd(alias, path)
+  if alias and path and path ~= "" then M._session_cwd[alias] = path end
+end
+
+local function session_cwd(alias)
+  return M._session_cwd[alias] or session_home(alias)
+end
+
+-- Walk up from `dir` looking for a project marker, one fs_list per level (a
+-- marker-per-level fs_stat would be markers x levels round trips over SSH).
+-- Stops at the session home so we never climb out into /.
+local function remote_project_root(alias, dir, cb)
+  local cl = M.clients[alias]
+  if not (cl and cl.job and dir) then return cb(nil) end
+  local mk = M.config.root_markers or {}
+  local vcs, build = {}, {}
+  for _, m in ipairs(mk.vcs or {}) do vcs[m] = true end
+  for _, m in ipairs(mk.build or {}) do build[m] = true end
+  -- Stop at whichever boundary we reach first. Without the cwd stop, browsing
+  -- somewhere with no repo above it (e.g. /ocean/projects/...) walks all the
+  -- way to / one fs_list at a time.
+  local home, cwd = session_home(alias), session_cwd(alias)
+  -- Nearest build-file hit, kept as the answer only if no VCS root turns up
+  -- further out. Otherwise a sub-crate's Cargo.toml would beat the repo.
+  local fallback = nil
+  local seen = 0
+  local function step(d)
+    seen = seen + 1
+    if not d or d == "" or d == "/" or seen > 12 then return cb(fallback) end
+    cl:call("fs_list", { path = d }, function(err, res)
+      if not err and res then
+        for _, e in ipairs(res.entries or {}) do
+          if vcs[e.name] then return cb(d) end
+          if build[e.name] and not fallback then fallback = d end
+        end
+      end
+      if d == home or d == cwd then return cb(fallback) end
+      local parent = d:match("(.+)/[^/]+$")
+      if not parent or parent == d then return cb(fallback) end
+      step(parent)
+    end)
+  end
+  step(dir)
+end
+
+-- Shared toggle for both explorer variants. `root_for` is called only when we
+-- are about to OPEN, and hands back the root asynchronously.
+local function explorer_toggle(root_for)
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
     local re = require("jupynvim.remote_explorer")
@@ -861,16 +1000,42 @@ function M.explorer()
     if win and #vim.api.nvim_list_wins() > 1 then
       -- toggle: hide it (picker-based explorer needs picker:close, not win_close)
       if re.close then pcall(re.close, alias) else pcall(vim.api.nvim_win_close, win, false) end
+      M._refresh_notebooks_soon()
     else
-      M.remote_browse(alias)
+      -- fresh: an explicit jump lands collapsed, unlike `-` / backspace which
+      -- is navigation and keeps the folds you already opened.
+      root_for(alias, function(root) M.remote_browse(alias, root, { fresh = true }) end)
     end
-    M._refresh_notebooks_soon()
     return
   end
   -- Local fallback: snacks explorer, else netrw.
   local ok = pcall(function() require("snacks").explorer() end)
   if not ok then pcall(vim.cmd, "Lexplore") end
   M._refresh_notebooks_soon()
+end
+
+-- Toggle the remote tree at the PROJECT ROOT of the file you are in: walk up
+-- from the current jupynvim:// buffer until a root marker turns up, else the
+-- session home. Mirrors what a distro's <leader>e (root dir) does locally.
+function M.explorer()
+  explorer_toggle(function(alias, done)
+    local name = vim.api.nvim_buf_get_name(0)
+    local a, path = M._parse_uri(name)
+    -- Not sitting on a remote file, so there is no project to root at. Fall
+    -- back to the working directory rather than to wherever you happened to
+    -- browse to, which is what leaving this nil used to do.
+    if not (a == alias and path) then return done(session_cwd(alias)) end
+    local dir = path:match("(.+)/[^/]+$") or path
+    remote_project_root(alias, dir, function(root)
+      done(root or session_cwd(alias))
+    end)
+  end)
+end
+
+-- Toggle the remote tree at the remote working directory, the analogue of a
+-- distro's <leader>E (cwd).
+function M.explorer_cwd()
+  explorer_toggle(function(alias, done) done(session_cwd(alias)) end)
 end
 
 -- Terminal dispatcher / TOGGLE. SSH-connected → toggle a REMOTE PTY terminal
@@ -926,10 +1091,175 @@ function M.grep_pick()
   return false
 end
 
+-- ---------- global dispatch keys ----------
+--
+-- <leader>e, <C-/>, <leader>ff and friends target the remote when a session is
+-- active. Each key lands in one of two modes, decided by whether you already
+-- had a mapping for it (issue #24: we used to take all of them unconditionally,
+-- so every buffer of every filetype showed "jupynvim:" in which-key):
+--
+--   "ssh"        you had one. we take the key only while a session is active
+--                and mapset() yours back the moment it ends.
+--   "permanent"  you had none. nothing to clobber, so we keep it bound and it
+--                falls through to the local equivalent.
+--
+-- terminal_right_keys is always "ssh": it has no local behavior to offer.
+M._dispatch = { mode = {}, saved = {}, specs = {}, applied = {} }
+
+-- Ownership is tracked by CALLBACK IDENTITY, not by matching a prefix on the
+-- description. Descriptions are user-visible and get reworded; if that string
+-- were load-bearing, a rename would make us mistake our own mapping for yours
+-- and capture it as the "original", losing yours for good.
+local function dispatch_is_ours(lhs, mode)
+  local fn = (M._dispatch.applied[lhs] or {})[mode]
+  if not fn then return false end
+  local m = vim.fn.maparg(lhs, mode, false, true)
+  return m ~= nil and m.callback == fn
+end
+
+-- Replay the mapping we displaced, for the connected case where the remote
+-- picker declines (find_files/grep_pick return false).
+local function dispatch_replay(lhs, kind)
+  local orig = (M._dispatch.saved[lhs] or {})["n"]
+  if orig and orig.callback then pcall(orig.callback)
+  elseif orig and orig.rhs and orig.rhs ~= "" then
+    local feed = vim.api.nvim_replace_termcodes(orig.rhs, true, true, true)
+    vim.api.nvim_feedkeys(feed, orig.noremap == 1 and "n" or "m", false)
+  else
+    pcall(function() require("snacks").picker[kind]() end)
+  end
+end
+
+local function dispatch_specs()
+  local pk = M.config.pick_keys or {}
+  local s = {}
+  for _, lhs in ipairs(M.config.explorer_keys or {}) do
+    s[#s + 1] = { lhs = lhs, modes = { "n" },
+      rhs = function() M.explorer() end,
+      opts = { desc = "Remote Explorer (project root)" } }
+  end
+  for _, lhs in ipairs(M.config.explorer_cwd_keys or {}) do
+    s[#s + 1] = { lhs = lhs, modes = { "n" },
+      rhs = function() M.explorer_cwd() end,
+      opts = { desc = "Remote Explorer (cwd)" } }
+  end
+  for _, lhs in ipairs(M.config.terminal_keys or {}) do
+    s[#s + 1] = { lhs = lhs, modes = { "n", "t" },
+      rhs = function()
+        if vim.fn.mode() == "t" then vim.cmd("stopinsert") end
+        M.terminal()
+      end,
+      opts = { desc = "Remote Terminal (bottom)" } }
+  end
+  for _, lhs in ipairs(M.config.terminal_right_keys or {}) do
+    s[#s + 1] = { lhs = lhs, modes = { "n" }, ssh_only = true,
+      rhs = function() M.terminal_right() end,
+      opts = { desc = "Remote Terminal (right)" } }
+  end
+  local pick_desc = { files = "Remote Find Files", grep = "Remote Grep" }
+  for _, kind in ipairs({ "files", "grep" }) do
+    for _, lhs in ipairs(pk[kind] or {}) do
+      s[#s + 1] = { lhs = lhs, modes = { "n" },
+        rhs = function()
+          local handled = (kind == "files") and M.find_files() or M.grep_pick()
+          if not handled then dispatch_replay(lhs, kind) end
+        end,
+        opts = { desc = pick_desc[kind], silent = true } }
+    end
+  end
+  return s
+end
+
+local function dispatch_apply(spec)
+  for _, mode in ipairs(spec.modes) do
+    if pcall(vim.keymap.set, mode, spec.lhs, spec.rhs, spec.opts) then
+      M._dispatch.applied[spec.lhs] = M._dispatch.applied[spec.lhs] or {}
+      M._dispatch.applied[spec.lhs][mode] = spec.rhs
+    end
+  end
+end
+
+local function dispatch_unapply(spec)
+  for _, mode in ipairs(spec.modes) do
+    local saved = (M._dispatch.saved[spec.lhs] or {})[mode]
+    if saved and not vim.tbl_isempty(saved) then
+      pcall(vim.fn.mapset, saved)
+    else
+      pcall(vim.keymap.del, mode, spec.lhs)
+    end
+    if M._dispatch.applied[spec.lhs] then
+      M._dispatch.applied[spec.lhs][mode] = nil
+    end
+  end
+end
+
+local function dispatch_snapshot(spec)
+  local snap, any = {}, false
+  for _, mode in ipairs(spec.modes) do
+    local m = vim.fn.maparg(spec.lhs, mode, false, true)
+    snap[mode] = m
+    if m and not vim.tbl_isempty(m) then any = true end
+  end
+  M._dispatch.saved[spec.lhs] = snap
+  return any
+end
+
+-- Decide each key's mode and bind the permanent ones. Runs more than once
+-- (setup, VeryLazy, +500ms) so it lands after a distro's own maps; a pass that
+-- finds OUR mapping in place leaves the earlier decision alone.
+function M._dispatch_bind()
+  M._dispatch.specs = dispatch_specs()
+  local connected = M.remote_active()
+  for _, spec in ipairs(M._dispatch.specs) do
+    if not dispatch_is_ours(spec.lhs, spec.modes[1]) then
+      local had = dispatch_snapshot(spec)
+      if had or spec.ssh_only then
+        M._dispatch.mode[spec.lhs] = "ssh"
+        if connected then dispatch_apply(spec) end
+      else
+        M._dispatch.mode[spec.lhs] = "permanent"
+        dispatch_apply(spec)
+      end
+    end
+  end
+end
+
+-- Session became active: take the "ssh" keys, re-snapshotting first in case
+-- your mapping changed since the last bind pass.
+local function dispatch_install()
+  for _, spec in ipairs(M._dispatch.specs or {}) do
+    if M._dispatch.mode[spec.lhs] == "ssh" then
+      if not dispatch_is_ours(spec.lhs, spec.modes[1]) then
+        dispatch_snapshot(spec)
+      end
+      dispatch_apply(spec)
+    end
+  end
+end
+
+-- Session ended: give the keys back exactly as they were.
+local function dispatch_restore()
+  for _, spec in ipairs(M._dispatch.specs or {}) do
+    if M._dispatch.mode[spec.lhs] == "ssh"
+       and dispatch_is_ours(spec.lhs, spec.modes[1]) then
+      dispatch_unapply(spec)
+    end
+  end
+end
+
+-- Single funnel for every place the active session changes, so the keymap
+-- lifecycle can't drift out of sync with it.
+function M._set_active_alias(alias)
+  local was = M._active_alias
+  M._active_alias = alias
+  if alias and not was then dispatch_install()
+  elseif was and not alias then dispatch_restore() end
+end
+
 -- Switch back to a local backend. Clears the active-remote alias so
 -- <leader>e goes back to the local (snacks) explorer.
 function M.use_local()
-  M._active_alias = nil
+  M._set_active_alias(nil)
   if M.client and not M._remote_spec then return M.client end
   if M.client then
     pcall(function() M.client:stop() end)
@@ -2853,61 +3183,10 @@ function M.setup(opts)
     end)
   end
 
-  -- Bind explorer_keys to the M.explorer dispatcher (remote tree when an SSH
-  -- session is active, local snacks otherwise). Done on User VeryLazy so it
-  -- lands AFTER LazyVim sets its own <leader>e — otherwise LazyVim would
-  -- overwrite ours. Falls back to immediate set if VeryLazy already fired.
-  local function bind_dispatch_keys()
-    for _, lhs in ipairs(M.config.explorer_keys or {}) do
-      pcall(vim.keymap.set, "n", lhs, function() M.explorer() end,
-        { desc = "jupynvim: explorer (remote when SSH-connected)" })
-    end
-    -- Terminal toggle works from normal AND terminal mode (so <C-/> dismisses
-    -- the remote term while you're typing in it).
-    for _, lhs in ipairs(M.config.terminal_keys or {}) do
-      pcall(vim.keymap.set, { "n", "t" }, lhs, function()
-        if vim.fn.mode() == "t" then
-          vim.cmd("stopinsert")
-        end
-        M.terminal()
-      end, { desc = "jupynvim: terminal toggle (remote when SSH-connected)" })
-    end
-    -- Second terminal on the right (toggle). Normal mode only (leader keys
-    -- aren't meaningful in terminal-insert); dismiss it from inside with the
-    -- <C-/> family or by closing the window.
-    for _, lhs in ipairs(M.config.terminal_right_keys or {}) do
-      pcall(vim.keymap.set, "n", lhs, function() M.terminal_right() end,
-        { desc = "jupynvim: toggle second remote terminal (right)" })
-    end
-    -- Pick keys (find-files / grep): target the remote when connected, else
-    -- REPLAY the user's own local mapping (captured here, after LazyVim set
-    -- it). So local behavior is untouched; only the remote case is added.
-    M._pick_orig = M._pick_orig or {}
-    local function capture_and_bind(lhs, kind)
-      local cur = vim.fn.maparg(lhs, "n", false, true)
-      -- Capture the original only if the current map isn't already ours
-      -- (avoids capturing our own dispatcher → infinite replay loop).
-      if not (cur.desc and cur.desc:match("^jupynvim:")) then
-        M._pick_orig[lhs] = cur
-      end
-      local function replay()
-        local orig = M._pick_orig[lhs]
-        if orig and orig.callback then pcall(orig.callback)
-        elseif orig and orig.rhs and orig.rhs ~= "" then
-          local feed = vim.api.nvim_replace_termcodes(orig.rhs, true, true, true)
-          vim.api.nvim_feedkeys(feed, orig.noremap == 1 and "n" or "m", false)
-        else
-          pcall(function() require("snacks").picker[kind]() end)
-        end
-      end
-      pcall(vim.keymap.set, "n", lhs, function()
-        local handled = (kind == "files") and M.find_files() or M.grep_pick()
-        if not handled then replay() end
-      end, { desc = "jupynvim: " .. kind .. " (remote when SSH-connected)", silent = true })
-    end
-    for _, lhs in ipairs((M.config.pick_keys or {}).files or {}) do capture_and_bind(lhs, "files") end
-    for _, lhs in ipairs((M.config.pick_keys or {}).grep or {}) do capture_and_bind(lhs, "grep") end
-  end
+  -- Decide the mode of each global dispatch key (see M._dispatch_bind). Run on
+  -- User VeryLazy so it lands AFTER a distro sets its own <leader>e, otherwise
+  -- we would read "you have no mapping" and claim the key for good.
+  local bind_dispatch_keys = M._dispatch_bind
   local pk = M.config.pick_keys or {}
   if (M.config.explorer_keys and #M.config.explorer_keys > 0)
      or (M.config.terminal_keys and #M.config.terminal_keys > 0)
@@ -3425,7 +3704,11 @@ function M.setup(opts)
       return
     end
     if #parts == 1 and M._active_alias then alias = M._active_alias; path = parts[1] end
-    M._active_alias = alias
+    M._set_active_alias(alias)
+    -- This is the ONLY thing that designates the working directory. Browsing
+    -- the tree with `-` / backspace is navigation, not a cd, so <leader>e and
+    -- <leader>E still bring you back here afterwards.
+    M._note_session_cwd(alias, path)
     require("jupynvim.remote_explorer").set_root(alias, path)
   end, {
     nargs = "+",
