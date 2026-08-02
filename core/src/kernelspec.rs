@@ -79,7 +79,7 @@ fn search_dirs() -> Vec<PathBuf> {
 fn conda_prefixes_from(home: Option<PathBuf>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    let mut add = |p: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+    let add = |p: PathBuf, out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
         if p.is_dir() && seen.insert(p.clone()) {
             out.push(p);
         }
