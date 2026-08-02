@@ -2785,10 +2785,9 @@ end
 -- wholesale (so you set exactly the keys you want). Makes every option
 -- independently overridable.
 local function deep_merge(dst, src)
-  local islist = vim.islist or vim.tbl_islist
   for k, v in pairs(src) do
     if type(v) == "table" and type(dst[k]) == "table"
-       and not islist(v) and not islist(dst[k]) then
+       and not vim.islist(v) and not vim.islist(dst[k]) then
       dst[k] = deep_merge(vim.deepcopy(dst[k]), v)
     else
       dst[k] = v

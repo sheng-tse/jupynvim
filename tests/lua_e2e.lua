@@ -493,6 +493,28 @@ test_pcall("set_cell_type to markdown clears outputs", function()
   os.remove(p)
 end)
 
+-- T12: setup() deep-merges nested config tables but replaces lists wholesale.
+-- Runs LAST because it calls setup() again, which rewrites M.config.
+test_pcall("setup deep-merges maps and replaces lists", function()
+  local defaults = vim.deepcopy(J.config)
+  J.setup({
+    terminal = { resize_step = 9, resize_keys = { taller = "<C-t>" } },
+    explorer_keys = { "<leader>zz" },
+  })
+  local c = J.config
+  report("setup deep-merges nested maps, keeping siblings",
+         c.terminal.resize_step == 9
+         and c.terminal.resize_keys.taller == "<C-t>"
+         and c.terminal.resize_keys.shorter == defaults.terminal.resize_keys.shorter
+         and c.terminal.bottom_height == defaults.terminal.bottom_height,
+         string.format("step=%s taller=%s shorter=%s height=%s",
+           tostring(c.terminal.resize_step), tostring(c.terminal.resize_keys.taller),
+           tostring(c.terminal.resize_keys.shorter), tostring(c.terminal.bottom_height)))
+  report("setup replaces list options wholesale",
+         #c.explorer_keys == 1 and c.explorer_keys[1] == "<leader>zz",
+         "explorer_keys len=" .. #c.explorer_keys)
+end)
+
 -- ============================================================
 print(string.format("\nlua e2e: %d/%d passed\n", PASS, PASS + FAIL))
 if FAIL > 0 then
