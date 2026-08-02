@@ -1,10 +1,10 @@
 -- msgpack-rpc client over a child's stdio.
--- Uses vim.loop (libuv) directly so we get raw byte streams (jobstart's line
+-- Uses vim.uv (libuv) directly so we get raw byte streams (jobstart's line
 -- splitting destroys binary msgpack data).
 
 local mpack = vim.mpack
 local log = require("jupynvim.log")
-local uv = vim.loop
+local uv = vim.uv
 
 local M = {}
 

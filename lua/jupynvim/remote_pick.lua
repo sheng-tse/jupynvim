@@ -354,7 +354,7 @@ function M.grep(alias, root, pattern, opts)
     -- nearby dirs show within milliseconds even when the full walk of a big
     -- NFS tree takes much longer (snacks' busy spinner shows meanwhile). A
     -- new keystroke supersedes the previous search (backend epoch + sid).
-    local seq = math.floor((vim.uv or vim.loop).hrtime() % 1e9)
+    local seq = math.floor(vim.uv.hrtime() % 1e9)
     local current = { sid = nil, push = nil }
     if not client._search_event_hooked then
       client._search_event_hooked = true
