@@ -304,9 +304,11 @@ def t_silent_execute():
     cl.call("start_kernel", {"session_id": sid}, timeout=15)
     err, _ = cl.call("execute_silent", {"session_id": sid, "code": "secret_var = 999"})
     report("execute_silent returns", err is None, str(err))
-    # Verify the variable was set by running a follow-up that prints it
-    cl.events.clear()
-    cl.call("execute", {"session_id": sid, "cell_id": "c1"})  # use cell to send arbitrary code
+    # Verify the variable was set by running a follow-up that prints it.
+    # Only ONE execute here: an earlier version ran the cell before rewriting
+    # its source, and that run's "hi" raced the events.clear() below. Whichever
+    # stream landed first won, so the assert compared "hi" to "999" and the
+    # case failed at random, more often on a loaded machine.
     cl.call("update_cell_source", {"session_id": sid, "cell_id": "c1", "source": "print(secret_var)"})
     cl.events.clear()
     cl.call("execute", {"session_id": sid, "cell_id": "c1"})
