@@ -893,7 +893,6 @@ impl Server {
     // ===========================================================
 
     async fn fs_list(&self, p: Json) -> Result<Json> {
-        use std::os::unix::fs::MetadataExt;
         let path = arg_path(&p, "path")?;
         // Build a gitignore matcher for this dir (walk up for .git + collect
         // .gitignore files between the repo root and here). Lets the frontend
@@ -903,34 +902,37 @@ impl Server {
             .with_context(|| format!("read_dir {}", path.display()))?;
         let mut entries = Vec::new();
         while let Some(entry) = rd.next_entry().await? {
-            // Follow symlinks to determine "real" kind. A symlink to a dir
-            // should browse like a dir; a symlink to a file should read like
-            // a file. Fall back to symlink_metadata for broken symlinks so
-            // they still show up (marked "link" so frontend can warn).
+            // Cost matters here: this used to stat() AND lstat() every entry,
+            // sequentially, and the frontend only ever reads name/kind/ignored.
+            // On a slow metadata filesystem (PSC's NFS home vs its parallel
+            // /ocean) that made listing a 15-entry directory take seconds.
+            // file_type() comes from the dirent's d_type with no syscall at
+            // all on most filesystems, falling back to one lstat when the
+            // filesystem reports DT_UNKNOWN.
             let entry_path = entry.path();
-            let target_meta = tokio::fs::metadata(&entry_path).await;
-            let lnk_meta = tokio::fs::symlink_metadata(&entry_path).await;
-            let (meta, is_link) = match (target_meta, lnk_meta) {
-                (Ok(m), Ok(lm)) => (m, lm.file_type().is_symlink()),
-                (Err(_), Ok(lm)) => (lm.clone(), lm.file_type().is_symlink()), // broken link
-                (Ok(m), Err(_)) => (m, false),
-                (Err(_), Err(_)) => continue,
+            let ft = match entry.file_type().await {
+                Ok(ft) => ft,
+                Err(_) => continue,
             };
-            let kind = if meta.is_dir() { "dir" }
-                else if is_link { "link" }  // symlink whose target isn't a dir
-                else { "file" };
-            let mtime = meta.modified().ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64).unwrap_or(0);
+            // Only a symlink needs a follow: a link to a dir must browse like
+            // a dir. Everything else is already decided. A broken link keeps
+            // showing up, marked "link" so the frontend can warn.
+            let (is_dir, kind) = if ft.is_symlink() {
+                match tokio::fs::metadata(&entry_path).await {
+                    Ok(m) if m.is_dir() => (true, "dir"),
+                    _ => (false, "link"),
+                }
+            } else if ft.is_dir() {
+                (true, "dir")
+            } else {
+                (false, "file")
+            };
             let ignored = ignore_matcher.as_ref()
-                .map(|m| m.matched(&entry_path, meta.is_dir()).is_ignore())
+                .map(|m| m.matched(&entry_path, is_dir).is_ignore())
                 .unwrap_or(false);
             entries.push(json!({
                 "name": entry.file_name().to_string_lossy(),
                 "kind": kind,
-                "size": meta.len(),
-                "mode": meta.mode() & 0o777,
-                "mtime": mtime,
                 "ignored": ignored,
             }));
         }
