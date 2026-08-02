@@ -1,7 +1,7 @@
 -- Headless verification of the markdown engine.
 local here = debug.getinfo(1, "S").source:sub(2)
 vim.opt.runtimepath:prepend(vim.fn.fnamemodify(here, ":p:h:h"))
-local MD = require("jupynvim.markdown")
+local MD = require("jupynvim.notebook.markdown")
 MD.setup_hl()
 
 -- 1. balanced-bracket links: the exact failing case from the HW notebook

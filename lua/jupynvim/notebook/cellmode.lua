@@ -27,7 +27,7 @@ local M = {}
 
 local Notebook = require("jupynvim.notebook")
 
-local ns = vim.api.nvim_create_namespace("jupynvim.cellmode")
+local ns = vim.api.nvim_create_namespace("jupynvim.notebook.cellmode")
 
 -- Gutter geometry: [bar 1][num 3][sp 1][border 1][sp 1] = 7 cells.
 M.GUTTER = 7
@@ -204,7 +204,7 @@ end
 local function refresh_render(buf, opts)
   local nb = Notebook.get(buf)
   if nb then
-    require("jupynvim.render").refresh(nb, vim.fn.bufwinid(buf), opts)
+    require("jupynvim.notebook.render").refresh(nb, vim.fn.bufwinid(buf), opts)
   end
 end
 
@@ -646,7 +646,7 @@ function M.attach(buf, api)
       -- sometimes it doesn't"). Rebuilds the virt_line borders AND the output
       -- virt_lines (where the stale selection bar lived). no_image so kitty
       -- placements are untouched.
-      pcall(require("jupynvim.render").refresh_sync, nb, win, { no_image = true })
+      pcall(require("jupynvim.notebook.render").refresh_sync, nb, win, { no_image = true })
       -- Force a full window repaint: the left frame is the statuscolumn, which a
       -- plain redraw leaves stale on undirtied lines (real AND output-virtline),
       -- so invalidate the whole window and re-evaluate its statuscolumn.

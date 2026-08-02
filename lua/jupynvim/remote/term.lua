@@ -521,7 +521,7 @@ function M.open(alias, opts)
 
   local cwd = opts.cwd
   if not cwd then
-    local ok, root = pcall(function() return require("jupynvim.remote_explorer").current_root(alias) end)
+    local ok, root = pcall(function() return require("jupynvim.remote.explorer").current_root(alias) end)
     if ok then cwd = root end
   end
   -- Shell + line editing mode. Vim-style prompt editing (esc -> dd/cw/v/p

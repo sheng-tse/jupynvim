@@ -151,14 +151,14 @@ J._note_session_cwd("faketest", nil)
 chk("cwd survives a nil write (the e path records nothing)",
     J._session_cwd["faketest"] == CD, tostring(J._session_cwd["faketest"]))
 -- and the tree moving underneath it must not matter either
-pcall(function() require("jupynvim.remote_explorer").reset("faketest") end)
+pcall(function() require("jupynvim.remote.explorer").reset("faketest") end)
 chk("cwd is independent of where the tree is rooted",
     J._session_cwd["faketest"] == CD, tostring(J._session_cwd["faketest"]))
 -- browsing the tree (backspace / `-` / `.`) is NAVIGATION, not a cd. it must
 -- leave the working directory alone, otherwise going up one level and pressing
 -- <leader>e no longer brings you back to where :JupynvimRemoteCd put you.
 pcall(function()
-  require("jupynvim.remote_explorer").set_root("faketest", "/tmp/elsewhere")
+  require("jupynvim.remote.explorer").set_root("faketest", "/tmp/elsewhere")
 end)
 chk("browsing the tree does NOT move the working dir",
     J._session_cwd["faketest"] == CD, tostring(J._session_cwd["faketest"]))

@@ -311,7 +311,7 @@ end)
 
 -- T11.6: Native Kitty placeholder builder works (no external deps)
 test_pcall("kitty placeholder builder produces non-empty virt_lines", function()
-  local img = require("jupynvim.image")
+  local img = require("jupynvim.notebook.image")
   local rows = img.build_virt_lines(7, 3, 5)  -- image_id=7, 3 rows × 5 cols
   local ok = #rows == 3 and #rows[1] == 5 and rows[1][1][1]:byte(1) ~= nil
   -- The first byte of U+10EEEE in UTF-8 is 0xF4

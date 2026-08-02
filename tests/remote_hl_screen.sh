@@ -39,7 +39,7 @@ note() { echo "$1"; }
 bad() { echo "FAIL: $1"; fails=$((fails + 1)); }
 
 # ── dashboard ────────────────────────────────────────────────────────────
-tmux send-keys -t "$S" ":lua vim.api.nvim_win_set_buf(0, require('jupynvim.remote_dashboard').build('testalias','/home/me/proj',0))" Enter
+tmux send-keys -t "$S" ":lua vim.api.nvim_win_set_buf(0, require('jupynvim.remote.dashboard').build('testalias','/home/me/proj',0))" Enter
 sleep 1.5
 
 rendered=0
@@ -71,7 +71,7 @@ else
 fi
 
 # ── explorer ─────────────────────────────────────────────────────────────
-tmux send-keys -t "$S" ":lua local RE=require('jupynvim.remote_explorer'); local b=vim.api.nvim_create_buf(false,true); vim.api.nvim_win_set_buf(0,b); RE._render({alias='a',root='/home/me/proj',buf=b,expanded={},kids={['/home/me/proj']={loaded=true,items={{name='src',path='/home/me/proj/src',kind='dir'},{name='main.py',path='/home/me/proj/main.py',kind='file'}}}}})" Enter
+tmux send-keys -t "$S" ":lua local RE=require('jupynvim.remote.explorer'); local b=vim.api.nvim_create_buf(false,true); vim.api.nvim_win_set_buf(0,b); RE._render({alias='a',root='/home/me/proj',buf=b,expanded={},kids={['/home/me/proj']={loaded=true,items={{name='src',path='/home/me/proj/src',kind='dir'},{name='main.py',path='/home/me/proj/main.py',kind='file'}}}}})" Enter
 sleep 1.5
 
 if CAP_RAW | grep -qa "main.py"; then

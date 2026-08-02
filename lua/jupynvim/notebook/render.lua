@@ -19,7 +19,7 @@
 --   • Output images via Kitty graphics protocol (image.lua)
 
 local Notebook = require("jupynvim.notebook")
-local image = require("jupynvim.image")
+local image = require("jupynvim.notebook.image")
 local log = require("jupynvim.log")
 
 local M = {}
@@ -348,7 +348,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
     local md_lead = repeat_char(" ", gut)
     local lines_below = {}
     if cell.cell_type == "markdown" then
-      local Embedded = require("jupynvim.embedded")
+      local Embedded = require("jupynvim.notebook.embedded")
       local src = cell.source or ""
       for _, img in ipairs(Embedded.list_images(cell.id) or {}) do
         if src:find("jupynvim%-img:" .. img.idx, 1, false) then
@@ -380,9 +380,9 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
       })
     end
     if cell.cell_type == "markdown" then
-      require("jupynvim.markdown").render(buf, nb.border_ns,
+      require("jupynvim.notebook.markdown").render(buf, nb.border_ns,
         range.start, math.min(range.stop - 1, total - 1), width)
-      local Embedded = require("jupynvim.embedded")
+      local Embedded = require("jupynvim.notebook.embedded")
       local imgs = Embedded.list_images(cell.id)
       if imgs and #imgs > 0 then
         nb.image_ids = nb.image_ids or {}
@@ -612,7 +612,7 @@ local function do_render(nb, win, opts)
   -- Geometry must come from a window CURRENTLY showing this buffer (not a
   -- float, and not a stale handle captured while a transient split briefly
   -- showed it). textoff = the statuscolumn gutter; width = full window.
-  local CellMode = require("jupynvim.cellmode")
+  local CellMode = require("jupynvim.notebook.cellmode")
   local function is_float(w)
     local ok, cfg = pcall(vim.api.nvim_win_get_config, w)
     return ok and cfg.relative ~= nil and cfg.relative ~= ""
@@ -736,8 +736,8 @@ function M.setup_highlights()
     end
   end
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
-  require("jupynvim.markdown").setup_hl()
-  require("jupynvim.cellmode").setup_hl()
+  require("jupynvim.notebook.markdown").setup_hl()
+  require("jupynvim.notebook.cellmode").setup_hl()
 end
 
 return M

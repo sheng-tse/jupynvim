@@ -19,7 +19,7 @@ local M = {}
 local function picker_impl()
   local ok = pcall(require, "snacks")
   if ok and package.loaded["snacks"] and Snacks and Snacks.picker then
-    return require("jupynvim.remote_explorer_picker")
+    return require("jupynvim.remote.explorer_picker")
   end
   return nil
 end
@@ -48,7 +48,7 @@ vim.api.nvim_set_hl(0, "JupynvimExplorerLink",   { default = true, link = "Speci
 vim.api.nvim_set_hl(0, "JupynvimExplorerChevron",{ default = true, link = "Comment" })
 vim.api.nvim_set_hl(0, "JupynvimExplorerIgnored",{ default = true, link = "Comment" })
 vim.api.nvim_set_hl(0, "JupynvimExplorerRootIcon",{ default = true, link = "Directory" })
-local ns = vim.api.nvim_create_namespace("jupynvim.remote_explorer")
+local ns = vim.api.nvim_create_namespace("jupynvim.remote.explorer")
 
 -- per-alias state:
 --   { alias, root, buf, win,
@@ -310,7 +310,7 @@ local function open_node(state, node)
   -- the :edit/render gets undone when the file loads. The scheduled backstop
   -- covers async (notebook image) renders that resize on a later tick.
   if relocated_slot then
-    local rt = require("jupynvim.remote_term")
+    local rt = require("jupynvim.remote.term")
     pcall(rt.restore_size, state.alias, relocated_slot)
     vim.schedule(function() pcall(rt.restore_size, state.alias, relocated_slot) end)
   end
@@ -469,7 +469,7 @@ local function bind_keys(state)
   -- with title on top, list below, left strip) instead of a centered popup.
   -- (Grep file contents is on the global <leader>/ / <leader>sg dispatch.)
   map("/", function()
-    require("jupynvim.remote_pick").files(state.alias, state.root, {
+    require("jupynvim.remote.pick").files(state.alias, state.root, {
       layout = { preset = "sidebar", preview = false },
     })
   end)
@@ -503,7 +503,7 @@ end
 -- user sees a jupynvim landing screen, not the LOCAL dashboard whose
 -- Find File / Recent act locally.
 local function place_dashboard(state)
-  local RD = require("jupynvim.remote_dashboard")
+  local RD = require("jupynvim.remote.dashboard")
   for _, w in ipairs(vim.api.nvim_list_wins()) do
     if w ~= state.win and vim.api.nvim_win_get_config(w).relative == "" then
       local ft = vim.bo[vim.api.nvim_win_get_buf(w)].filetype or ""

@@ -137,14 +137,14 @@ function M.open_in_editor(file, pos)
   -- loads (resizing before the load gets undone). Scheduled backstop covers
   -- async (notebook image) renders that resize on a later tick.
   if relocated_slot and term_alias then
-    local rt = require("jupynvim.remote_term")
+    local rt = require("jupynvim.remote.term")
     pcall(rt.restore_size, term_alias, relocated_slot)
     vim.schedule(function() pcall(rt.restore_size, term_alias, relocated_slot) end)
   end
   -- Re-pin the snacks sidebar: the relocation vsplit + the file load can squish
   -- it off its sidebar width. No-op when the snacks picker isn't the explorer.
   pcall(function()
-    local rep = require("jupynvim.remote_explorer_picker")
+    local rep = require("jupynvim.remote.explorer_picker")
     rep.repin_sidebar()
     vim.schedule(rep.repin_sidebar)
   end)
@@ -159,7 +159,7 @@ end
 -- Resolve the search root: explicit arg, else the explorer's current root, else ~.
 local function resolve_root(alias, root)
   if root and root ~= "" then return root end
-  local ok, r = pcall(function() return require("jupynvim.remote_explorer").current_root(alias) end)
+  local ok, r = pcall(function() return require("jupynvim.remote.explorer").current_root(alias) end)
   if ok and r then return r end
   return "~"
 end

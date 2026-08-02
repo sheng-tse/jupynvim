@@ -10,7 +10,7 @@
 -- same window tree with marked dummy buffers and runs open_node's choreography.
 
 package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
-local RE = require("jupynvim.remote_explorer")
+local RE = require("jupynvim.remote.explorer")
 
 local function fail(msg)
   io.write("FAIL: " .. msg .. "\n")

@@ -22,7 +22,7 @@ vim.api.nvim_set_hl(0, "JupynvimDashKey",    { default = true, link = "Special" 
 vim.api.nvim_set_hl(0, "JupynvimDashDesc",   { default = true, link = "Normal" })
 vim.api.nvim_set_hl(0, "JupynvimDashFooter", { default = true, link = "Comment" })
 vim.api.nvim_set_hl(0, "JupynvimDashInfo",   { default = true, link = "Title" })
-local ns = vim.api.nvim_create_namespace("jupynvim.remote_dashboard")
+local ns = vim.api.nvim_create_namespace("jupynvim.remote.dashboard")
 
 -- Icons by codepoint (classic FontAwesome, present in every Nerd Font patch —
 -- the same family mini.icons/LazyVim use, which render in this setup).
@@ -38,9 +38,9 @@ local ICON = {
 
 local actions = {
   { key = "e", icon = ICON.folder, desc = "Explorer",        run = function(a) require("jupynvim").remote_browse(a) end },
-  { key = "t", icon = ICON.term,   desc = "Remote terminal", run = function(a) require("jupynvim.remote_term").open(a) end },
+  { key = "t", icon = ICON.term,   desc = "Remote terminal", run = function(a) require("jupynvim.remote.term").open(a) end },
   { key = "g", icon = ICON.search, desc = "Search remote",   run = function(a)
-      require("jupynvim.remote_pick").grep(a)  -- live grep picker
+      require("jupynvim.remote.pick").grep(a)  -- live grep picker
     end },
   { key = "l", icon = ICON.home,   desc = "Local backend",   run = function()
       local J = require("jupynvim")

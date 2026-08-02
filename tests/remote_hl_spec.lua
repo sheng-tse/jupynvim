@@ -40,9 +40,9 @@ local function find(list, group)
 end
 
 -- ── dashboard ────────────────────────────────────────────────────────────
-local RD = require("jupynvim.remote_dashboard")
+local RD = require("jupynvim.remote.dashboard")
 local dbuf = RD.build("testalias", "/home/me/proj", nil)
-local dm = marks_by_row(dbuf, "jupynvim.remote_dashboard")
+local dm = marks_by_row(dbuf, "jupynvim.remote.dashboard")
 
 if not dm then
   fail("dashboard namespace missing entirely")
@@ -81,7 +81,7 @@ else
 end
 
 -- ── explorer ─────────────────────────────────────────────────────────────
-local RE = require("jupynvim.remote_explorer")
+local RE = require("jupynvim.remote.explorer")
 local ebuf = vim.api.nvim_create_buf(false, true)
 local state = {
   alias = "testalias",
@@ -100,7 +100,7 @@ local state = {
   },
 }
 RE._render(state)
-local em = marks_by_row(ebuf, "jupynvim.remote_explorer")
+local em = marks_by_row(ebuf, "jupynvim.remote.explorer")
 
 if not em then
   fail("explorer namespace missing entirely")

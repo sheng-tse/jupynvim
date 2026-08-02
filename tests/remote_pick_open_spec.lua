@@ -6,7 +6,7 @@
 -- on TOP of the terminal (right of the explorer), terminal pushed below.
 
 package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
-local RP = require("jupynvim.remote_pick")
+local RP = require("jupynvim.remote.pick")
 local function fail(m) io.write("FAIL: " .. m .. "\n"); vim.cmd("cquit 1") end
 
 -- [snacks-explorer (left) | terminal (right, full height)]

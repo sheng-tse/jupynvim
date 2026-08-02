@@ -8,10 +8,10 @@
 local M = {}
 
 local Notebook = require("jupynvim.notebook")
-local Render   = require("jupynvim.render")
+local Render   = require("jupynvim.notebook.render")
 local RPC      = require("jupynvim.rpc")
 local Keymaps  = require("jupynvim.keymaps")
-local Image    = require("jupynvim.image")
+local Image    = require("jupynvim.notebook.image")
 local Log      = require("jupynvim.log")
 
 M.client = nil    -- single backend process shared by all notebooks
@@ -827,7 +827,7 @@ function M.use_job(alias, jobid)
     return
   end
   -- New backend → the cached tree is stale; drop it and (re)open the explorer.
-  require("jupynvim.remote_explorer").reset(alias)
+  require("jupynvim.remote.explorer").reset(alias)
   M._set_active_alias(alias)
   M.remote_browse(alias)
   vim.notify(string.format("jupynvim: %s -> %s", alias, desc), vim.log.levels.INFO)
@@ -851,7 +851,7 @@ function M.disconnect(alias)
   -- Drop the backend client + cached explorer tree; revert explorer to local.
   local cl = M.clients[alias]
   if cl then pcall(function() cl:stop() end); M.clients[alias] = nil end
-  pcall(function() require("jupynvim.remote_explorer").reset(alias) end)
+  pcall(function() require("jupynvim.remote.explorer").reset(alias) end)
   if M._active_alias == alias then M._set_active_alias(nil) end
   M._session_cwd[alias] = nil
   M._resolved_home[alias] = nil
@@ -882,7 +882,7 @@ function M.remote_browse(alias, subpath, opts)
   -- across a close/reopen toggle (only a first-ever open with no state falls
   -- back to "~"). Passing "~" here reset a :JupynvimRemoteCd'd root every toggle.
   local subroot = (subpath ~= nil and subpath ~= "") and subpath or nil
-  require("jupynvim.remote_explorer").open(alias, subroot, opts)
+  require("jupynvim.remote.explorer").open(alias, subroot, opts)
 end
 
 -- Re-render every visible notebook's frames. Toggling the explorer or a
@@ -896,7 +896,7 @@ end
 -- and redraws in one pass and re-resolves the notebook's current window,
 -- so running it twice never shows a half-state.
 function M._refresh_notebooks_soon()
-  local Render = require("jupynvim.render")
+  local Render = require("jupynvim.notebook.render")
   local function each(fn)
     for buf, nb in pairs(Notebook.all()) do
       if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinid(buf) ~= -1 then
@@ -995,7 +995,7 @@ end
 local function explorer_toggle(root_for)
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
-    local re = require("jupynvim.remote_explorer")
+    local re = require("jupynvim.remote.explorer")
     local win = re.visible_win(alias)
     if win and #vim.api.nvim_list_wins() > 1 then
       -- toggle: hide it (picker-based explorer needs picker:close, not win_close)
@@ -1044,7 +1044,7 @@ end
 function M.terminal()
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
-    require("jupynvim.remote_term").toggle(alias)
+    require("jupynvim.remote.term").toggle(alias)
     M._refresh_notebooks_soon()
     return
   end
@@ -1058,7 +1058,7 @@ end
 function M.terminal_right()
   local alias = M._active_alias
   if alias and M.clients[alias] and M.clients[alias].job then
-    require("jupynvim.remote_term").toggle(alias, { split = "right" })
+    require("jupynvim.remote.term").toggle(alias, { split = "right" })
     M._refresh_notebooks_soon()
   else
     vim.notify("jupynvim: no active SSH session", vim.log.levels.WARN)
@@ -1076,7 +1076,7 @@ end
 -- local mapping (captured at bind time). Bound to pick_keys.files.
 function M.find_files()
   if M.remote_active() then
-    require("jupynvim.remote_pick").files(M._active_alias)
+    require("jupynvim.remote.pick").files(M._active_alias)
     return true
   end
   return false
@@ -1085,7 +1085,7 @@ end
 -- Grep dispatcher: remote grep when SSH-connected, else local mapping.
 function M.grep_pick()
   if M.remote_active() then
-    require("jupynvim.remote_pick").grep(M._active_alias)
+    require("jupynvim.remote.pick").grep(M._active_alias)
     return true
   end
   return false
@@ -1327,7 +1327,7 @@ end
 
 function M._apply_output_sync(nb, ids)
   local buf = nb.buf
-  local CellMode = require("jupynvim.cellmode")
+  local CellMode = require("jupynvim.notebook.cellmode")
   local was_modifiable = vim.bo[buf].modifiable
   vim.bo[buf].modifiable = true
   local ranges = CellMode.ranges(buf)
@@ -1501,7 +1501,7 @@ function M.open(path, opts)
         ensure_client():call("close", { session_id = existing_nb.session_id }, function() end)
       end)
       Notebook.remove(existing_buf)
-      pcall(function() require("jupynvim.image").clear_all() end)
+      pcall(function() require("jupynvim.notebook.image").clear_all() end)
     end
   end
 
@@ -1583,7 +1583,7 @@ function M.open(path, opts)
   end)
   M._attach_autocmds(buf)
   Keymaps.attach(buf, M)
-  require("jupynvim.cellmode").attach(buf, M)
+  require("jupynvim.notebook.cellmode").attach(buf, M)
 
   -- Display the buffer FIRST so we have a real window for the synchronous
   -- option-setting that follows. Without this, win_findbuf is empty and
@@ -1722,7 +1722,7 @@ function M.open(path, opts)
   -- the kernel's complete_request/inspect_request handle the actual work,
   -- so the same code path serves Python, Julia, R, anything with a kernel.
   pcall(function()
-    require("jupynvim.kernel_lsp").attach(buf,
+    require("jupynvim.lsp.kernel").attach(buf,
       function() return Notebook.get(buf) end,
       function() return M.client end)
   end)
@@ -1941,7 +1941,7 @@ function M._populate_buffer(nb)
   vim.bo[nb.buf].modified = false
   -- cell command mode keeps the buffer non-modifiable; restore the lock
   -- after this (possibly async) repopulation
-  if require("jupynvim.cellmode").is_command(nb.buf) then
+  if require("jupynvim.notebook.cellmode").is_command(nb.buf) then
     vim.bo[nb.buf].modifiable = false
   end
   -- Pre-conceal cell separator marker lines synchronously, before the
@@ -1971,7 +1971,7 @@ function M._populate_buffer(nb)
       -- is current. 'relativenumber' stays on only so cursor movement
       -- triggers gutter redraws; the gutter computes its own numbers.
       vim.opt_local.statuscolumn =
-        string.format("%%!v:lua.require'jupynvim.cellmode'.statuscol(%d)", nb.buf)
+        string.format("%%!v:lua.require'jupynvim.notebook.cellmode'.statuscol(%d)", nb.buf)
       -- hanging indents for wrapped markdown list items
       vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
       vim.cmd([[setlocal showbreak=\ ]])
@@ -2100,7 +2100,7 @@ function M._attach_autocmds(buf)
             -- buffer number baked in: the expression can evaluate while
             -- ANOTHER window is current (see _populate_buffer)
             vim.opt_local.statuscolumn =
-              string.format("%%!v:lua.require'jupynvim.cellmode'.statuscol(%d)", buf)
+              string.format("%%!v:lua.require'jupynvim.notebook.cellmode'.statuscol(%d)", buf)
             -- hanging indents for wrapped markdown list items
             vim.opt_local.formatlistpat = [[^\s*\(\d\+[.)]\|[-*+]\)\s\+]]
             vim.cmd([[setlocal showbreak=\ ]])
@@ -2146,7 +2146,7 @@ function M._attach_autocmds(buf)
       -- structure instead of choking on our rendered-cell textDocument view.
       if nb and client then
         pcall(function()
-          require("jupynvim.notebook_lsp").on_attach(buf, nb, client)
+          require("jupynvim.lsp.notebook").on_attach(buf, nb, client)
         end)
       end
       if nb and nb.kernel_python_path then
@@ -2199,7 +2199,7 @@ function M._attach_autocmds(buf)
       -- the originals so render can transmit + animate the image. Without
       -- this, the giant base64 stays inline in the buffer (laggy) and the
       -- image never displays until reopen.
-      local Embedded = require("jupynvim.embedded")
+      local Embedded = require("jupynvim.notebook.embedded")
       local needs_repop = false
       for _, c in ipairs(nb.cells) do
         -- Only repop when preprocess_incremental ACTUALLY rewrites the
@@ -2231,7 +2231,7 @@ function M._attach_autocmds(buf)
       Render.refresh(nb, vim.fn.bufwinid(buf))
       M._sync_treesitter_ranges(nb)
       -- Push cell-array diff to notebook-aware LSPs (ty etc.).
-      pcall(function() require("jupynvim.notebook_lsp").on_text_change(buf, nb) end)
+      pcall(function() require("jupynvim.lsp.notebook").on_text_change(buf, nb) end)
     end,
   })
   vim.api.nvim_create_autocmd("BufWipeout", {
@@ -2241,7 +2241,7 @@ function M._attach_autocmds(buf)
       if nb and nb.session_id then
         ensure_client():call("close", { session_id = nb.session_id }, function() end)
       end
-      pcall(function() require("jupynvim.notebook_lsp").on_close(buf) end)
+      pcall(function() require("jupynvim.lsp.notebook").on_close(buf) end)
       Notebook.remove(buf)
       pcall(Image.delete_all)
     end,
@@ -2280,7 +2280,7 @@ function M._persist_cursor_positions(nb, buf)
   if not (nb and buf and vim.api.nvim_buf_is_valid(buf)) then return end
   local key = vim.api.nvim_buf_get_name(buf)
   if not key or key == "" then return end
-  local CellMode = require("jupynvim.cellmode")
+  local CellMode = require("jupynvim.notebook.cellmode")
   local ranges = CellMode.ranges(buf)
   local entry = { cells = {} }
   for idx, pos in pairs(CellMode.get_positions(buf)) do
@@ -2299,16 +2299,16 @@ function M._persist_cursor_positions(nb, buf)
       entry.last = { idx = idx, line = cl[1] - 1 - r.start, col = cl[2], fp = _cell_fp(buf, r) }
     end
   end
-  pcall(require("jupynvim.cursor_persist").save, key, entry)
+  pcall(require("jupynvim.notebook.cursor_persist").save, key, entry)
 end
 
 -- Restore per-cell remembered lines (the orange anchors) and the active cursor
 -- from the sidecar, after the notebook is populated + attached on open.
 function M._restore_cursor_positions(nb, buf, win)
   if not (nb and buf and vim.api.nvim_buf_is_valid(buf)) then return end
-  local entry = require("jupynvim.cursor_persist").load(vim.api.nvim_buf_get_name(buf))
+  local entry = require("jupynvim.notebook.cursor_persist").load(vim.api.nvim_buf_get_name(buf))
   if not entry then return end
-  local CellMode = require("jupynvim.cellmode")
+  local CellMode = require("jupynvim.notebook.cellmode")
   local ranges = CellMode.ranges(buf)
   local function clamp(r, off)
     return math.max(r.start + 1, math.min(r.start + (off or 0) + 1, r.stop))
@@ -2330,7 +2330,7 @@ end
 function M._save(nb)
   nb:sync_from_buffer()
   local cl = ensure_client()
-  local Embedded = require("jupynvim.embedded")
+  local Embedded = require("jupynvim.notebook.embedded")
   local incoming = {}
   for _, c in ipairs(nb.cells) do
     local src = c.source or ""
@@ -2752,7 +2752,7 @@ end
 function M.clear_outputs(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  local Image = require("jupynvim.image")
+  local Image = require("jupynvim.notebook.image")
   nb.image_ids = nb.image_ids or {}
   for _, c in ipairs(nb.cells) do
     if c.cell_type == "code" then
@@ -2802,7 +2802,7 @@ function M.clear_cell_output(buf)
   cell.execution_count = nil
   if type(cell.metadata) == "table" then cell.metadata.execution = nil end
   nb.cell_state[cell.id] = nil
-  pcall(require("jupynvim.image").clear_for_cell, cell.id)
+  pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id)
   nb.image_ids = nb.image_ids or {}
   nb.image_ids[cell.id] = nil
   Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -2845,7 +2845,7 @@ function M.delete_image(buf)
     vim.notify("jupynvim: not a markdown cell", vim.log.levels.INFO)
     return
   end
-  local Embedded = require("jupynvim.embedded")
+  local Embedded = require("jupynvim.notebook.embedded")
   local imgs = Embedded.list_images(cell.id) or {}
   if #imgs == 0 then
     vim.notify("jupynvim: no embedded image in this cell", vim.log.levels.INFO)
@@ -2860,7 +2860,7 @@ function M.delete_image(buf)
     -- the .ipynb; if it's there (after undo), the data is restored.
     local pat = "%!%[[^%]]*%]%(jupynvim%-img:" .. idx .. "%)\n?"
     cell.source = (cell.source or ""):gsub(pat, "", 1)
-    pcall(require("jupynvim.image").clear_for_cell, cell.id)
+    pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id)
     M._populate_buffer(nb)
     Render.refresh(nb, vim.fn.bufwinid(buf))
     vim.bo[buf].modified = true
@@ -2912,7 +2912,7 @@ end
 function M.enter_output(buf, direction)
   local nb = Notebook.get(buf)
   if not nb then return end
-  local CellMode = require("jupynvim.cellmode")
+  local CellMode = require("jupynvim.notebook.cellmode")
   -- command mode: C-j/C-k are plain window navigation (terminal/explorer
   -- round-trips). Inside a cell: hop between the source editor and its
   -- output region, which is REAL buffer text (motions/visual/yank native).
@@ -2932,7 +2932,7 @@ end
 function M.open_link(buf)
   local line = vim.api.nvim_get_current_line()
   local col = vim.api.nvim_win_get_cursor(0)[2] + 1
-  local l = require("jupynvim.markdown").link_at(line, col)
+  local l = require("jupynvim.notebook.markdown").link_at(line, col)
   if l and l.url and l.url ~= "" then
     if l.url:match("^jupynvim%-img:") then
       vim.notify("jupynvim: embedded image (<leader>nI saves it to a file)", vim.log.levels.INFO)
@@ -2962,7 +2962,7 @@ function M.click_link(buf)
   if not line or line == "" then return false end
   -- link_at falls back to the line's first link, which absorbs the
   -- column drift that concealed URLs introduce under the mouse position
-  local l = require("jupynvim.markdown").link_at(line, math.max(mp.column or 1, 1))
+  local l = require("jupynvim.notebook.markdown").link_at(line, math.max(mp.column or 1, 1))
   if not (l and l.url and l.url ~= "") or l.url:match("^jupynvim%-img:") then
     return false
   end
@@ -2986,7 +2986,7 @@ function M.save_image(buf, path)
 
   local b64, ext, mime
   if cell.cell_type == "markdown" then
-    local imgs = require("jupynvim.embedded").list_images(cell.id) or {}
+    local imgs = require("jupynvim.notebook.embedded").list_images(cell.id) or {}
     if imgs[1] then
       b64 = imgs[1].b64
       mime = imgs[1].mime or "image/png"
@@ -3052,7 +3052,7 @@ function M.jump_image(buf, delta)
   local cur_idx = 1
   for i, r in ipairs(ranges) do if r.id == cur_id then cur_idx = i; break end end
 
-  local Embedded = require("jupynvim.embedded")
+  local Embedded = require("jupynvim.notebook.embedded")
   local function has_image(cell)
     if cell.cell_type == "markdown" then
       local imgs = Embedded.list_images(cell.id) or {}
@@ -3159,7 +3159,7 @@ function M.setup(opts)
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if require("jupynvim.notebook").get(b) then pcall(M._disable_indent_guides, b) end
   end
-  require("jupynvim.diag").setup()
+  require("jupynvim.notebook.diag").setup()
   require("jupynvim.lsp").setup()
   Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols })
 
@@ -3349,7 +3349,7 @@ function M.setup(opts)
         local b = args.buf
         vim.schedule(function()
           if vim.api.nvim_buf_is_valid(b) then
-            pcall(function() require("jupynvim.remote_lsp").attach(b, alias, path, ft) end)
+            pcall(function() require("jupynvim.remote.lsp").attach(b, alias, path, ft) end)
           end
         end)
       end
@@ -3504,7 +3504,7 @@ function M.setup(opts)
     end
     local positions = { below = true, left = true, right = true, tab = true }
     local split = (parts[2] and positions[parts[2]]) and parts[2] or "below"
-    require("jupynvim.remote_term").toggle(alias, { split = split })
+    require("jupynvim.remote.term").toggle(alias, { split = split })
   end, {
     nargs = "*",
     complete = function(_, line)
@@ -3550,7 +3550,7 @@ function M.setup(opts)
       return
     end
     M.config.image_renderer = mode
-    pcall(function() require("jupynvim.image").clear_all() end)
+    pcall(function() require("jupynvim.notebook.image").clear_all() end)
     for buf, nb in pairs(Notebook.all()) do
       nb.image_ids = {}
       Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -3591,7 +3591,7 @@ function M.setup(opts)
     local buf = vim.api.nvim_get_current_buf()
     local nb = Notebook.get(buf)
     if not nb then print("not a jupynvim buffer"); return end
-    local CellMode = require("jupynvim.cellmode")
+    local CellMode = require("jupynvim.notebook.cellmode")
     local win = vim.fn.bufwinid(buf)
     local info = win ~= -1 and vim.fn.getwininfo(win)[1] or {}
     local out = {}
@@ -3709,7 +3709,7 @@ function M.setup(opts)
     -- the tree with `-` / backspace is navigation, not a cd, so <leader>e and
     -- <leader>E still bring you back here afterwards.
     M._note_session_cwd(alias, path)
-    require("jupynvim.remote_explorer").set_root(alias, path)
+    require("jupynvim.remote.explorer").set_root(alias, path)
   end, {
     nargs = "+",
     complete = function(_, line)
@@ -3822,7 +3822,7 @@ function M.setup(opts)
   -- :JupynvimLspStatus — dump the remote-LSP attach chain breadcrumbs
   -- (resolved servers, probe/install results, root, server/client state).
   vim.api.nvim_create_user_command("JupynvimLspStatus", function()
-    require("jupynvim.remote_lsp").status()
+    require("jupynvim.remote.lsp").status()
   end, {})
 
   -- :JupynvimRpcStats — print per-method RPC counts since the last reset, then
@@ -3850,8 +3850,8 @@ function M.setup(opts)
   -- JupynvimRpcStats: if RPC is zero but these are high during the laggy
   -- action, the cost is local rendering, not the link.
   vim.api.nvim_create_user_command("JupynvimRenderStats", function()
-    local img = require("jupynvim.image")
-    local rnd = require("jupynvim.render")
+    local img = require("jupynvim.notebook.image")
+    local rnd = require("jupynvim.notebook.render")
     local msg = string.format(
       "jupynvim render since last reset (now reset):\n    renders:   %d\n    tty writes: %d  (%d KB)",
       rnd._render_n or 0, img._tty_n or 0, math.floor((img._tty_bytes or 0) / 1024))
@@ -3863,7 +3863,7 @@ function M.setup(opts)
   -- whether animation drives navigation lag over a remote backend, and a
   -- workaround if it does.
   vim.api.nvim_create_user_command("JupynvimPauseAnimations", function()
-    local img = require("jupynvim.image")
+    local img = require("jupynvim.notebook.image")
     if img.animations_paused() then
       img.resume_animations()
       vim.notify("jupynvim: animations resumed", vim.log.levels.INFO)
@@ -3877,7 +3877,7 @@ function M.setup(opts)
   -- re-attach remote language servers for open jupynvim:// buffers.
   vim.api.nvim_create_user_command("JupynvimLspRetry", function(o)
     local alias = vim.trim(o.args or "")
-    require("jupynvim.remote_lsp").retry(alias ~= "" and alias or M._active_alias)
+    require("jupynvim.remote.lsp").retry(alias ~= "" and alias or M._active_alias)
   end, {
     nargs = "?",
     complete = function()

@@ -74,7 +74,7 @@ local function join(dir, name)
 end
 
 local function excludes_for(alias)
-  local rp = require("jupynvim.remote_pick")
+  local rp = require("jupynvim.remote.pick")
   local ex = vim.deepcopy(rp.DEFAULT_EXCLUDES)
   local prof = (J().config.remote or {})[alias] or {}
   for _, e in ipairs(prof.find_excludes or {}) do table.insert(ex, e) end
@@ -322,7 +322,7 @@ local ACTIONS = {
         -- contents weren't scanned): re-root there and clear the filter.
         M.set_root(state.alias, item.jv_path)
       else
-        require("jupynvim.remote_pick").open_in_editor(item.file)  -- editor, not a term
+        require("jupynvim.remote.pick").open_in_editor(item.file)  -- editor, not a term
       end
       return
     end
@@ -343,7 +343,7 @@ local ACTIONS = {
         end
       end
     else
-      require("jupynvim.remote_pick").open_in_editor(item.file)  -- editor, not a term
+      require("jupynvim.remote.pick").open_in_editor(item.file)  -- editor, not a term
     end
   end,
   jv_close_dir = function(picker, item)
@@ -436,12 +436,12 @@ local ACTIONS = {
   jv_grep = function(picker)
     local state = state_of(picker)
     if not state then return end
-    require("jupynvim.remote_pick").grep(state.alias, state.root)
+    require("jupynvim.remote.pick").grep(state.alias, state.root)
   end,
   jv_terminal = function(picker)
     local state = state_of(picker)
     if not state then return end
-    require("jupynvim.remote_term").toggle(state.alias)
+    require("jupynvim.remote.term").toggle(state.alias)
   end,
 }
 
@@ -542,7 +542,7 @@ function M.open(alias, root, opts)
   -- makes snacks close the whole picker silently. The stray auth-split
   -- window is fixed at its source in connect's on-exit instead.
   vim.schedule(function()
-    pcall(function() require("jupynvim.remote_dashboard").place(alias, state.root) end)
+    pcall(function() require("jupynvim.remote.dashboard").place(alias, state.root) end)
     M._capture_sidebar_width()
   end)
 end

@@ -116,7 +116,7 @@ local Notebook = {}
 Notebook.__index = Notebook
 
 function M.create(buf, path, session_id, snapshot)
-  local Embedded = require("jupynvim.embedded")
+  local Embedded = require("jupynvim.notebook.embedded")
   local nb = setmetatable({
     buf = buf,
     path = path,
