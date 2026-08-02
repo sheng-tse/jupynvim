@@ -6,7 +6,8 @@
 #   2. backend_integration.py (Python harness against jupynvim-core)
 #   3. lua_e2e.lua (headless Neovim Lua tests)
 #   4. cellui_spec.lua + markdown_spec.lua + remote_hl_spec.lua (headless
-#      render/UI specs)
+#      render/UI specs) + remote_pick_open_spec.lua + remote_open_layout_spec.lua
+#      (window placement when opening a file from the remote explorer/picker)
 #   5. frame_layout.sh (real rendered screen via tmux: frame alignment across
 #      terminal-split / floating-window layout changes)
 #      remote_hl_screen.sh (real rendered screen via tmux: dashboard/explorer
@@ -104,6 +105,13 @@ hl_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/remote_hl_spec.lua" -c 
 echo "$hl_out" | tail -1
 echo "$hl_out" | grep -q "ALL REMOTE-HL CHECKS PASSED"
 section "remote-hl spec" "$?"
+# These two signal failure with `cquit 1`, so the exit code is the verdict.
+for spec in remote_pick_open_spec remote_open_layout_spec; do
+  out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'qa!' 2>&1)
+  rc=$?
+  echo "$out" | tail -1
+  section "$spec" "$rc"
+done
 
 # ── 5. Frame-layout (real rendered screen via tmux) ─────
 echo
