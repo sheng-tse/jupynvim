@@ -155,9 +155,11 @@ else
 end
 
 -- ── the deprecated API is gone from both files ───────────────────────────
-for _, f in ipairs({ "lua/jupynvim/remote_dashboard.lua", "lua/jupynvim/remote_explorer.lua" }) do
+for _, f in ipairs({ "lua/jupynvim/remote/dashboard.lua", "lua/jupynvim/remote/explorer.lua" }) do
   local fh = io.open(f, "r")
-  if fh then
+  if not fh then
+    fail(f .. " not found (path moved? this check was silently skipping)")
+  else
     local src = fh:read("*a"); fh:close()
     if src:find("nvim_buf_add_highlight", 1, true) then
       fail(f .. " still calls nvim_buf_add_highlight")
