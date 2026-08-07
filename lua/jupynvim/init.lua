@@ -1389,7 +1389,20 @@ function M.run_below(buf)
   co()
 end
 
-function M.add_cell(buf, where)
+-- Record a cell-level mutation for `u`. Done here rather than in the keymaps:
+-- add/delete have several entry points (cell-mode keys, <leader>na/nb/nd, the
+-- :Jupynvim* commands) and recording per keymap covered only one of them.
+local function record_undo(buf, entry, no_record)
+  if no_record then return end
+  pcall(function() require("jupynvim.notebook.cellmode").push_undo(buf, entry) end)
+end
+
+-- `cb(index)` fires once the cell actually exists, after the backend answers
+-- and the buffer has been repopulated. Callers that need to fill the new cell
+-- must use it: the insert is async, so anything scheduled on the next tick
+-- races the RPC and writes into the pre-insert buffer layout.
+-- `no_record` suppresses the undo entry while an undo is being replayed.
+function M.add_cell(buf, where, cb, no_record)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
@@ -1415,16 +1428,48 @@ function M.add_cell(buf, where)
     local _, ranges = nb:to_lines()
     local r = ranges[insert_at + 2]
     if r then vim.api.nvim_win_set_cursor(vim.fn.bufwinid(buf), { r.start + 1, 0 }) end
+    record_undo(buf, { op = "insert", index = insert_at + 2 }, no_record)
+    if cb then cb(insert_at + 2) end
   end)
 end
 
-function M.delete_cell(buf)
+-- Fill an existing cell from `lines`, in the MODEL (the buffer is regenerated
+-- from it, so writing buffer lines directly gets wiped by the next repopulate)
+-- and on the backend, so a save or reopen keeps the content.
+function M.set_cell_content(buf, idx, lines, cell_type)
+  local nb = Notebook.get(buf)
+  local cell = nb and nb.cells[idx]
+  if not cell then return end
+  cell.source = table.concat(lines or {}, "\n")
+  if cell_type then cell.cell_type = cell_type end
+  cell.outputs = {}
+  M._populate_buffer(nb)
+  Render.refresh(nb, vim.fn.bufwinid(buf))
+  vim.bo[buf].modified = true   -- after the repopulate, which resets it
+  local cl = M._nb_client(nb)
+  cl:call("update_cell_source",
+    { session_id = nb.session_id, cell_id = cell.id, source = cell.source }, function() end)
+  if cell_type and cell_type ~= "code" then
+    cl:call("set_cell_type",
+      { session_id = nb.session_id, cell_id = cell.id, cell_type = cell_type }, function() end)
+  end
+end
+
+function M.delete_cell(buf, no_record)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   if not cur_id then return end
+  -- Snapshot before the backend drops it, so u can put it back.
+  local doomed, doomed_idx = nb:get_cell(cur_id)
+  local snapshot = doomed and {
+    op = "delete",
+    index = doomed_idx,
+    lines = vim.split(doomed.source or "", "\n", { plain = true }),
+    cell_type = doomed.cell_type,
+  } or nil
   local cl = M._ensure_client()
   cl:call("delete_cell", { session_id = nb.session_id, cell_id = cur_id }, function(err)
     if err then vim.notify("delete: " .. tostring(err), vim.log.levels.ERROR); return end
@@ -1432,6 +1477,7 @@ function M.delete_cell(buf)
     for i, c in ipairs(nb.cells) do
       if c.id == cur_id then table.remove(nb.cells, i); break end
     end
+    if snapshot then record_undo(buf, snapshot, no_record) end
     if #nb.cells == 0 then
       cl:call("insert_cell", { session_id = nb.session_id, after_index = -1, cell_type = "code" }, function(_, res)
         if res then table.insert(nb.cells, { id = res.cell_id, cell_type = "code", source = "", outputs = {} }) end
@@ -1654,11 +1700,15 @@ function M.clear_outputs(buf)
       nb.image_ids[c.id] = nil
     end
   end
-  -- Refresh immediately so the user sees execution badges and outputs
-  -- reset even if the backend RPC is missing (older binary). The backend
-  -- call is best-effort; on success the on-disk state will match too.
+  -- Outputs are REAL buffer lines (Notebook:to_lines emits them under each
+  -- cell's source), so clearing the model is not enough: the buffer has to be
+  -- rewritten or the old output text stays on screen until the next reopen.
+  -- Refresh immediately so this works even against an older backend that has
+  -- no clear_outputs RPC; the call below is best-effort.
+  M._populate_buffer(nb)
   Render.refresh(nb, vim.fn.bufwinid(buf))
-  -- Mark buffer modified so :w / :wqa actually trigger BufWriteCmd.
+  -- AFTER the repopulate: _populate_buffer resets modified, and without this
+  -- :w / :wqa would skip the buffer and the clear would not reach disk.
   vim.bo[buf].modified = true
   M._ensure_client():call("clear_outputs", { session_id = nb.session_id }, function(err)
     if err then
@@ -1691,8 +1741,11 @@ function M.clear_cell_output(buf)
   pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id)
   nb.image_ids = nb.image_ids or {}
   nb.image_ids[cell.id] = nil
+  -- Same as clear_outputs: the output text lives in the buffer, so the model
+  -- edit only shows up once the buffer is rewritten.
+  M._populate_buffer(nb)
   Render.refresh(nb, vim.fn.bufwinid(buf))
-  vim.bo[buf].modified = true
+  vim.bo[buf].modified = true   -- after the repopulate, which resets it
   M._ensure_client():call("clear_cell_output",
     { session_id = nb.session_id, cell_id = cell.id }, function(err)
     if err then

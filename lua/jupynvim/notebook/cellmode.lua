@@ -318,7 +318,7 @@ function M.select_last(buf) select_cell(buf, #M.ranges(buf)) end
 -- whole-cell clipboard (source lines + type), VSCode yy/p semantics
 local _clip = nil
 
-function M.yank_cell(buf)
+function M.yank_cell(buf, opts)
   local nb = Notebook.get(buf)
   if not nb then return end
   local idx = M.selected_idx(buf)
@@ -328,30 +328,78 @@ function M.yank_cell(buf)
   local cell = nb.cells[idx]
   _clip = { lines = lines, cell_type = cell and cell.cell_type or "code" }
   vim.fn.setreg('"', table.concat(lines, "\n"))
-  vim.notify("jupynvim: cell " .. idx .. " yanked", vim.log.levels.INFO)
+  if not (opts and opts.quiet) then
+    vim.notify("jupynvim: cell " .. idx .. " yanked", vim.log.levels.INFO)
+  end
 end
 
-function M.paste_cell(buf, api)
+-- Cell-level undo stack. Vim's own undo cannot put a deleted cell back: the
+-- delete also mutates nb.cells and tells the backend, and command mode makes
+-- the buffer nomodifiable, so `u` did nothing at all.
+--
+-- Every cell-level mutation is recorded IN ORDER, not just deletes. Recording
+-- deletes alone made `u` mean "re-insert the last deleted cell", so dd then p
+-- then u re-applied the delete's inverse a second time and left a duplicate.
+--   { op = "delete", index, lines, cell_type }  -> undo re-inserts it
+--   { op = "insert", index }                    -> undo removes that cell
+local _undo = {}
+
+function M.push_undo(buf, entry)
+  _undo[buf] = _undo[buf] or {}
+  table.insert(_undo[buf], entry)
+  if #_undo[buf] > 50 then table.remove(_undo[buf], 1) end
+end
+
+function M.undo_cell(buf, api)
+  local stack = _undo[buf]
+  if not (stack and #stack > 0) then
+    vim.notify("jupynvim: nothing to undo", vim.log.levels.INFO)
+    return
+  end
+  local e = table.remove(stack)
+  if e.op == "insert" then
+    -- undo an insert (p, P, a, b, or a previous undo) by removing that cell
+    local total = #M.ranges(buf)
+    select_cell(buf, math.min(e.index, total))
+    with_modifiable(buf, function() api.delete_cell(buf, true) end)
+  else
+    -- record = false: replaying must not push its own inverse back on
+    M.insert_cell_with(buf, api, e.index, e.lines, e.cell_type, { record = false })
+  end
+end
+
+-- Insert a cell at `index` (1-based; the position it should END UP at) and
+-- fill it. add_cell is async, so the content is written from its callback via
+-- the model, never by scheduling a buffer write that races the RPC and then
+-- gets wiped by the repopulate.
+function M.insert_cell_with(buf, api, index, lines, cell_type, opts)
+  local total = #M.ranges(buf)
+  local where = "below"
+  if index and index > 1 then
+    select_cell(buf, math.min(index - 1, total))
+  else
+    select_cell(buf, 1)
+    where = "above"
+  end
+  with_modifiable(buf, function()
+    api.add_cell(buf, where, function(new_idx)
+      with_modifiable(buf, function()
+        api.set_cell_content(buf, new_idx, lines, cell_type)
+      end)
+      select_cell(buf, new_idx)
+    end, opts and opts.record == false)
+  end)
+end
+
+function M.paste_cell(buf, api, opts)
   if not _clip then
     vim.notify("jupynvim: no yanked cell", vim.log.levels.INFO)
     return
   end
-  local clip = _clip
-  with_modifiable(buf, function()
-    api.add_cell(buf, "below")
-  end)
-  vim.schedule(function()
-    with_modifiable(buf, function()
-      local idx = M.selected_idx(buf)
-      local r = M.ranges(buf)[idx]
-      if r then
-        vim.api.nvim_buf_set_lines(buf, r.start, r.stop, false, clip.lines)
-      end
-      if clip.cell_type == "markdown" then
-        api.set_cell_type(buf, "markdown")
-      end
-    end)
-  end)
+  -- p pastes below the current cell, P above it, like vim's line-wise put.
+  local idx = M.selected_idx(buf)
+  local at = (opts and opts.above) and idx or (idx + 1)
+  M.insert_cell_with(buf, api, at, _clip.lines, _clip.cell_type)
 end
 
 -- ── edit-mode confinement ──────────────────────────────────────────────────
@@ -464,9 +512,10 @@ function M.attach(buf, api)
     local l = vim.api.nvim_win_get_cursor(0)[1]
     local in_out = r.out_sep and l - 1 > r.out_sep
     local limit = in_out and (r.out_stop or r.stop) or r.stop
-    if l < limit then
-      vim.api.nvim_feedkeys("j", "n", false)
-    end
+    -- Honour a count, clamped to the region: feeding a bare "j" threw away
+    -- v:count, so 5j moved one line.
+    local n = math.min(vim.v.count1, math.max(0, limit - l))
+    if n > 0 then vim.cmd("normal! " .. n .. "j") end
   end
   local function edit_up()
     local r = edit_cell_range()
@@ -474,9 +523,8 @@ function M.attach(buf, api)
     local l = vim.api.nvim_win_get_cursor(0)[1]
     local in_out = r.out_sep and l - 1 > r.out_sep
     local floor = in_out and (r.out_sep + 2) or (r.start + 1)
-    if l > floor then
-      vim.api.nvim_feedkeys("k", "n", false)
-    end
+    local n = math.min(vim.v.count1, math.max(0, l - floor))
+    if n > 0 then vim.cmd("normal! " .. n .. "k") end
   end
   cmdmap("j", function() M.move_selection(buf, 1) end, "jupynvim: next cell", edit_down)
   cmdmap("k", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", edit_up)
@@ -505,10 +553,16 @@ function M.attach(buf, api)
     end
   end)
   cmdmap("dd", function()
+    -- vim's dd yanks what it deletes; without this p had nothing to paste
+    -- back (only yy filled the clipboard) and a deleted cell was gone.
+    M.yank_cell(buf, { quiet = true })
     with_modifiable(buf, function() api.delete_cell(buf) end)
   end, "jupynvim: delete cell")
+  cmdmap("u", function() M.undo_cell(buf, api) end, "jupynvim: undo cell delete")
   cmdmap("yy", function() M.yank_cell(buf) end, "jupynvim: yank cell")
   cmdmap("p", function() M.paste_cell(buf, api) end, "jupynvim: paste cell below")
+  cmdmap("P", function() M.paste_cell(buf, api, { above = true }) end,
+    "jupynvim: paste cell above")
   cmdmap("a", function()
     with_modifiable(buf, function() api.add_cell(buf, "above") end)
   end, "jupynvim: add cell above")
