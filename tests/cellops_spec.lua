@@ -299,6 +299,40 @@ do
   pcall(vim.api.nvim_buf_delete, buf, { force = true })
 end
 
+-- ── 5. notebook keymaps must survive a later buffer-local binder ─────────
+-- We attach during BufReadCmd; plugins that map the same keys buffer-locally
+-- on FileType land afterwards and win. LazyVim's treesitter-textobjects takes
+-- ]c and [c that way, so the documented next/prev-cell motions silently did
+-- nothing in the most common setup.
+do
+  local b, path = open_fixture()
+  -- stand in for treesitter-textobjects binding on FileType, right after us
+  vim.keymap.set("n", "]c", function() end,
+    { buffer = b, desc = "IMPOSTOR Next Class Start" })
+  vim.keymap.set("n", "[c", function() end,
+    { buffer = b, desc = "IMPOSTOR Prev Class Start" })
+  vim.wait(700)   -- let the deferred re-bind run
+  local function desc_of(lhs)
+    for _, m in ipairs(vim.api.nvim_buf_get_keymap(b, "n")) do
+      if m.lhs == lhs then return m.desc end
+    end
+  end
+  chk("]c is jupynvim's after a later binder takes it",
+      desc_of("]c") == "Next cell", tostring(desc_of("]c")))
+  chk("[c is jupynvim's after a later binder takes it",
+      desc_of("[c") == "Prev cell", tostring(desc_of("[c")))
+  -- and it really moves between cells
+  local r2 = CM.ranges(b)[2]
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  vim.cmd("normal ]c")
+  vim.wait(300)
+  chk("]c jumps into the next cell",
+      vim.api.nvim_win_get_cursor(0)[1] >= r2.start + 1,
+      ("landed on %d, cell 2 starts at %d"):format(
+        vim.api.nvim_win_get_cursor(0)[1], r2.start + 1))
+  os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
+end
+
 if fails == 0 then
   io.write("\nALL CELL-OPS CHECKS PASSED\n")
 else

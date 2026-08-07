@@ -82,9 +82,9 @@ local actions = {
   open_link        = function(buf, api) return function() api.open_link(buf) end end,
 }
 
-function M.attach(buf, api)
+-- Bind every default (honouring overrides) onto `buf`.
+local function bind_all(buf, api)
   local cfg = api.config or {}
-  if cfg.disable_default_keymaps then return end
   local overrides = cfg.keymaps or {}
   for name, def in pairs(M.defaults) do
     local override = overrides[name]
@@ -105,6 +105,23 @@ function M.attach(buf, api)
       end
     end
   end
+end
+
+function M.attach(buf, api)
+  local cfg = api.config or {}
+  if cfg.disable_default_keymaps then return end
+  bind_all(buf, api)
+  -- Bind again once the FileType autocmds have run. We attach during
+  -- BufReadCmd, and plugins that map the same keys BUFFER-LOCALLY on FileType
+  -- land afterwards and win: LazyVim's treesitter-textobjects takes ]c and [c,
+  -- so the documented next/prev-cell motions silently did nothing. Same
+  -- last-writer-wins problem the global dispatch keys solve by binding late.
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(buf) then bind_all(buf, api) end
+  end)
+  vim.defer_fn(function()
+    if vim.api.nvim_buf_is_valid(buf) then bind_all(buf, api) end
+  end, 300)
 end
 
 return M
