@@ -20,6 +20,26 @@ assert(MD.link_at("see <https://nvim.io> now", 8).url == "https://nvim.io", "aut
 assert(MD.link_at("at https://x.dev/page ok", 5).url:find("x.dev"), "bare url link_at failed")
 print("2. link_at: link/autolink/bare-url ok")
 
+-- External image discovery reuses balanced Markdown links and minimally parses HTML.
+local image_source = table.concat({
+  "![plot](https://example.test/image.png)",
+  '<img src="https://example.test/a.png">',
+  "<img src='https://example.test/b.jpg'>",
+  '<img src = "./images/c.png">',
+  "<img  src   =   '../images/d.jpg'>",
+  "[ordinary](https://example.test/not-an-image.png)",
+}, "\n")
+local found_images = MD.find_images(image_source)
+assert(#found_images == 5, "expected 5 external images, got " .. #found_images)
+assert(found_images[1].src == "https://example.test/image.png")
+assert(found_images[1].alt == "plot" and found_images[1].lnum == 0 and found_images[1].col == 0)
+assert(found_images[2].src == "https://example.test/a.png")
+assert(found_images[3].src == "https://example.test/b.jpg")
+assert(found_images[4].src == "./images/c.png")
+assert(found_images[5].src == "../images/d.jpg")
+assert(image_source:find('<img src = "./images/c.png">', 1, true), "discovery changed source")
+print("2b. Markdown and HTML image discovery ok")
+
 -- 3. rendered extmarks in a buffer
 local buf = vim.api.nvim_create_buf(true, false)
 local ns = vim.api.nvim_create_namespace("t")

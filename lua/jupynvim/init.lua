@@ -1128,8 +1128,8 @@ function M._attach_autocmds(buf)
         M._ensure_client():call("close", { session_id = nb.session_id }, function() end)
       end
       pcall(function() require("jupynvim.lsp.notebook").on_close(buf) end)
+      if nb then pcall(Image.clear_keys, nb.image_ids or {}) end
       Notebook.remove(buf)
-      pcall(Image.delete_all)
     end,
   })
   -- Refresh borders whenever window dimensions or buffer focus changes —

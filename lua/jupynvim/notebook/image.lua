@@ -779,10 +779,12 @@ end
 -- (~60 bytes each, no image data). A placeholder cell whose image has no
 -- virtual placement falls back to native-size tile mapping, which renders
 -- as a randomly cropped image; this heals that within one refresh.
-function M.reassert_virtual_placements()
-  for _, p in pairs(placements) do
-    -- animated placements self-heal on every frame tick; statics need this
-    if p.renderer == "placeholder" and p.cols and p.rows and not p.timer then
+function M.reassert_virtual_placements(keys)
+  for key, p in pairs(placements) do
+    -- Only heal images owned by the notebook being rendered. Reasserting every
+    -- open notebook's placements can draw a hidden notebook over the active one.
+    if (not keys or keys[key])
+        and p.renderer == "placeholder" and p.cols and p.rows and not p.timer then
       kitty_call_async("kitty_place_virtual", {
         image_id = p.image_id, cols = p.cols, rows = p.rows,
       })
@@ -804,6 +806,10 @@ function M.clear_for_cell(cell_id)
   stop_timer(p)
   kitty_call_async("kitty_clear_image", { image_id = p.image_id })
   placements[cell_id] = nil
+end
+
+function M.clear_keys(keys)
+  for key in pairs(keys or {}) do M.clear_for_cell(key) end
 end
 
 function M.clear_all()

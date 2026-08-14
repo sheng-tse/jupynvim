@@ -102,6 +102,10 @@ md_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c '
 echo "$md_out" | tail -1
 echo "$md_out" | grep -q "ALL MARKDOWN CHECKS PASSED"
 section "markdown spec" "$?"
+ext_img_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/external_image_spec.lua" -c 'qa!' 2>&1)
+echo "$ext_img_out" | tail -1
+echo "$ext_img_out" | grep -q "ALL EXTERNAL-IMAGE CHECKS PASSED"
+section "external-image spec" "$?"
 co_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellops_spec.lua" -c 'qa!' 2>&1)
 echo "$co_out" | tail -1
 echo "$co_out" | grep -q "ALL CELL-OPS CHECKS PASSED"

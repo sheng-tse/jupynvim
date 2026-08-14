@@ -198,6 +198,55 @@ local function find_links(line)
 end
 M.find_links = find_links
 
+local function html_attr(tag, name)
+  local pat = "%f[%a]" .. name:gsub(".", function(c)
+    return "[" .. c:lower() .. c:upper() .. "]"
+  end) .. "%f[^%a]%s*=%s*"
+  local start, value = tag:match("()" .. pat .. '"([^"]*)"')
+  if start then return value, start - 1 end
+  start, value = tag:match("()" .. pat .. "'([^']*)'")
+  if start then return value, start - 1 end
+  return nil
+end
+
+-- Discover external Markdown images with the existing balanced-link parser and
+-- the minimum HTML handling needed for <img src="...">. Positions are 0-based
+-- within the cell source, matching Neovim extmark coordinates.
+function M.find_images(source)
+  local images = {}
+  if type(source) ~= "string" then return images end
+  local lnum = 0
+  for line in (source .. "\n"):gmatch("([^\n]*)\n") do
+    for _, link in ipairs(find_links(line)) do
+      if link.start > 1 and line:sub(link.start - 1, link.start - 1) == "!" then
+        table.insert(images, {
+          src = vim.trim(link.url), alt = link.text,
+          lnum = lnum, col = link.start - 2,
+        })
+      end
+    end
+    local lower, cursor = line:lower(), 1
+    while true do
+      local tag_start = lower:find("<img", cursor, true)
+      if not tag_start then break end
+      local tag_end = lower:find(">", tag_start, true)
+      if not tag_end then break end
+      local tag = line:sub(tag_start, tag_end)
+      local src = html_attr(tag, "src")
+      if src then
+        local alt = html_attr(tag, "alt") or ""
+        table.insert(images, {
+          src = vim.trim(src), alt = alt,
+          lnum = lnum, col = tag_start - 1,
+        })
+      end
+      cursor = tag_end + 1
+    end
+    lnum = lnum + 1
+  end
+  return images
+end
+
 -- The link under byte column `col` (1-based) in `line`, or the first link
 -- on the line as a fallback. Used by the gx mapping.
 function M.link_at(line, col)

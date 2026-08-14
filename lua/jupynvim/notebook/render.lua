@@ -347,25 +347,36 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
     -- on an extmark re-render and can never linger over the gif/image.
     local md_lead = repeat_char(" ", gut)
     local lines_below = {}
+    local external_refs = {}
+    local function append_markdown_image(key)
+      local ph = image.placeholder_virt_lines(key)
+      if ph then
+        for _, line in ipairs(ph) do
+          table.insert(lines_below, { { md_lead, "Normal" }, { line[1][1], line[1][2] } })
+        end
+      else
+        local ascii = image.ascii_lines_for(key)
+        if ascii then
+          for _, line in ipairs(ascii) do
+            table.insert(lines_below, { { md_lead .. line, "Normal" } })
+          end
+        end
+      end
+    end
     if cell.cell_type == "markdown" then
       local Embedded = require("jupynvim.notebook.embedded")
+      local External = require("jupynvim.notebook.external_image")
+      local Markdown = require("jupynvim.notebook.markdown")
       local src = cell.source or ""
       for _, img in ipairs(Embedded.list_images(cell.id) or {}) do
         if src:find("jupynvim%-img:" .. img.idx, 1, false) then
-          local key = cell.id .. "_md_" .. img.idx
-          local ph = image.placeholder_virt_lines(key)
-          if ph then
-            for _, line in ipairs(ph) do
-              table.insert(lines_below, { { md_lead, "Normal" }, { line[1][1], line[1][2] } })
-            end
-          else
-            local ascii = image.ascii_lines_for(key)
-            if ascii then
-              for _, line in ipairs(ascii) do
-                table.insert(lines_below, { { md_lead .. line, "Normal" } })
-              end
-            end
-          end
+          append_markdown_image(cell.id .. "_md_" .. img.idx)
+        end
+      end
+      for _, ref in ipairs(Markdown.find_images(src)) do
+        if External.classify(ref.src) then
+          table.insert(external_refs, ref)
+          append_markdown_image(tostring(nb.buf) .. "_" .. cell.id .. "_external_" .. #external_refs)
         end
       end
     end
@@ -384,8 +395,8 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
         range.start, math.min(range.stop - 1, total - 1), width)
       local Embedded = require("jupynvim.notebook.embedded")
       local imgs = Embedded.list_images(cell.id)
+      nb.image_ids = nb.image_ids or {}
       if imgs and #imgs > 0 then
-        nb.image_ids = nb.image_ids or {}
         for _, img in ipairs(imgs) do
           local key = cell.id .. "_md_" .. img.idx
           local renderer = (require("jupynvim").config.image_renderer) or "chafa"
@@ -396,6 +407,33 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
                 vim.schedule(function() M.refresh(nb, win) end)
               end
             end, { renderer = renderer, mime = img.mime })
+          end
+        end
+      end
+      if #external_refs > 0 then
+        local External = require("jupynvim.notebook.external_image")
+        local J = require("jupynvim")
+        nb.pending_external_images = nb.pending_external_images or {}
+        local renderer = (J.config.image_renderer) or "chafa"
+        for idx, ref in ipairs(external_refs) do
+          local key = tostring(nb.buf) .. "_" .. cell.id .. "_external_" .. idx
+          if not nb.image_ids[key] and not nb.pending_external_images[key] then
+            nb.pending_external_images[key] = true
+            local client = External.classify(ref.src) == "relative" and J._nb_client(nb) or nil
+            External.resolve(ref.src, { notebook_path = nb.path, client = client }, function(err, resolved)
+              if err or not resolved then
+                nb.pending_external_images[key] = nil
+                return
+              end
+              if require("jupynvim.notebook").get(nb.buf) ~= nb then return end
+              image.ensure_transmitted(key, resolved.b64, function(id)
+                nb.pending_external_images[key] = nil
+                if id then
+                  nb.image_ids[key] = id
+                  vim.schedule(function() M.refresh(nb, win) end)
+                end
+              end, { renderer = renderer, mime = resolved.mime })
+            end)
           end
         end
       end
@@ -669,7 +707,9 @@ local function do_render(nb, win, opts)
   -- the image. Placements only get lost on layout changes, which refresh
   -- through the normal (non-tick) path.
   if not (opts and (opts.exec_tick or opts.no_image)) then
-    pcall(image.reassert_virtual_placements)
+    local image_keys = {}
+    for key in pairs(nb.image_ids or {}) do image_keys[key] = true end
+    pcall(image.reassert_virtual_placements, image_keys)
   end
 end
 
