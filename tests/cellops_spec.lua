@@ -333,6 +333,67 @@ do
   os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
 end
 
+-- ── 6. output cap and render memo ────────────────────────────────────────
+-- A notebook storing a 420KB `!tree` dump made Notebook:to_lines cost 27ms,
+-- and the LSP diagnostic/didChange paths call it dozens of times per keystroke.
+-- Measured on the user's notebook before this: 2535 calls in 74s of IDLE time,
+-- 97% of wall clock, nvim pegged at 99.4% CPU with the cmdline input-dead.
+do
+  local big = {}
+  for i = 1, 20000 do big[i] = "\27[38;5;33mline " .. i .. "\27[0m" end
+  local cell = { id = "big", cell_type = "code",
+                 outputs = { { output_type = "stream", text = table.concat(big, "\n") } } }
+
+  CM = CM  -- keep luacheck quiet
+  local NBm = require("jupynvim.notebook")
+  NBm.max_output_lines = 500
+  NBm._output_expanded = {}
+
+  local l = NBm.output_lines(cell)
+  chk("output is capped to exactly max_output_lines", #l == 500, tostring(#l))
+  local marks = 0
+  for _, x in ipairs(l) do if x:find("hidden", 1, true) then marks = marks + 1 end end
+  chk("exactly one truncation marker (no double-truncation)", marks == 1, marks .. " markers")
+  chk("the head is kept", l[1]:find("line 1", 1, true) ~= nil, l[1])
+  chk("the TAIL is kept (a training log's last epochs are the point)",
+      l[#l]:find("line 20000", 1, true) ~= nil, l[#l])
+  chk("ANSI escapes are stripped from what is shown",
+      l[1]:find("\27", 1, true) == nil, vim.inspect(l[1]))
+
+  -- The cap must apply BEFORE the expensive passes. A FRESH cell table each
+  -- iteration so the memo cannot serve it - this measures the build itself,
+  -- which is what runs on every real edit.
+  local t0 = vim.uv.hrtime()
+  for _ = 1, 5 do
+    NBm.output_lines({ id = "big", cell_type = "code",
+      outputs = { { output_type = "stream", text = cell.outputs[1].text } } })
+  end
+  local build = (vim.uv.hrtime() - t0) / 1e6 / 5
+  chk("uncached render is cheap: cap applied BEFORE the ANSI/CR passes",
+      build < 15, ("%.1f ms per build (was ~27ms when capped after)"):format(build))
+
+  -- memo: repeat calls must not redo the work, and must invalidate on change
+  local first = NBm.output_lines(cell)
+  chk("repeat render is served from cache", NBm.output_lines(cell) == first)
+  cell.outputs[1].text = cell.outputs[1].text .. "\nline 20001"
+  local after = NBm.output_lines(cell)
+  chk("cache invalidates when a stream output grows", after ~= first)
+  chk("and the new tail is visible",
+      after[#after]:find("line 20001", 1, true) ~= nil, after[#after])
+
+  -- expanding shows everything
+  NBm.toggle_output_expanded("big")
+  chk("expand shows the full output", #NBm.output_lines(cell) > 20000,
+      tostring(#NBm.output_lines(cell)))
+  NBm.toggle_output_expanded("big")
+  chk("collapse returns to the cap", #NBm.output_lines(cell) == 500)
+
+  -- 0 disables the cap entirely
+  NBm.max_output_lines = 0
+  chk("max_output_lines = 0 disables the cap", #NBm.output_lines(cell) > 20000)
+  NBm.max_output_lines = 500
+end
+
 if fails == 0 then
   io.write("\nALL CELL-OPS CHECKS PASSED\n")
 else

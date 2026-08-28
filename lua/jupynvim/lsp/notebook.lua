@@ -218,10 +218,15 @@ local function install_diagnostic_handler(client_id)
       return original and original(err, result, ctx, config)
     end
     -- Re-write each diagnostic's range to the buffer's line numbering.
+    -- Resolve the cell's start line ONCE per publish. This used to call
+    -- buf_line_for_cell (a full nb:to_lines) twice per diagnostic, so a
+    -- notebook with hundreds of diagnostics rebuilt the whole document
+    -- hundreds of times and froze the editor for seconds.
+    local cell_start = buf_line_for_cell(target_buf, result.uri, 0)
     local mapped = {}
     for _, d in ipairs(result.diagnostics or {}) do
-      local start_line = buf_line_for_cell(target_buf, result.uri, d.range.start.line)
-      local end_line = buf_line_for_cell(target_buf, result.uri, d.range["end"].line)
+      local start_line = cell_start and (cell_start + d.range.start.line)
+      local end_line = cell_start and (cell_start + d.range["end"].line)
       if start_line and end_line then
         local copy = vim.deepcopy(d)
         copy.range.start.line = start_line - 1

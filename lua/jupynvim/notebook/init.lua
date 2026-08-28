@@ -18,6 +18,7 @@ M.CELL_SEP = "# %%[jupynvim:cell-sep]"
 -- the cell's rendered output as REAL buffer text (navigable/yankable with
 -- plain vim motions), excluded from the cell source on sync/save.
 M.OUT_SEP = "# %%[jupynvim:out]"
+M.OUT_TRUNC_MARK = "\u{22EF}"   -- midline ellipsis, marks a capped output
 
 -- Plain-text lines for a cell's outputs (the buffer representation).
 local function _as_str(v)
@@ -47,7 +48,56 @@ local function _process_cr(s)
   return table.concat(out, "\n")
 end
 
+-- Rendered-output cap. A single `!tree` of a dataset directory can store 24k
+-- lines in a notebook, and every one of them becomes a real buffer line that
+-- treesitter and every FileType plugin then parses. VS Code caps the same way
+-- (notebook.output.textLineLimit, default 30).
+--
+-- DISPLAY ONLY: sync_from_buffer skips the output region entirely and saves
+-- read cell.outputs from the model, so nothing is lost from the .ipynb.
+M.max_output_lines = 500
+M._output_expanded = {}   -- cell_id -> true, per-cell "show it all"
+
+function M.toggle_output_expanded(cell_id)
+  if not cell_id then return false end
+  M._output_expanded[cell_id] = not M._output_expanded[cell_id] or nil
+  return M._output_expanded[cell_id] == true
+end
+
+-- Per-cell render cache. output_lines is called from to_lines, which the LSP
+-- diagnostic and didChange paths hit dozens of times per keystroke; on a
+-- notebook storing a 420KB `!tree` dump that was 27ms EVERY time and pegged the
+-- editor at ~97% of wall clock with the main loop starved.
+--
+-- Weak keys so the entry dies with the cell and nothing is added to the cell
+-- table itself (cells get serialised back to the backend; a cache field there
+-- would leak into the .ipynb).
+local _ol_cache = setmetatable({}, { __mode = "k" })
+
+-- Cheap, content-derived key: O(#outputs) length lookups, no string scanning.
+-- Covers every way outputs actually change - replaced wholesale (identity),
+-- appended to by a stream event (text length), or added to (count).
+local function _out_key(cell)
+  local p = { M.max_output_lines, M._output_expanded[cell.id] and 1 or 0 }
+  for _, o in ipairs(cell.outputs or {}) do
+    local t, d = o.text, o.data
+    p[#p + 1] = (o.output_type or "?")
+    p[#p + 1] = (type(t) == "string" and #t) or (type(t) == "table" and #t) or 0
+    if d then
+      local tp = d["text/plain"]
+      p[#p + 1] = (type(tp) == "string" and #tp) or (type(tp) == "table" and #tp) or 0
+      p[#p + 1] = (d["image/png"] or d["image/gif"] or d["image/jpeg"]) and 1 or 0
+    end
+    if o.traceback then p[#p + 1] = "t" .. #o.traceback end
+  end
+  return table.concat(p, ",")
+end
+
 function M.output_lines(cell)
+  local key = _out_key(cell)
+  local hit = _ol_cache[cell]
+  if hit and hit.key == key then return hit.lines end
+
   local lines = {}
   local function add_text(text)
     for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
@@ -58,9 +108,35 @@ function M.output_lines(cell)
       end
     end
   end
+  -- Big stream outputs: slice the head/tail we will actually show BEFORE the
+  -- expensive passes. _process_cr and _strip_ansi each walk the whole string,
+  -- so running them over 420KB to emit 500 lines cost 17ms of the 23ms.
+  -- Neither changes the line count, so slicing first is equivalent.
+  local cap = M.max_output_lines
+  local function add_stream(text)
+    if not (cap and cap > 0) or M._output_expanded[cell.id] then
+      add_text(_strip_ansi(_process_cr(text))); return
+    end
+    local raw = vim.split(text, "\n", { plain = true })
+    if #raw <= cap then
+      add_text(_strip_ansi(_process_cr(text))); return
+    end
+    local head = math.max(1, math.floor(cap / 4))
+    local tail = math.max(1, cap - head - 1)   -- -1: the marker occupies a line
+    local function emit(i)
+      local l = raw[i]:gsub("\r$", "")
+      add_text(_strip_ansi(_process_cr(l)))
+    end
+    for i = 1, head do emit(i) end
+    table.insert(lines, string.format(
+      "  %s %d lines hidden (%d total) - <leader>no to expand",
+      M.OUT_TRUNC_MARK, #raw - cap, #raw))
+    for i = #raw - tail + 1, #raw do emit(i) end
+  end
+
   for _, o in ipairs(cell.outputs or {}) do
     if o.output_type == "stream" then
-      add_text(_strip_ansi(_process_cr(_as_str(o.text))))
+      add_stream(_as_str(o.text))
     elseif o.output_type == "execute_result" or o.output_type == "display_data" then
       local data = o.data or {}
       local has_img = data["image/png"] or data["image/gif"] or data["image/jpeg"]
@@ -80,6 +156,22 @@ function M.output_lines(cell)
     end
   end
   while lines[#lines] == "  " or lines[#lines] == "" do table.remove(lines) end
+
+  -- Anything still over the cap (many outputs, or non-stream) is trimmed here,
+  -- keeping BOTH ends: for a training log the final epochs are the point.
+  if cap and cap > 0 and not M._output_expanded[cell.id] and #lines > cap then
+    local head = math.max(1, math.floor(cap / 4))
+    local tail = math.max(1, cap - head - 1)   -- -1: the marker occupies a line
+    local shown = {}
+    for k = 1, head do shown[#shown + 1] = lines[k] end
+    shown[#shown + 1] = string.format(
+      "  %s %d lines hidden (%d total) - <leader>no to expand",
+      M.OUT_TRUNC_MARK, #lines - cap, #lines)
+    for k = #lines - tail + 1, #lines do shown[#shown + 1] = lines[k] end
+    lines = shown
+  end
+
+  _ol_cache[cell] = { key = key, lines = lines }
   return lines
 end
 

@@ -65,6 +65,14 @@ M.config = {
   --     },
   --   }
   remote = {},
+  -- Cap how many lines of a cell's output are RENDERED into the buffer. Stored
+  -- output is untouched: the .ipynb keeps everything and save is lossless, this
+  -- only bounds what treesitter and every other FileType plugin has to parse.
+  -- One `!tree` of a dataset directory otherwise puts 24k live lines in the
+  -- buffer and costs 2s of frozen UI on open. Head and tail are both kept, so
+  -- a training log still shows its final epochs. 0 disables the cap.
+  max_output_lines = 500,
+
   -- When an SSH session is active, these keys open the REMOTE tree explorer
   -- instead of the local one; with no active session they fall through to the
   -- local explorer (snacks). Set to {} to disable the hijack and bind
@@ -1975,6 +1983,25 @@ function M.save_image(buf, path)
 end
 
 -- Compatibility shim for the old name; defaults to "down" direction.
+-- Expand or re-collapse the truncated output of the cell under the cursor.
+function M.toggle_output_expand(buf)
+  local nb = Notebook.get(buf)
+  if not nb then return end
+  local lnum = vim.api.nvim_win_get_cursor(0)[1]
+  local cell_id = nb:cell_at_line(lnum)
+  if not cell_id then return end
+  local cell = nb:get_cell(cell_id)
+  if not cell or #(cell.outputs or {}) == 0 then
+    vim.notify("jupynvim: no output on this cell", vim.log.levels.INFO)
+    return
+  end
+  local expanded = Notebook.toggle_output_expanded(cell_id)
+  M._populate_buffer(nb)
+  Render.refresh(nb, vim.fn.bufwinid(buf))
+  vim.notify("jupynvim: output " .. (expanded and "expanded" or "collapsed"),
+    vim.log.levels.INFO)
+end
+
 function M.toggle_output(buf) M.enter_output(buf, "down") end
 
 -- Jump cursor to the next or previous cell that contains an image, either as
@@ -2071,6 +2098,7 @@ end
 
 function M.setup(opts)
   M.config = deep_merge(M.config, opts or {})
+  Notebook.max_output_lines = M.config.max_output_lines or 0
   Log.set_level(M.config.log_level)
   Render.setup_highlights()
   -- A `:colorscheme` runs `hi clear`, wiping our groups (and the
