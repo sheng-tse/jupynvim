@@ -95,14 +95,16 @@ local function bind_all(buf, api)
       -- skip
     else
       local lhs = def.lhs
+      local mode = def.mode
       if type(override) == "string" then
         lhs = override
       elseif type(override) == "table" and override.lhs then
         lhs = override.lhs
+        mode = override.mode
       end
       local builder = actions[name]
       if builder then
-        vim.keymap.set(def.mode, lhs, builder(buf, api),
+        vim.keymap.set(mode, lhs, builder(buf, api),
           { buffer = buf, silent = true, desc = def.desc })
       end
     end
