@@ -98,9 +98,9 @@ local function bind_all(buf, api)
       local mode = def.mode
       if type(override) == "string" then
         lhs = override
-      elseif type(override) == "table" and override.lhs then
-        lhs = override.lhs
-        mode = override.mode
+      elseif type(override) == "table" then
+        if override.lhs then lhs = override.lhs end
+        if override.mode then mode = override.mode end
       end
       local builder = actions[name]
       if builder then
