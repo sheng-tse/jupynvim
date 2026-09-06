@@ -605,6 +605,7 @@ function M.animations_paused() return M._anim_paused end
 
 function M.ensure_transmitted(cell_id, b64, callback, opts)
   opts = opts or {}
+  b64 = (b64 or ""):gsub("%s", "")
   local renderer = opts.renderer or "chafa"
   local mime = opts.mime
   local h = quick_hash(b64)
