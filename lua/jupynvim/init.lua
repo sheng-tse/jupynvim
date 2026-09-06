@@ -1968,7 +1968,7 @@ function M.save_image(buf, path)
   end
   path = vim.fn.fnamemodify(path, ":p")
 
-  local raw_ok, raw = pcall(vim.base64.decode, b64)
+  local raw_ok, raw = pcall(vim.base64.decode, (b64:gsub("%s", "")))
   if not raw_ok or not raw then
     vim.notify("jupynvim: failed to decode image", vim.log.levels.ERROR)
     return
