@@ -148,6 +148,10 @@ impl Server {
         let cwd = session.path.parent().map(|p| p.to_path_buf());
         let kernel = Kernel::launch(spec, cwd).await?;
         let kernel_name = kernel.spec().name.clone();
+        // What actually started, which after a picker switch or a language
+        // fallback is not what the notebook's metadata says.
+        let language = kernel.spec().language.clone();
+        let argv = kernel.spec().argv.clone();
         let mut rx = kernel
             .take_events()
             .await
@@ -188,7 +192,7 @@ impl Server {
             tracing::info!("kernel events channel closed for session {sid_clone}");
         });
 
-        Ok(json!({ "kernel_name": kernel_name }))
+        Ok(json!({ "kernel_name": kernel_name, "language": language, "argv": argv }))
     }
 
     pub(super) async fn stop_kernel(&self, p: Json) -> Result<Json> {

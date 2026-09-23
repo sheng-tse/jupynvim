@@ -156,6 +156,19 @@ do
   pcall(vim.cmd, "bwipeout!")
 end
 
+-- ── language names ───────────────────────────────────────────────────────
+do
+  local lf = J._language_filetype
+  local function ft(meta) return lf({ metadata = meta }) end
+  chk("kernelspec language python3 is python", ft({ kernelspec = { language = "python3" } }) == "python")
+  chk("kernelspec language 'Python 3' is python", ft({ kernelspec = { language = "Python 3" } }) == "python")
+  chk("ipython is python", ft({ language_info = { name = "ipython" } }) == "python")
+  chk("VSCode's plaintext means no language yet, so python",
+      ft({ language_info = { name = "plaintext" } }) == "python")
+  chk("an empty kernelspec language falls through to language_info",
+      ft({ kernelspec = { language = "" }, language_info = { name = "julia" } }) == "julia")
+end
+
 -- ── a reopen that fails must not let :w write placeholders over the file ──
 do
   local p = write_nb("fails-on-reopen", {
@@ -173,6 +186,58 @@ do
   local now = io.open(p):read("*a")
   chk("a failed reopen leaves the file as it was on :w", now == broken,
       ("file is now %d bytes of %q"):format(#now, now:sub(1, 40)))
+  pcall(vim.cmd, "bwipeout!")
+end
+
+-- ── what a kernel start does depends on the kernel that started ──────────
+do
+  -- a .venv beside the notebook, with a python in it
+  local dir = tmp .. "/proj"
+  vim.fn.mkdir(dir .. "/.venv/bin", "p")
+  local py = dir .. "/.venv/bin/python"
+  local f = io.open(py, "w"); f:write("#!/bin/sh\nexit 0\n"); f:close()
+  vim.fn.setfperm(py, "rwxr-xr-x")
+  local p = dir .. "/j.ipynb"
+  f = io.open(p, "w")
+  f:write(vim.json.encode({ cells = { { cell_type = "code", id = "c1", metadata = vim.empty_dict(),
+    source = "1", execution_count = vim.NIL, outputs = {} } }, nbformat = 4, nbformat_minor = 5,
+    metadata = { kernelspec = { name = "julia-1.12", language = "julia", display_name = "J" } } }))
+  f:close()
+  local buf = edit(p)
+  local nb = NB.get(buf)
+
+  local calls = {}
+  local function fake(started)
+    return { job = 1, call = function(_, method, params, cb)
+      calls[#calls + 1] = { method = method, params = params }
+      if method == "start_kernel" and cb then cb(nil, started) end
+    end }
+  end
+  local real = J._ensure_client
+  local function start(started)
+    calls = {}
+    nb.kernel_started = false
+    nb.kernel_python_path = nil
+    J._ensure_client = function() return fake(started) end
+    J.start_kernel(buf)
+    vim.wait(200)
+    J._ensure_client = real
+  end
+  local function sent(method)
+    for _, c in ipairs(calls) do if c.method == method then return c end end
+  end
+
+  start({ kernel_name = "julia-1.12", language = "julia", argv = { "/opt/julia/bin/julia" } })
+  chk("a julia notebook does not start the .venv beside it", sent("start_kernel").params.python_path == nil,
+      tostring(sent("start_kernel").params.python_path))
+  chk("a julia kernel gets no matplotlib magic", sent("execute_silent") == nil)
+  chk("and its binary is never taken for a python", nb.kernel_python_path == nil,
+      tostring(nb.kernel_python_path))
+
+  start({ kernel_name = "python3", language = "python", argv = { py, "-m", "ipykernel_launcher" } })
+  chk("switching it to a python kernel does get the magic", sent("execute_silent") ~= nil)
+  chk("and the python path from the kernel that started", nb.kernel_python_path == py,
+      tostring(nb.kernel_python_path))
   pcall(vim.cmd, "bwipeout!")
 end
 

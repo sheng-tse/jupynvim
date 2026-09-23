@@ -330,12 +330,22 @@ M._find_local_venv_python = find_local_venv_python
 -- language used to become "python" too, and pyright attached to it.
 local KNOWN_FT = { python = "python", julia = "julia", r = "r", javascript = "javascript",
                    typescript = "typescript", bash = "sh", sh = "sh", zsh = "zsh" }
+-- Names that mean "no language yet": VSCode saves a notebook with no kernel
+-- picked as plaintext.
+local NO_LANG = { [""] = true, plaintext = true, text = true }
 local function language_filetype(snap)
   local meta = snap.metadata or {}
   local info = meta.language_info or {}
-  local lang = (meta.kernelspec or {}).language or info.name
-  if type(lang) ~= "string" or lang == "" then return "python" end
-  lang = lang:lower()
+  local function norm(v)
+    if type(v) ~= "string" then return nil end
+    v = vim.trim(v):lower()
+    if NO_LANG[v] then return nil end
+    -- "python3", "Python 3", "ipython" are all Python
+    if v:match("^i?python%s*%d*[%.%d]*$") then return "python" end
+    return v
+  end
+  local lang = norm((meta.kernelspec or {}).language) or norm(info.name)
+  if not lang then return "python" end
   if KNOWN_FT[lang] then return KNOWN_FT[lang] end
   local ext = info.file_extension
   if type(ext) == "string" and ext ~= "" then
@@ -1652,7 +1662,10 @@ function M.start_kernel(buf, kernel_name)
   -- directly. For REMOTE notebooks the backend does the equivalent walk-up on
   -- its own filesystem when we pass auto_venv (same .venv/venv/env semantics).
   local python_path = nil
-  if not kernel_name and M.config.auto_venv ~= false and not nb.alias then
+  local nb_lang = (nb.notebook_meta and nb.notebook_meta.language) or "python"
+  -- A .venv beside a Julia or R notebook is not its kernel. Passing its python
+  -- here started a Python kernel for them.
+  if not kernel_name and M.config.auto_venv ~= false and not nb.alias and nb_lang == "python" then
     local nb_dir = nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
     if nb_dir then
       python_path = find_local_venv_python(nb_dir)
@@ -1677,8 +1690,13 @@ function M.start_kernel(buf, kernel_name)
     nb.kernel_error = nil
     nb.kernel_started = true
     vim.notify("jupynvim: kernel '" .. (res.kernel_name or "?") .. "' started", vim.log.levels.INFO)
-    -- Auto-inject inline plotting magic for python kernels (silent — no output)
-    local lang = (nb.notebook_meta and nb.notebook_meta.language) or "python"
+    -- Gate on the kernel that actually started. After a picker switch it is
+    -- not the language the notebook was opened with, and older backends that
+    -- do not report it get a guess from the kernel name.
+    local lang = (type(res.language) == "string" and res.language ~= "") and res.language:lower()
+      or ((res.kernel_name or ""):lower():find("python") and "python")
+      or nb_lang
+    -- Auto-inject inline plotting magic for python kernels (silent, no output)
     if lang == "python" then
       cl:call("execute_silent", {
         session_id = nb.session_id,
@@ -1689,35 +1707,38 @@ function M.start_kernel(buf, kernel_name)
     -- matches what `pip list` in that env reports. Local-only — the LSP
     -- runs on the user's machine and can't introspect a remote python.
     -- Phase 6 (remote LSP relay) will be the right path for remote.
-    if nb.alias or lang ~= "python" then return end
-    cl:call("list_kernels", {}, function(_, kernels)
-      if not kernels then return end
-      local active = res.kernel_name
-      for _, k in ipairs(kernels) do
-        -- argv is typically ["/path/to/python", "-m", "ipykernel_launcher", ...]
-        -- Lua's 1-based indexing -> argv[1] is the python interpreter.
-        if k.name == active and k.argv and k.argv[1] then
-          local py = k.argv[1]
-          nb.kernel_python_path = py
-          -- Defensive: don't try to run a python path that isn't here
-          if vim.fn.executable(py) ~= 1 then return end
-          local sp = vim.fn.system({ py, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
-          local extra = {}
-          if vim.v.shell_error == 0 then
-            for line in sp:gmatch("[^\r\n]+") do
-              if line:find("site%-packages") or line:find("dist%-packages") then
-                table.insert(extra, line)
-              end
-            end
+    local function sync_python(py)
+      nb.kernel_python_path = py
+      -- Defensive: don't try to run a python path that isn't here
+      if vim.fn.executable(py) ~= 1 then return end
+      local sp = vim.fn.system({ py, "-c", "import sys; print('\\n'.join(p for p in sys.path if p))" })
+      local extra = {}
+      if vim.v.shell_error == 0 then
+        for line in sp:gmatch("[^\r\n]+") do
+          if line:find("site%-packages") or line:find("dist%-packages") then
+            table.insert(extra, line)
           end
-          nb.kernel_extra_paths = extra
-          vim.schedule(function()
-            M._sync_lsp_python_path(buf, py, extra)
-          end)
-          return
         end
       end
-    end)
+      nb.kernel_extra_paths = extra
+      vim.schedule(function() M._sync_lsp_python_path(buf, py, extra) end)
+    end
+    if not nb.alias and lang == "python" then
+      -- argv[1] is the interpreter: ["/path/to/python", "-m", "ipykernel_launcher", ...]
+      if type(res.argv) == "table" and res.argv[1] then
+        sync_python(res.argv[1])
+      else
+        -- a backend too old to report argv
+        cl:call("list_kernels", {}, function(_, kernels)
+          for _, k in ipairs(kernels or {}) do
+            if k.name == res.kernel_name and k.argv and k.argv[1] then
+              sync_python(k.argv[1])
+              return
+            end
+          end
+        end)
+      end
+    end
     Render.refresh(nb, vim.fn.bufwinid(buf))
   end)
 end
