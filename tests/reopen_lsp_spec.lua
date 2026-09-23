@@ -156,6 +156,26 @@ do
   pcall(vim.cmd, "bwipeout!")
 end
 
+-- ── a reopen that fails must not let :w write placeholders over the file ──
+do
+  local p = write_nb("fails-on-reopen", {
+    kernelspec = { display_name = "P", language = "python", name = "python3" } })
+  local buf = edit(p)
+  vim.cmd("bdelete")
+  vim.wait(300)
+  -- the file turns unreadable while closed, say a bad merge
+  local broken = "<<<<<<< HEAD\nnot json at all\n>>>>>>> theirs\n"
+  local f = io.open(p, "w"); f:write(broken); f:close()
+  pcall(vim.cmd, "edit " .. vim.fn.fnameescape(p))
+  vim.wait(1500)
+  pcall(vim.cmd, "write")
+  vim.wait(300)
+  local now = io.open(p):read("*a")
+  chk("a failed reopen leaves the file as it was on :w", now == broken,
+      ("file is now %d bytes of %q"):format(#now, now:sub(1, 40)))
+  pcall(vim.cmd, "bwipeout!")
+end
+
 vim.fn.delete(tmp, "rf")
 
 if fails == 0 then

@@ -2269,6 +2269,12 @@ function M.setup(opts)
           pcall(vim.api.nvim_buf_set_lines, args.buf, 0, -1, false, lines)
         end
       end
+      -- Until M.open succeeds this buffer holds placeholder lines, and after
+      -- :bdelete its buftype is back to "". If the open then fails, a plain :w
+      -- wrote those blank lines over the notebook. acwrite with no writer
+      -- makes that :w an error instead, and keeps vim.lsp.enable from
+      -- starting servers on the half-open buffer.
+      vim.bo[args.buf].buftype = "acwrite"
       vim.schedule(function() M.open(args.file, { force = force }) end)
     end,
   })
