@@ -156,6 +156,13 @@ def t_kernel_lifecycle():
     sid = res["session_id"]
     err, res2 = cl.call("start_kernel", {"session_id": sid}, timeout=15)
     report("start_kernel returns", err is None, str(err))
+    # the frontend gates python-only behavior on the kernel that started
+    res2 = res2 or {}
+    report("start_kernel reports the kernel's language", res2.get("language") == "python",
+           str(res2.get("language")))
+    argv = res2.get("argv") or []
+    report("start_kernel reports the kernel's argv", bool(argv) and "python" in argv[0].lower(),
+           str(argv[:1]))
     err, _ = cl.call("stop_kernel", {"session_id": sid})
     report("stop_kernel returns", err is None, str(err))
     cl.stop()
