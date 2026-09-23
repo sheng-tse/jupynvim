@@ -366,8 +366,14 @@ require("jupynvim").setup({
   -- (mode and description preserved), `false` to disable a binding. The
   -- full action list lives in lua/jupynvim/keymaps.lua.
   keymaps = {
-    -- run_advance = "<leader>jr",  -- example: rebind run-and-advance
-    -- move_up = false,             -- example: disable move-cell-up
+    -- example: rebind run-and-advance
+    -- run_advance = "<leader>jr",
+    --
+    -- example: rebind run-and-stay and change mode to NORMAL only
+    -- run_stay = { mode = { "n" }, lhs = "<leader>js" },
+    --
+    -- example: disable move-cell-up
+    -- move_up = false,
   },
 
   -- Skip the entire default keymap set if you want to bind everything yourself.
