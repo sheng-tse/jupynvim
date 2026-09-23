@@ -1,5 +1,12 @@
 # jupynvim
 
+[![release](https://img.shields.io/github/v/release/sheng-tse/jupynvim?include_prereleases&label=release&labelColor=24292f&color=F58426)](https://github.com/sheng-tse/jupynvim/releases)
+[![downloads](https://img.shields.io/github/downloads/sheng-tse/jupynvim/total?labelColor=24292f&color=006BB6)](https://github.com/sheng-tse/jupynvim/releases)
+[![license](https://img.shields.io/badge/license-MIT-006BB6?labelColor=24292f)](LICENSE)
+[![closed issues](https://img.shields.io/github/issues-closed/sheng-tse/jupynvim?labelColor=24292f&color=006BB6)](https://github.com/sheng-tse/jupynvim/issues?q=is%3Aissue+is%3Aclosed)
+[![open issues](https://img.shields.io/github/issues/sheng-tse/jupynvim?labelColor=24292f&color=006BB6)](https://github.com/sheng-tse/jupynvim/issues)
+[![Neovim](https://img.shields.io/badge/Neovim-0.11%2B-006BB6?logo=neovim&logoColor=57A143&labelColor=24292f)](https://neovim.io)
+
 Open `.ipynb` files in Neovim and edit them like a real notebook. Cells with
 borders, inline images, real Jupyter kernels, and an LSP that actually
 understands the file. Built on a Rust backend that talks the Jupyter wire
