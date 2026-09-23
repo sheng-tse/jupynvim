@@ -1732,6 +1732,21 @@ function M.run_below(buf)
   co()
 end
 
+-- Cell adds, deletes and moves change the cells only when the backend
+-- answers. Keys already typed ran against the layout from before: a macro,
+-- :normal, fast typing, or any key over a remote backend's round trip. b then
+-- dd deleted the cell b was adding to, and dd then u undid the add. Each op
+-- waits for the one before it, and cell mode's keys wait for the op they ran.
+-- vim.wait runs the answer's callback and leaves typed keys queued.
+M._cellops = M._cellops or {}   -- buf -> ops in flight
+local function cellop_begin(buf) M._cellops[buf] = (M._cellops[buf] or 0) + 1 end
+local function cellop_end(buf) M._cellops[buf] = math.max(0, (M._cellops[buf] or 1) - 1) end
+function M._settle(buf)
+  if (M._cellops[buf] or 0) > 0 then
+    vim.wait(10000, function() return (M._cellops[buf] or 0) == 0 end, 5)
+  end
+end
+
 -- Record a cell-level mutation for `u`. Done here rather than in the keymaps:
 -- add/delete have several entry points (cell-mode keys, <leader>na/nb/nd, the
 -- :Jupynvim* commands) and recording per keymap covered only one of them.
@@ -1746,6 +1761,7 @@ end
 -- races the RPC and writes into the pre-insert buffer layout.
 -- `no_record` suppresses the undo entry while an undo is being replayed.
 function M.add_cell(buf, where, cb, no_record)
+  M._settle(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
@@ -1761,7 +1777,9 @@ function M.add_cell(buf, where, cb, no_record)
   end
 
   local cl = M._ensure_client()
+  cellop_begin(buf)
   cl:call("insert_cell", { session_id = nb.session_id, after_index = insert_at, cell_type = "code" }, function(err, res)
+    cellop_end(buf)
     if err then vim.notify("insert: " .. tostring(err), vim.log.levels.ERROR); return end
     -- Insert into local cells
     table.insert(nb.cells, insert_at + 2, { id = res.cell_id, cell_type = "code", source = "", outputs = {} })
@@ -1797,6 +1815,7 @@ function M.set_cell_content(buf, idx, lines, cell_type)
 end
 
 function M.delete_cell(buf, no_record)
+  M._settle(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
@@ -1813,7 +1832,9 @@ function M.delete_cell(buf, no_record)
     cell_type = doomed.cell_type,
   } or nil
   local cl = M._ensure_client()
+  cellop_begin(buf)
   cl:call("delete_cell", { session_id = nb.session_id, cell_id = cur_id }, function(err)
+    cellop_end(buf)
     if err then vim.notify("delete: " .. tostring(err), vim.log.levels.ERROR); return end
     -- Remove locally
     for i, c in ipairs(nb.cells) do
@@ -1821,7 +1842,9 @@ function M.delete_cell(buf, no_record)
     end
     if snapshot then record_undo(buf, snapshot, no_record) end
     if #nb.cells == 0 then
+      cellop_begin(buf)
       cl:call("insert_cell", { session_id = nb.session_id, after_index = -1, cell_type = "code" }, function(_, res)
+        cellop_end(buf)
         if res then table.insert(nb.cells, { id = res.cell_id, cell_type = "code", source = "", outputs = {} }) end
         M._populate_buffer(nb)
         Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -1834,6 +1857,7 @@ function M.delete_cell(buf, no_record)
 end
 
 function M.move_cell(buf, delta, no_record)
+  M._settle(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
@@ -1841,7 +1865,9 @@ function M.move_cell(buf, delta, no_record)
   local cur_id = nb:cell_at_line(lnum)
   if not cur_id then return end
   local cl = M._ensure_client()
+  cellop_begin(buf)
   cl:call("move_cell", { session_id = nb.session_id, cell_id = cur_id, delta = delta }, function(err, res)
+    cellop_end(buf)
     if err then vim.notify("move: " .. tostring(err), vim.log.levels.ERROR); return end
     -- Apply locally
     local idx

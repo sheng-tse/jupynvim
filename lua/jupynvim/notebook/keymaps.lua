@@ -62,11 +62,13 @@ local actions = {
   run_all          = function(buf, api) return function() api.run_all(buf) end end,
   run_above        = function(buf, api) return function() api.run_above(buf) end end,
   run_below        = function(buf, api) return function() api.run_below(buf) end end,
-  add_above        = function(buf, api) return function() api.add_cell(buf, "above") end end,
-  add_below        = function(buf, api) return function() api.add_cell(buf, "below") end end,
-  delete_cell      = function(buf, api) return function() api.delete_cell(buf) end end,
-  move_up          = function(buf, api) return function() api.move_cell(buf, -1) end end,
-  move_down        = function(buf, api) return function() api.move_cell(buf, 1) end end,
+  -- the keys typed after one of these wait for the backend's answer, which
+  -- is when the cells change
+  add_above        = function(buf, api) return function() api.add_cell(buf, "above"); api._settle(buf) end end,
+  add_below        = function(buf, api) return function() api.add_cell(buf, "below"); api._settle(buf) end end,
+  delete_cell      = function(buf, api) return function() api.delete_cell(buf); api._settle(buf) end end,
+  move_up          = function(buf, api) return function() api.move_cell(buf, -1); api._settle(buf) end end,
+  move_down        = function(buf, api) return function() api.move_cell(buf, 1); api._settle(buf) end end,
   to_markdown      = function(buf, api) return function() api.set_cell_type(buf, "markdown") end end,
   to_code          = function(buf, api) return function() api.set_cell_type(buf, "code") end end,
   pick_kernel      = function(buf, api) return function() api.kernel_picker(buf) end end,

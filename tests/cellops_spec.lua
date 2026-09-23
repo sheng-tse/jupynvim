@@ -287,6 +287,26 @@ do
   end, 3)
 end
 
+-- A cell op lands when the backend answers. Keys typed with it, in a macro,
+-- :normal, fast or over a remote round trip, ran against the layout from
+-- before: b then dd deleted the cell b was adding to, and dd then u undid
+-- the add instead of the delete.
+do
+  local function burst(label, keys, want)
+    local b, path = open_fixture()
+    local before = sources(b)
+    select_nth(b, 1)
+    vim.cmd("normal " .. keys)
+    vim.wait(1500)
+    chk(label, vim.deep_equal(sources(b), want(before)), vim.inspect(sources(b)))
+    os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
+  end
+  burst("b then dd in one go deletes the cell b added", "bdd", function(x) return x end)
+  burst("b, dd, u in one go brings back the cell dd deleted", "bddu",
+    function(x) return { x[1], "", x[2], x[3] } end)
+  burst("b, dd, u, u in one go gives back the original cells", "bdduu", function(x) return x end)
+end
+
 -- Undo must work no matter which entry point made the change. Recording in
 -- the cell-mode keymaps only covered `a`/`b`/`dd`; <leader>nb and the
 -- :Jupynvim* commands recorded nothing, so u said "nothing to undo".

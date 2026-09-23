@@ -644,6 +644,10 @@ function M.attach(buf, api)
     map("n", lhs, function()
       if M.is_command(buf) then
         fn()
+        -- a cell add, delete or move lands when the backend answers: the
+        -- keys typed after it wait for that, or b then dd deleted the cell
+        -- b was adding to
+        if api and api._settle then api._settle(buf) end
       elseif edit_fn then
         edit_fn()
       else
