@@ -71,8 +71,9 @@ https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
   uses), so plots and gifs won't render there; the rest of the editor works,
   and `image_renderer = "chafa"` gives a static ASCII fallback.
 - Rust toolchain (`cargo`) only on platforms without a prebuilt binary.
-  Mac arm64 and Linux x86_64 download a prebuilt on install. Other
-  platforms fall back to building locally.
+  Mac arm64 and Linux x86_64 download a prebuilt, from the install hook or
+  the first time you open a notebook. Other platforms fall back to building
+  locally.
 - A Jupyter kernel installed for the language you intend to use. See below.
 - ImageMagick 7 (`magick`) is required for animated GIF playback. Static
   images work without it.
@@ -150,13 +151,50 @@ With [`lazy.nvim`](https://github.com/folke/lazy.nvim):
 That's it. Open any `.ipynb` and the kernel auto-starts based on the
 notebook's `kernelspec` metadata.
 
+With Neovim's built-in `vim.pack`:
+
+```lua
+vim.pack.add({ "https://github.com/sheng-tse/jupynvim" })
+require("jupynvim").setup({})
+```
+
+vim.pack has no build step, so the first notebook you open downloads the
+backend binary that matches the plugin, and does it again after an update
+changes the version. To install at install time instead, register this hook
+before `vim.pack.add`:
+
+```lua
+vim.api.nvim_create_autocmd("PackChanged", {
+  callback = function(ev)
+    local d = ev.data
+    if d.spec.name == "jupynvim" and (d.kind == "install" or d.kind == "update") then
+      dofile(d.path .. "/lua/jupynvim/install.lua").run({ dir = d.path })
+    end
+  end,
+})
+```
+
+With [`mini.deps`](https://github.com/nvim-mini/mini.nvim), the same call
+goes in its hooks:
+
+```lua
+local function build(p) dofile(p.path .. "/lua/jupynvim/install.lua").run({ dir = p.path }) end
+MiniDeps.add({ source = "sheng-tse/jupynvim", hooks = { post_install = build, post_checkout = build } })
+```
+
+Any other way works too, a manual clone included. Run `:JupynvimInstall`
+once, or just open a notebook. `:checkhealth jupynvim` shows what is
+installed and what is missing. Set `auto_install = false` if you would
+rather nothing is downloaded without you asking.
+
 ## Security of the prebuilt binary
 
-The build step downloads `jupynvim-core` from the GitHub release over HTTPS and
-runs it. HTTPS protects the download in transit; on top of that the installer
-checks the binary against the release's published `SHA256SUMS` and refuses to
-run it (building from source instead) if the hash does not match or the binary
-is not listed, which catches a corrupted, swapped, or unlisted binary. Releases
+The installer, whether it runs from a build hook, `:JupynvimInstall` or the
+first time a notebook opens, downloads `jupynvim-core` from the GitHub release
+over HTTPS and runs it. HTTPS protects the download in transit; on top of that
+the installer checks the binary against the release's published `SHA256SUMS`
+and refuses it if the hash does not match or the binary is not listed, which
+catches a corrupted, swapped, or unlisted binary. Releases
 older than this check publish no `SHA256SUMS`, and the installer warns and
 proceeds for those. It does not yet catch a release where both the binary and
 `SHA256SUMS` were replaced; signature verification for that is on the roadmap.

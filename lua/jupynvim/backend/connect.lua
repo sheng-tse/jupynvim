@@ -14,15 +14,72 @@ local Connect = {}
 function Connect.install(M)
 -- ---------- backend helpers ----------
 
+-- `--version` of a jupynvim-core binary, e.g. "0.4.5". nil if it will not run.
+local function binary_version(bin)
+  local ok, res = pcall(function()
+    return vim.system({ bin, "--version" }, { text = true }):wait(3000)
+  end)
+  if not ok or not res or res.code ~= 0 then return nil end
+  return (res.stdout or ""):match("jupynvim%-core%s+(%S+)")
+end
+M._binary_version = binary_version
+
+local install_tried = false
+M._reset_install_tried = function() install_tried = false end
+
+-- Only lazy.nvim's build hook ever installed the binary. Any other plugin
+-- manager (vim.pack, packer or mini.deps without a hook, a manual clone) left
+-- it missing, and an update that skipped the hook left an old one next to
+-- newer Lua (#33). So the binary has to match the plugin's version, and when
+-- it is missing or stale the matching release is fetched here, once per
+-- session, unless auto_install is off.
 local function locate_core()
   if M.config.core_path then return M.config.core_path end
   -- Ask the one helper that knows where the plugin lives; this used to repeat
   -- the :h:h:h path math and broke silently, falling back to a bare name that
   -- is not on PATH, when this file moved a directory deeper.
-  local candidate = M._plugin_root() .. "/core/target/release/jupynvim-core"
-  if vim.fn.executable(candidate) == 1 then return candidate end
-  return "jupynvim-core"
+  local root = M._plugin_root()
+  local candidate = root .. "/core/target/release/jupynvim-core"
+  local Install = require("jupynvim.backend.install")
+  local want = Install.source_version(root)
+  local have = vim.fn.executable(candidate) == 1 and binary_version(candidate) or nil
+  if have and (not want or have == want) then return candidate end
+  -- nothing here, but one on PATH: a system package or a manual install
+  if vim.fn.executable(candidate) ~= 1 and vim.fn.executable("jupynvim-core") == 1 then
+    return "jupynvim-core"
+  end
+
+  local why = have and ("is v%s but the plugin is v%s"):format(have, want)
+    or ("is not installed at " .. candidate)
+  -- A cargo build of your own leaves its metadata beside the binary. A
+  -- download over it would throw away your changes, so only say so.
+  if have and vim.fn.isdirectory(root .. "/core/target/release/.fingerprint") == 1 then
+    vim.notify("jupynvim: jupynvim-core " .. why .. ". Rebuild it with cargo build --release.",
+      vim.log.levels.WARN)
+    return candidate
+  end
+  if M.config.auto_install == false or install_tried then
+    if have then
+      vim.notify("jupynvim: jupynvim-core " .. why .. ". Run :JupynvimInstall.", vim.log.levels.WARN)
+      return candidate
+    end
+    error("jupynvim: jupynvim-core " .. why .. ". Run :JupynvimInstall or set core_path, " ..
+      "and see :checkhealth jupynvim.", 0)
+  end
+  install_tried = true
+  vim.notify("jupynvim: jupynvim-core " .. why .. ", downloading the matching release...",
+    vim.log.levels.INFO)
+  pcall(vim.cmd, "redraw")
+  local ok, err = pcall(Install.run, root, { no_cargo = true })
+  if ok and vim.fn.executable(candidate) == 1 then return candidate end
+  if have then
+    vim.notify("jupynvim: update failed (" .. tostring(err) .. "), using the old binary",
+      vim.log.levels.WARN)
+    return candidate
+  end
+  error(tostring(err), 0)
 end
+M._locate_core = locate_core
 
 -- Path to this plugin's repo root (.../jupynvim).
 function M._plugin_root()
@@ -82,14 +139,7 @@ end
 
 -- Version declared in core/Cargo.toml (the [package] one, which comes first).
 local function core_manifest_version()
-  local f = io.open(M._plugin_root() .. "/core/Cargo.toml", "r")
-  if not f then return nil end
-  for line in f:lines() do
-    local v = line:match('^version%s*=%s*"([^"]+)"')
-    if v then f:close(); return v end
-  end
-  f:close()
-  return nil
+  return require("jupynvim.backend.install").source_version(M._plugin_root())
 end
 
 -- Version baked into an already-built artifact. main.rs logs

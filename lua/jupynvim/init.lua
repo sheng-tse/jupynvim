@@ -17,6 +17,11 @@ local Log      = require("jupynvim.log")
 M.client = nil    -- single backend process shared by all notebooks
 M.config = {
   core_path = nil,
+  -- When jupynvim-core is missing, or older than the plugin because an update
+  -- skipped the install hook, download the matching release prebuilt the
+  -- first time a notebook opens. false only reports it; :JupynvimInstall
+  -- installs by hand.
+  auto_install = true,
   python = nil,
   log_level = "info",
   -- "placeholder": real PNG via Kitty Unicode placeholder protocol
@@ -348,7 +353,13 @@ function M.open(path, opts)
   if opts.alias then
     M.client = M.client_for(opts.alias)
   else
-    M._ensure_client()
+    -- A missing backend is a setup problem with a fix to point at, not a
+    -- stack trace out of a scheduled callback.
+    local ok, err = pcall(M._ensure_client)
+    if not ok then
+      vim.notify(tostring(err), vim.log.levels.ERROR)
+      return
+    end
   end
   local abs = vim.fn.fnamemodify(path, ":p")
   -- Clear stray direct placements left by file explorers (snacks.image

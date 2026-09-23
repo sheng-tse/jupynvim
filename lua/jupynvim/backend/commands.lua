@@ -302,6 +302,22 @@ function Commands.install(M, Image)
   -- Builds every installed linux-musl rustup target (x86_64 always once
   -- added; add aarch64-unknown-linux-musl for arm64 remotes like AWS
   -- Graviton). Auto-upload then picks the right one per remote via uname -m.
+  -- Install or update the local backend binary: the release prebuilt
+  -- (SHA256-checked), else a cargo build. For plugin managers without a
+  -- build hook, and to repair a stale binary. The download is renamed into
+  -- place, so a running backend keeps its old binary until it restarts.
+  vim.api.nvim_create_user_command("JupynvimInstall", function()
+    local ok, err = pcall(require("jupynvim.backend.install").run, M._plugin_root())
+    if not ok then
+      vim.notify(tostring(err), vim.log.levels.ERROR)
+      return
+    end
+    if M.client and M.client.job then
+      vim.notify("jupynvim: :JupynvimReset to switch the running backend to it",
+        vim.log.levels.INFO)
+    end
+  end, { desc = "jupynvim: download or build the jupynvim-core backend" })
+
   vim.api.nvim_create_user_command("JupynvimCrossBuild", function()
     local root = M._plugin_root()
     local manifest = root .. "/core/Cargo.toml"
