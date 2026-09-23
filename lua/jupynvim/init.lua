@@ -812,17 +812,24 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
         -- each reopen of a notebook start another pyright and leave the old
         -- one running with no buffer.
         reuse_client = py_path and function(client, conf)
-          if client.name ~= conf.name or client.config.root_dir ~= conf.root_dir then
+          if client:is_stopped() or client.name ~= conf.name
+             or client.config.root_dir ~= conf.root_dir then
             return false
           end
-          -- only the servers pythonPath is injected into can disagree on it
           if not (name == "basedpyright" or name == "pyright" or name == "pylsp" or name == "ruff") then
             return true
           end
-          local st = client.settings or client.config.settings or {}
-          local pp = (st.python or {}).pythonPath
-            or ((st.basedpyright or {}).python or {}).pythonPath
-          return pp == py_path
+          -- A Python server is pointed at ONE notebook's kernel for every
+          -- buffer it serves (_sync_lsp_python_path), so one another notebook
+          -- is using is not shared: switching that notebook's kernel would
+          -- move this one's imports too. One no buffer uses, left behind by
+          -- :bdelete, is reused whatever its interpreter; LspAttach points
+          -- it at this notebook's. Refusing those made every reopen start
+          -- another server and leave the old one running.
+          for b in pairs(client.attached_buffers or {}) do
+            if b ~= buf then return false end
+          end
+          return true
         end or cfg.reuse_client,
         _root_markers = cfg.root_markers,
       }

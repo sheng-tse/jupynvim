@@ -183,24 +183,72 @@ do
   pcall(vim.cmd, "bwipeout!")
 end
 
--- ── reopening a python notebook reuses its pyright ─────────────────────
+-- ── pyright: one per notebook, reused across a reopen ──────────────────
+-- A .venv beside the notebooks gives every open a known interpreter, so the
+-- reuse rule for Python servers runs whatever kernels the host has.
+local PROJ = tmp .. "/pyproj"
+vim.fn.mkdir(PROJ .. "/.venv/bin", "p")
+local VPY = PROJ .. "/.venv/bin/python"
 do
-  local p = write_nb("py-reopen", {
-    kernelspec = { display_name = "P", language = "python", name = "python3" } })
+  local f = io.open(VPY, "w"); f:write("#!/bin/sh\nexit 0\n"); f:close()
+  vim.fn.setfperm(VPY, "rwxr-xr-x")
+end
+local function py_nb(name)
+  local p = PROJ .. "/" .. name .. ".ipynb"
+  local f = io.open(p, "w")
+  f:write(vim.json.encode({ cells = { { cell_type = "code", id = "c1", metadata = vim.empty_dict(),
+    source = "x = 1", execution_count = vim.NIL, outputs = {} } }, nbformat = 4, nbformat_minor = 5,
+    metadata = { kernelspec = { display_name = "P", language = "python", name = "python3" } } }))
+  f:close()
+  return p
+end
+local function pyright_of(buf) return vim.lsp.get_clients({ bufnr = buf, name = "pyright" })[1] end
+-- servers of `name` running for the project at `root`, attached or not
+local function running(name, root)
+  local n = 0
+  for _, c in ipairs(vim.lsp.get_clients({ name = name })) do
+    if vim.fn.resolve(c.config.root_dir or "") == vim.fn.resolve(root) and not c:is_stopped() then
+      n = n + 1
+    end
+  end
+  return n
+end
+local function python_path(client)
+  return client and ((client.settings or {}).python or {}).pythonPath
+end
+
+do
+  local p = py_nb("py-reopen")
   local buf = edit(p)
-  local first = vim.lsp.get_clients({ bufnr = buf, name = "pyright" })[1]
+  chk("the notebook has a known interpreter (precondition)",
+      NB.get(buf) and NB.get(buf).kernel_python_path == VPY,
+      tostring(NB.get(buf) and NB.get(buf).kernel_python_path))
+  local first = pyright_of(buf)
   vim.cmd("bdelete")
   vim.wait(300)
   buf = edit(p)
   vim.cmd("bdelete")
   vim.wait(300)
   buf = edit(p)
-  local all = vim.lsp.get_clients({ name = "pyright" })
-  local attached = vim.lsp.get_clients({ bufnr = buf, name = "pyright" })
-  chk("a python notebook gets pyright", first ~= nil and #attached == 1)
-  chk("reopening it twice leaves one pyright, not three", #all == 1,
-      #all .. " pyright clients running")
+  local n = running("pyright", PROJ)
+  chk("a python notebook gets pyright", first ~= nil and pyright_of(buf) ~= nil)
+  chk("reopening it twice leaves one pyright, not three", n == 1, n .. " pyright clients running")
   pcall(vim.cmd, "bwipeout!")
+end
+
+do
+  local a = edit(py_nb("nb-a"))
+  local b = edit(py_nb("nb-b"))
+  local ca, cb = pyright_of(a), pyright_of(b)
+  chk("two notebooks in one project get a pyright each", ca and cb and ca.id ~= cb.id,
+      ("%s / %s"):format(tostring(ca and ca.id), tostring(cb and cb.id)))
+  -- notebook A switches kernel: its pyright moves, B's does not
+  J._sync_lsp_python_path(a, "/other/env/bin/python", {})
+  chk("switching one notebook's interpreter leaves the other's alone",
+      python_path(cb) == VPY and python_path(ca) == "/other/env/bin/python",
+      ("a=%s b=%s"):format(tostring(python_path(ca)), tostring(python_path(cb))))
+  pcall(vim.api.nvim_buf_delete, a, { force = true })
+  pcall(vim.api.nvim_buf_delete, b, { force = true })
 end
 
 -- ── a notebook-aware server sees the reopened notebook ──────────────────
@@ -220,8 +268,8 @@ do
   end
   chk("a reopen closes the old notebook document and opens the new one",
       opens == 2 and closes == 1, vim.inspect(nbmsgs))
-  chk("and the server is reused, not started again",
-      #vim.lsp.get_clients({ name = "tyfake" }) == 1, #vim.lsp.get_clients({ name = "tyfake" }) .. " running")
+  chk("and the server is reused, not started again", running("tyfake", tmp) == 1,
+      running("tyfake", tmp) .. " running")
   pcall(vim.cmd, "bwipeout!")
 end
 
