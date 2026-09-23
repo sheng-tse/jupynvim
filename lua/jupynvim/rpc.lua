@@ -141,6 +141,7 @@ function Client:_dispatch(val)
     return
   end
   local kind = val[1]
+  self.heard = true   -- the backend is up and speaking msgpack
   if kind == 1 then
     bump(M.stats.inc, "<response>")
     local msgid, err, result = val[2], val[3], val[4]

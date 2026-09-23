@@ -114,11 +114,12 @@ end
 -- production does, through client_for, with the actual spawn stubbed out.
 local RPC = require("jupynvim.rpc")
 local orig_spawn = RPC.spawn
-local spawn_exit                     -- captured on_exit, to simulate 127
+local spawn_exit                     -- captured on_exit, to simulate a dying spawn
+local spawned                        -- the stub client, to mark it as having answered
 ---@diagnostic disable-next-line: duplicate-set-field
 RPC.spawn = function(o)
   spawn_exit = o.on_exit
-  return {
+  spawned = {
     job = 1,
     on = function() end,
     stop = function() end,
@@ -128,6 +129,7 @@ RPC.spawn = function(o)
     -- mode, which needs nothing else from us.
     call_sync = function() return "no tty in headless test" end,
   }
+  return spawned
 end
 
 -- Returns (probe round trips, total round trips). Only the probes are what
@@ -181,26 +183,43 @@ else
   ok("warm verify with unchanged binary: 0 ssh round trips")
 end
 
+local HOST, CORE = J.config.remote.probehost.host, J.config.remote.probehost.core_path
+
 -- the record must survive a fresh nvim session, not just this one
-local rec = J._deploy_record_get("probehost")
+local rec = J._deploy_record_get("probehost", HOST, CORE)
 if not rec or rec.sha ~= _G.__local_sha or rec.arch ~= "x86_64" then
   fail("deploy record not persisted correctly: " .. vim.inspect(rec))
 else
   ok("deploy record persisted (arch=" .. rec.arch .. ")")
 end
 
--- ---- 3. a 127 spawn drops the record ----------------------------------
-if spawn_exit then spawn_exit(127) end
-if J._deploy_record_get("probehost") ~= nil then
-  fail("a spawn exiting 127 must drop the deploy record (binary is gone)")
-else
-  ok("spawn exit 127 dropped the deploy record")
+-- ---- 3. a spawn that dies before answering drops the record -----------
+-- 127 missing binary, 126 wrong arch, 2 srun, 1 tcsh: all say the record lied
+for _, code in ipairs({ 127, 126, 2, 1 }) do
+  verify("before " .. code)
+  if spawn_exit then spawn_exit(code) end
+  vim.wait(50)
+  if J._deploy_record_get("probehost", HOST, CORE) ~= nil then
+    fail(("a spawn dying with %d before it answered must drop the deploy record"):format(code))
+  else
+    ok(("spawn dying with %d before answering dropped the deploy record"):format(code))
+  end
 end
-local n3 = verify("after 127")
+local n3 = verify("after a failed spawn")
 if n3 ~= 1 then
-  fail("after a 127 the next verify must re-probe exactly once, made " .. n3)
+  fail("after a failed spawn the next verify must re-probe exactly once, made " .. n3)
 else
-  ok("after 127 the next verify re-probed (" .. n3 .. " round trip)")
+  ok("after a failed spawn the next verify re-probed (" .. n3 .. " round trip)")
+end
+-- a backend that answered and later went away (stopped, link cut) says
+-- nothing about the binary; clearing then would cost a probe every reconnect
+spawned.heard = true
+if spawn_exit then spawn_exit(255) end
+vim.wait(50)
+if J._deploy_record_get("probehost", HOST, CORE) == nil then
+  fail("a backend that answered and then exited must keep the deploy record")
+else
+  ok("a backend exiting after it answered keeps the record")
 end
 
 -- ---- 4. a changed binary re-probes and re-uploads ----------------------
@@ -216,6 +235,31 @@ if uploaded ~= 1 then
   fail("a changed local binary must be re-uploaded, uploads=" .. uploaded)
 else
   ok("changed binary was re-uploaded")
+end
+
+-- ---- 4b. the record vouches for one path on one host ------------------
+do
+  local n = select(2, verify("warm again"))
+  if n ~= 0 then fail("setup: expected a warm verify, made " .. n) end
+  J.config.remote.probehost.core_path = "~/bin/jupynvim-core"
+  local probes = verify("new core_path")
+  if probes ~= 1 then
+    fail(("a changed core_path must be probed, not trusted to the old record (%d probes)"):format(probes))
+  else
+    ok("a changed core_path is probed, not taken on the old record")
+  end
+  J.config.remote.probehost.core_path = CORE
+end
+
+-- ---- 4c. :JupynvimDisconnect forgets the record -------------------------
+do
+  verify("before disconnect")
+  pcall(J.disconnect, "probehost")
+  if J._deploy_record_get("probehost", HOST, CORE) ~= nil then
+    fail("disconnect must drop the deploy record, so a reconnect checks the remote")
+  else
+    ok("disconnect drops the deploy record")
+  end
 end
 
 -- ---- 5. a newer-but-older artifact counts as stale ---------------------
@@ -259,6 +303,28 @@ do
 
   J._plugin_root = orig_root
   vim.fn.delete(root, "rf")
+end
+
+-- ---- 6. the version marker is really in a built binary ------------------
+-- artifact_version greps for main.rs's startup log line. Rewording that line
+-- would switch the staleness check off without a sound, so read a real build.
+do
+  local bin = J._plugin_root() .. "/core/target/release/jupynvim-core"
+  local want
+  for line in io.lines(J._plugin_root() .. "/core/Cargo.toml") do
+    want = want or line:match('^version%s*=%s*"([^"]+)"')
+  end
+  if vim.fn.filereadable(bin) == 1 then
+    local got = J._artifact_version(bin)
+    if got ~= want then
+      fail(("a real build must carry its version where artifact_version looks (got %s, want %s)")
+        :format(tostring(got), tostring(want)))
+    else
+      ok("the built binary carries its version where artifact_version looks")
+    end
+  else
+    io.write("  skip version marker: core not built\n")
+  end
 end
 
 -- ---- restore -----------------------------------------------------------

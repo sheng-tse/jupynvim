@@ -170,6 +170,7 @@ local function linux_core_stale(triple)
   return false
 end
 M._core_source_mtime = core_source_mtime   -- exposed for tests
+M._artifact_version = artifact_version
 M._linux_core_stale = linux_core_stale     -- exposed for tests
 
 -- Cross-build the linux binary HERE if it has fallen behind the source. We
@@ -223,15 +224,20 @@ local function deploy_records_write(all)
   f:write(vim.json.encode(all)); f:close()
 end
 
-function M._deploy_record_get(alias)
+-- The record vouches for one file on one host. An alias pointed at a new
+-- host, or a profile given a new core_path, is a different target, and the
+-- record must not answer for it.
+function M._deploy_record_get(alias, host, core_path)
   local r = deploy_records()[alias]
-  if type(r) == "table" and r.arch and r.sha then return r end
+  if type(r) == "table" and r.arch and r.sha and r.host == host and r.core_path == core_path then
+    return r
+  end
   return nil
 end
 
-function M._deploy_record_set(alias, arch, sha)
+function M._deploy_record_set(alias, arch, sha, host, core_path)
   local all = deploy_records()
-  all[alias] = { arch = arch, sha = sha }
+  all[alias] = { arch = arch, sha = sha, host = host, core_path = core_path }
   deploy_records_write(all)
 end
 
@@ -292,9 +298,10 @@ local function ensure_remote_binary(alias, profile)
   --      instead of two.
   --
   -- Correctness rests on the record only ever being written after the remote
-  -- copy is confirmed to hold that sha, and being dropped when a spawn fails
-  -- with 127 because the binary is missing. spawn_client's on_exit does that.
-  local record = M._deploy_record_get(alias) or {}
+  -- copy is confirmed to hold that sha, naming the host and path it vouches
+  -- for, and being dropped when a spawn dies before the backend answers.
+  -- spawn_client's on_exit does that.
+  local record = M._deploy_record_get(alias, profile.host, core_path) or {}
 
   -- Resolve the local artifact for a known arch, keeping it in step with the
   -- source first. Returns nil when we cannot produce one.
@@ -311,14 +318,16 @@ local function ensure_remote_binary(alias, profile)
     return bin, (vim.fn.system({ "shasum", "-a", "256", bin }) or ""):match("^(%x+)")
   end
 
-  -- (1) Zero-round-trip path. A host's architecture does not change, so a
-  -- remembered one is safe to reuse; if it were ever wrong the sha would not
-  -- match and we would fall through to the probe below anyway.
+  -- (1) Zero-round-trip path. If the host behind the alias changed arch, the
+  -- remembered arch and sha still agree with each other, so that is caught
+  -- only when the spawn dies before answering and on_exit drops the record.
   local arch, remote_sha
+  local have  -- { triple, bin, sha } already resolved, so it is not built twice
   if record.arch and record.sha and ARCH_TRIPLE[record.arch] then
     local bin, sha = local_artifact(ARCH_TRIPLE[record.arch])
     if bin and sha and sha == record.sha then return end  -- already deployed
     arch = record.arch
+    have = { triple = ARCH_TRIPLE[record.arch], bin = bin, sha = sha }
   end
 
   -- (2) One channel for both probes rather than two.
@@ -332,10 +341,15 @@ local function ensure_remote_binary(alias, profile)
                " - deploy jupynvim-core manually (profile.core_path)", vim.log.levels.WARN)
     return
   end
-  local local_bin, local_sha = local_artifact(triple)
+  local local_bin, local_sha
+  if have and have.triple == triple then
+    local_bin, local_sha = have.bin, have.sha
+  else
+    local_bin, local_sha = local_artifact(triple)
+  end
   if not local_bin or not local_sha then return end
   if remote_sha == local_sha then                  -- already current
-    M._deploy_record_set(alias, arch, local_sha)
+    M._deploy_record_set(alias, arch, local_sha, profile.host, core_path)
     return
   end
 
@@ -354,7 +368,7 @@ local function ensure_remote_binary(alias, profile)
     return
   end
   ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. marker_q })
-  M._deploy_record_set(alias, arch, local_sha)
+  M._deploy_record_set(alias, arch, local_sha, profile.host, core_path)
   vim.notify("jupynvim: backend updated on " .. alias .. " (" .. local_sha:sub(1, 12) .. ")",
              vim.log.levels.INFO)
 end
@@ -369,7 +383,8 @@ M.clients = M.clients or {}
 -- with TTY attach + event handlers. Stores in M.clients[alias] for routing.
 local function spawn_client(cmd_vec, alias)
   Log.info(string.format("spawning core (%s): %s", alias, table.concat(cmd_vec, " ")))
-  local client = RPC.spawn({
+  local client
+  client = RPC.spawn({
     cmd = cmd_vec,
     env = vim.tbl_extend("force", vim.fn.environ(), {
       JUPYNVIM_LOG = M.config.log_level,
@@ -377,11 +392,14 @@ local function spawn_client(cmd_vec, alias)
     on_exit = function(code)
       M.clients[alias] = nil
       if alias == "local" then M.client = nil end
-      -- 127 is the remote shell's "command not found": the binary we believed
-      -- was deployed is gone (someone cleaned ~/.local/bin, a scratch purge,
-      -- a different home). Drop the record so the next spawn re-probes and
-      -- re-uploads instead of trusting a stale "already deployed".
-      if code == 127 and alias ~= "local" then
+      -- A remote backend that died before it ever answered did not start,
+      -- and the deploy record that skipped the probe was wrong about it: the
+      -- binary is gone (127), built for another arch (126), or the shell or
+      -- srun said so another way (1, 2). Drop the record so the next connect
+      -- probes and re-uploads. Only an early death counts. A backend that
+      -- answered and later exits, stopped or cut off, says nothing about
+      -- the binary, and clearing then would cost a probe on every reconnect.
+      if alias ~= "local" and code ~= 0 and not (client and client.heard) then
         pcall(M._deploy_record_clear, alias)
         if M._binary_verified then M._binary_verified[alias] = nil end
       end
@@ -928,6 +946,8 @@ function M.disconnect(alias)
   M._session_cwd[alias] = nil
   M._resolved_home[alias] = nil
   if M._binary_verified then M._binary_verified[alias] = nil end
+  -- and the next connect checks the remote binary again
+  pcall(M._deploy_record_clear, alias)
   vim.notify("jupynvim: " .. alias .. " control socket closed")
 end
 
