@@ -116,9 +116,24 @@ end
 
 -- ---------- per-cell placement state ----------
 
--- cell_id -> { image_id, rows, cols, png_hash }
+-- cell_id -> { image_id, rows, cols, png_hash, src_hash, want }
 local placements = {}
 M._placements = placements
+
+-- Base64 as it arrives from a notebook can be a list of strings and can carry
+-- whitespace: a trailing newline from older Jupyter stacks and Colab, or one
+-- every 76 characters from base64.encodebytes. Every decoder downstream
+-- rejects whitespace. The plain finds keep the common, clean case to a memchr
+-- instead of a pattern scan over megabytes.
+function M.clean_b64(v)
+  if type(v) == "table" then v = table.concat(v, "") end
+  if type(v) ~= "string" then return nil end
+  if v:find("\n", 1, true) or v:find("\r", 1, true)
+     or v:find(" ", 1, true) or v:find("\t", 1, true) then
+    v = (v:gsub("%s+", ""))
+  end
+  return v
+end
 
 local rpc_client = nil
 function M.set_client(c) rpc_client = c end
@@ -603,17 +618,37 @@ function M.resume_animations()
 end
 function M.animations_paused() return M._anim_paused end
 
+-- Is the image the caller would ask for already transmitted for this cell?
+-- Keyed on the request, the source bytes and the renderer asked for, not on
+-- what was stored: a jpeg or gif is stored as its converted png, and a failed
+-- conversion is stored as chafa, so comparing against the stored image missed
+-- on every render and redid the work.
+function M.is_cached(cell_id, b64, renderer)
+  local p = placements[cell_id]
+  return p ~= nil and p.src_hash == quick_hash(b64) and p.want == (renderer or "chafa")
+end
+
 function M.ensure_transmitted(cell_id, b64, callback, opts)
   opts = opts or {}
-  b64 = (b64 or ""):gsub("%s", "")
   local renderer = opts.renderer or "chafa"
   local mime = opts.mime
-  local h = quick_hash(b64)
+  local src_hash = opts._src_hash or quick_hash(b64)
+  local want = opts._want or renderer
   local existing = placements[cell_id]
-  if existing and existing.png_hash == h and existing.renderer == renderer then
+  if existing and existing.src_hash == src_hash and existing.want == want then
     callback(existing.image_id)
     return
   end
+  -- Outputs are cleaned once when they enter the model. This covers anything
+  -- that did not come through there, and only runs on a miss, where a
+  -- transmit already costs time linear in the image.
+  b64 = M.clean_b64(b64)
+  if not b64 or b64 == "" then
+    callback(nil)
+    return
+  end
+  opts._src_hash, opts._want = src_hash, want
+  local h = quick_hash(b64)
   -- Convert non-PNG to PNG if needed for placeholder/kitty renderers.
   -- chafa accepts any format directly via tempfile.
   -- If conversion fails (no magick, or unsupported source), fall through to
@@ -651,7 +686,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
       return
     end
     local p = {
-      image_id = id, png_hash = h, b64 = b64,
+      image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
       placement_id = 1, renderer = "placeholder",
       rows = PLACEHOLDER_ROWS, cols = PLACEHOLDER_COLS,
     }
@@ -688,7 +723,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     ascii_art_for(b64, function(lines)
       if lines then
         placements[cell_id] = {
-          image_id = id, png_hash = h, b64 = b64,
+          image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
           ascii_lines = lines, placement_id = id, renderer = "chafa",
         }
         callback(id)
@@ -705,7 +740,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     return
   end
   placements[cell_id] = {
-    image_id = id, png_hash = h, b64 = b64,
+    image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
     placement_id = id, placed_row = nil, placed_col = nil,
     renderer = "kitty",
   }

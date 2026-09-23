@@ -1941,12 +1941,15 @@ function M.save_image(buf, path)
     end
   end
   if not b64 then
+    -- A fixed preference, raster first. pairs() order varies between runs, so
+    -- an output carrying both png and svg sometimes picked the svg, which is
+    -- XML rather than base64, and the decode failed.
     for _, o in ipairs(cell.outputs or {}) do
       local d = (o.output_type == "execute_result" or o.output_type == "display_data") and o.data or nil
       if d then
-        for k, v in pairs(d) do
-          if k:match("^image/") then
-            b64 = type(v) == "table" and table.concat(v, "") or v
+        for _, k in ipairs({ "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" }) do
+          if d[k] ~= nil then
+            b64 = type(d[k]) == "table" and table.concat(d[k], "") or d[k]
             mime = k
             break
           end
@@ -1955,7 +1958,8 @@ function M.save_image(buf, path)
       end
     end
   end
-  if not b64 then
+  if mime ~= "image/svg+xml" then b64 = Image.clean_b64(b64) end
+  if not b64 or b64 == "" then
     vim.notify("jupynvim: no image in this cell", vim.log.levels.WARN)
     return
   end
@@ -1969,7 +1973,8 @@ function M.save_image(buf, path)
   end
   path = vim.fn.fnamemodify(path, ":p")
 
-  local raw_ok, raw = pcall(vim.base64.decode, (b64:gsub("%s", "")))
+  local raw_ok, raw = true, b64
+  if mime ~= "image/svg+xml" then raw_ok, raw = pcall(vim.base64.decode, b64) end
   if not raw_ok or not raw then
     vim.notify("jupynvim: failed to decode image", vim.log.levels.ERROR)
     return

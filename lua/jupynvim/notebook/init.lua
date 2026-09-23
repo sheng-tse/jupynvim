@@ -202,6 +202,18 @@ function M.saved_duration_ns(meta)
   return (b - a) * 1e9
 end
 
+-- Clean base64 image data once, when an output enters the model, so render
+-- (which runs per keystroke) never rescans or rejoins it. The backend keeps
+-- its own copy of every output for saving, so the .ipynb is untouched.
+local B64_IMAGE = { "image/png", "image/jpeg", "image/gif" }
+function M.normalize_output_data(data)
+  if type(data) ~= "table" then return end
+  local clean = require("jupynvim.notebook.image").clean_b64
+  for _, mime in ipairs(B64_IMAGE) do
+    if data[mime] ~= nil then data[mime] = clean(data[mime]) end
+  end
+end
+
 local notebooks = {}   -- buf -> Notebook
 
 local Notebook = {}
@@ -229,6 +241,7 @@ function M.create(buf, path, session_id, snapshot)
     if c.cell_type == "markdown" then
       source = Embedded.preprocess(c.id, source)
     end
+    for _, o in ipairs(c.outputs or {}) do M.normalize_output_data(o.data) end
     table.insert(nb.cells, {
       id = c.id,
       cell_type = c.cell_type,
@@ -381,6 +394,7 @@ function Notebook:get_cell(cell_id)
 end
 
 function Notebook:apply_cell_event(cell_id, ev)
+  M.normalize_output_data(ev.data)
   local c = self:get_cell(cell_id)
   if not c then return end
   local kind = ev.kind

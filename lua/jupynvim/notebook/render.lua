@@ -522,8 +522,11 @@ function M.place_images(nb, cell, range, win, gut)
     return
   end
   local renderer = (require("jupynvim").config.image_renderer) or "chafa"
-  local was_cached = (image._placements and image._placements[cell.id]
-    and image._placements[cell.id].renderer == renderer)
+  -- Only a fresh transmit needs the follow-up refresh. Deciding that from the
+  -- stored renderer looped forever when a jpeg fell back to chafa: the stored
+  -- renderer never matched the one asked for, so every render scheduled
+  -- another.
+  local was_cached = image.is_cached(cell.id, b64, renderer)
   image.ensure_transmitted(cell.id, b64, function(id)
     if not id then return end
     nb.image_ids[cell.id] = id

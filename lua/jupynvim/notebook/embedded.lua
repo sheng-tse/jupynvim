@@ -28,7 +28,8 @@ local function find_data_uri(s, init)
   local url_end = s:find(")", b64_marker, true)
   if not url_end then return nil end
   local alt = s:sub(bs + 2, alt_end - 1)
-  local b64 = s:sub(b64_marker + 8, url_end - 1)
+  -- a long data URI may be wrapped across lines; the source keeps it as is
+  local b64 = require("jupynvim.notebook.image").clean_b64(s:sub(b64_marker + 8, url_end - 1))
   return {
     match_start = bs,
     match_end = url_end,
