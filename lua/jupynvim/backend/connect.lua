@@ -340,7 +340,9 @@ local function ensure_remote_binary(alias, profile)
   end
 
   -- (2) One channel for both probes rather than two.
-  local probe = ssh({ 'uname -m; cat ' .. marker_q .. ' 2>/dev/null' })
+  -- The marker is read only while the binary it vouches for is there, so a
+  -- binary removed on its own is uploaded again rather than trusted forever.
+  local probe = ssh({ 'uname -m; test -x ' .. core_q .. ' && cat ' .. marker_q .. ' 2>/dev/null' })
   local lines = vim.split(probe or "", "\n", { plain = true })
   arch = (lines[1] or ""):match("(%S+)") or arch or "x86_64"
   remote_sha = (lines[2] or ""):match("(%x+)") or ""
@@ -390,7 +392,9 @@ M.clients = M.clients or {}
 
 -- Internal: spawn a backend process with the given cmd vector and wire it up
 -- with TTY attach + event handlers. Stores in M.clients[alias] for routing.
-local function spawn_client(cmd_vec, alias)
+-- `trust` is set when the verify this spawn follows took the deploy record's
+-- word with no probe. Spawns until the next verify share it.
+local function spawn_client(cmd_vec, alias, trust)
   Log.info(string.format("spawning core (%s): %s", alias, table.concat(cmd_vec, " ")))
   local client
   client = RPC.spawn({
@@ -399,19 +403,26 @@ local function spawn_client(cmd_vec, alias)
       JUPYNVIM_LOG = M.config.log_level,
     }),
     on_exit = function(code)
-      M.clients[alias] = nil
-      if alias == "local" then M.client = nil end
+      -- :JupynvimUseJob and a reconnect stop the old backend and spawn the
+      -- new one at once. The old one's exit arrives after, and must not
+      -- take the new one out of routing.
+      if M.clients[alias] == client then M.clients[alias] = nil end
+      if alias == "local" and M.client == client then M.client = nil end
       -- A remote backend that died before it ever answered did not start.
-      -- 127 always means the binary is gone. Any other early death (126 for
-      -- another arch, 2 from srun, 1 from tcsh) counts against the deploy
-      -- record only when this spawn trusted it without a probe. ssh's own
-      -- 255 (no master yet, refused auth, our own stop) and a failing srun
-      -- or setup_cmd say nothing about the binary, and dropping the record
-      -- for them put the 20-50s probe back on every later connect. A backend
-      -- that answered and later exits says nothing about the binary either.
+      -- That counts against the deploy record only when the spawn rested on
+      -- the record alone: 127 for a binary gone, 126 for another arch. After
+      -- a probe found the binary, or once any backend under the same verify
+      -- answered, an early death is srun rejecting a job, a failing setup_cmd,
+      -- which exits 127 too for a command the login shell lacks, or ssh's own
+      -- 255, and dropping the record put the 20-50s probe back on every
+      -- later connect. A backend that answered and later exits says nothing
+      -- about the binary either.
       if alias ~= "local" and code ~= 0 and not (client and client.heard) then
-        local trusted = M._record_trusted and M._record_trusted[alias]
-        if code == 127 or (trusted and code ~= 255) then
+        local trusted = trust ~= nil
+        for _, c in ipairs(trust and trust.spawns or {}) do
+          if c.heard then trusted = false; break end
+        end
+        if trusted and code ~= 255 then
           pcall(M._deploy_record_clear, alias)
         end
         if M._binary_verified then M._binary_verified[alias] = nil end
@@ -422,6 +433,7 @@ local function spawn_client(cmd_vec, alias)
       end)
     end,
   })
+  if trust then table.insert(trust.spawns, client) end
   -- Attach the controlling TTY for native Kitty graphics. Local mode is
   -- attempted first; for SSH-remote backends the local-mode attempt fails
   -- (backend is on a different host) and Image.attach auto-falls-back to
@@ -581,15 +593,15 @@ function M.client_for(alias)
   M._binary_verified = M._binary_verified or {}
   if not M._binary_verified[alias] then
     local okp, trusted = pcall(ensure_remote_binary, alias, profile)
-    -- whether this spawn rests on the deploy record alone, with no probe
+    -- set when this verify rests on the deploy record alone, with no probe
     M._record_trusted = M._record_trusted or {}
-    M._record_trusted[alias] = (okp and trusted == true) or nil
+    M._record_trusted[alias] = (okp and trusted == true) and { spawns = {} } or nil
     M._binary_verified[alias] = true
   end
   -- Attach alias as `label` so build_ssh_cmd can find the cached slurm string.
   local spec = vim.tbl_extend("force", {}, profile, { label = alias })
   local cmd = M._resolve(spec.transport_cmd, spec) or M._build_ssh_cmd(spec)
-  return spawn_client(cmd, alias)
+  return spawn_client(cmd, alias, M._record_trusted and M._record_trusted[alias])
 end
 
 -- Point the "active" client at a remote alias's backend. Reuses the

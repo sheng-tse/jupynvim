@@ -243,6 +243,68 @@ if J._deploy_record_get("probehost", HOST, CORE) == nil then
 else
   ok("a backend exiting after it answered keeps the record")
 end
+-- the respawn behind it runs no verify, as from :JupynvimUseJob with the
+-- master up or a reopen after the backend exited. It rests on a binary that answered,
+-- not on the record, so srun rejecting an expired job there is not the binary's
+J.clients.probehost = nil
+pcall(J.client_for, "probehost")
+if spawn_exit then spawn_exit(1) end
+vim.wait(50)
+if J._deploy_record_get("probehost", HOST, CORE) == nil then
+  fail("a respawn after a trusted backend answered must not drop the record when it dies with 1")
+else
+  ok("a respawn after a trusted backend answered keeps the record when srun fails")
+end
+-- a trusted spawn stopped before it answered proved nothing, so the respawn
+-- behind it still rests on the record alone and its early death counts
+verify("re-probe before a stop")
+verify("trusted before a stop")
+local stopped_exit = spawn_exit
+J.clients.probehost = nil
+pcall(J.client_for, "probehost")
+if stopped_exit then stopped_exit(255) end
+if spawn_exit then spawn_exit(1) end
+vim.wait(50)
+if J._deploy_record_get("probehost", HOST, CORE) ~= nil then
+  fail("a respawn behind a trusted spawn that never answered must drop the record when it dies with 1")
+else
+  ok("a respawn behind a trusted spawn that never answered still drops the record")
+end
+-- after a probe found the binary, 127 is a setup_cmd whose command the login
+-- shell lacks, like conda activate, not the binary, and every connect probed again
+verify("re-probe before a setup_cmd 127")
+if spawn_exit then spawn_exit(127) end
+vim.wait(50)
+if J._deploy_record_get("probehost", HOST, CORE) == nil then
+  fail("a spawn that followed a probe must keep the record when it dies with 127")
+else
+  ok("a spawn that followed a probe keeps the record when it dies with 127")
+end
+-- and the probe vouches for the marker only while the binary is there
+do
+  local last = probe_cmds[#probe_cmds] or ""
+  if last:match("test %-x") then
+    ok("the probe reads the marker only when the binary exists")
+  else
+    fail("the probe must check the binary exists before trusting its marker: " .. last)
+  end
+end
+-- :JupynvimUseJob stops the old backend and spawns the new one at once; the
+-- old one's exit arrives after and took the new one out of routing
+do
+  J.clients.probehost = nil
+  pcall(J.client_for, "probehost")
+  local old_exit = spawn_exit
+  J.clients.probehost = nil
+  local new = J.client_for("probehost")
+  if old_exit then old_exit(255) end
+  vim.wait(50)
+  if J.clients.probehost ~= new then
+    fail("an old backend's exit must not unregister the one that replaced it")
+  else
+    ok("an old backend's exit leaves the one that replaced it in place")
+  end
+end
 
 -- the real RPC client marks a backend that has spoken at all
 do
