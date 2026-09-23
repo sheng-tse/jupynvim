@@ -360,6 +360,11 @@ require("jupynvim").setup({
   image_rows = 16,
   image_cols = 48,
 
+  -- Longest output rendered per cell. A longer one shows its head and tail
+  -- with a marker between them, and <leader>no expands it. The .ipynb keeps
+  -- everything. 0 renders all of it.
+  max_output_lines = 500,
+
   -- Override the path to the jupynvim-core binary. Auto-detected from the
   -- plugin directory if unset.
   core_path = nil,
