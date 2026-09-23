@@ -2,7 +2,7 @@
 # Comprehensive test runner for jupynvim.
 #
 # Runs:
-#   1. cargo test (Rust unit tests)
+#   1. cargo test (Rust unit tests), then cargo build --release
 #   2. backend_integration.py (Python harness against jupynvim-core)
 #   3. lua_e2e.lua (headless Neovim Lua tests)
 #   4. cellui_spec.lua + markdown_spec.lua + remote_hl_spec.lua (headless
@@ -21,16 +21,6 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
-
-# Activate the conda env so cargo/python deps are available. conda's activate
-# functions reference unset vars, so they abort under `set -u` (which silently
-# killed the whole suite in non-interactive / CI shells). Relax set -u just for
-# the activation.
-set +u
-# shellcheck disable=SC1091
-[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate jupynvim 2>/dev/null
-set -u
 
 PASS=0
 FAIL=0
@@ -57,26 +47,38 @@ echo "  jupynvim — comprehensive test suite"
 echo "==================================================="
 
 # ── 1. Rust ─────────────────────────────────────────────
+# Runs BEFORE conda is activated. The jupynvim env exports CC, LD and LDFLAGS
+# for its own clang, whose linker cannot read a newer macOS SDK, so anything
+# cargo has to relink fails there. A warm target/ hid that until a rebuild.
+# The exit status is taken inside the subshell: outside it, PIPESTATUS only
+# holds the subshell's own status, which is tail's, which is always 0.
 echo
-echo "── 1/3 cargo test (Rust unit tests) ─"
-( cd core && cargo test --release 2>&1 | tail -20 )
-section "cargo test" "${PIPESTATUS[0]}"
+echo "── 1/5 cargo test + build (Rust) ─"
+( cd core && cargo test --release 2>&1 | tail -20; exit "${PIPESTATUS[0]}" )
+section "cargo test" "$?"
+# Always build, so every later section drives the binary the source describes
+# rather than whatever was built last. A no-op when nothing changed.
+( cd core && cargo build --release 2>&1 | tail -3; exit "${PIPESTATUS[0]}" )
+section "cargo build" "$?"
 
-# Build release binary if not present
-if [ ! -x "$ROOT/core/target/release/jupynvim-core" ]; then
-  echo "Building jupynvim-core..."
-  ( cd core && cargo build --release 2>&1 | tail -3 )
-fi
+# Activate the conda env for the Python deps. conda's activate functions
+# reference unset vars, so they abort under `set -u` (which silently killed the
+# whole suite in non-interactive / CI shells). Relax set -u just for this.
+set +u
+# shellcheck disable=SC1091
+[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
+conda activate jupynvim 2>/dev/null
+set -u
 
 # ── 2. Backend integration ──────────────────────────────
 echo
-echo "── 2/3 backend integration (Python ↔ Rust binary) ─"
+echo "── 2/5 backend integration (Python ↔ Rust binary) ─"
 python tests/backend_integration.py
 section "backend integration" "$?"
 
 # ── 3. Lua e2e ──────────────────────────────────────────
 echo
-echo "── 3/3 lua e2e (headless nvim) ─"
+echo "── 3/5 lua e2e (headless nvim) ─"
 STATUS_FILE="$(mktemp -t jupynvim_lua_status.XXXXXX)"
 JUPYNVIM_TEST_STATUS_FILE="$STATUS_FILE" \
   nvim --headless -u NONE -c "luafile $ROOT/tests/lua_e2e.lua" -c 'qa!' 2>&1
@@ -112,9 +114,12 @@ hl_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/remote_hl_spec.lua" -c 
 echo "$hl_out" | tail -1
 echo "$hl_out" | grep -q "ALL REMOTE-HL CHECKS PASSED"
 section "remote-hl spec" "$?"
-# These signal failure with `cquit 1`, so the exit code is the verdict.
+# These exit on their own, `qa!` when they pass and `cquit 1` when a check
+# fails, so the exit code is the verdict. The trailing `cquit 3` only runs when
+# the spec never reached its own exit: a Lua error aborts the chunk, and with a
+# plain `qa!` there that crash used to count as a pass.
 for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec deploy_probe_spec; do
-  out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'qa!' 2>&1)
+  out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'cquit 3' 2>&1)
   rc=$?
   echo "$out" | tail -1
   section "$spec" "$rc"

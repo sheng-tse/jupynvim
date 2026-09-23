@@ -14,7 +14,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v tmux >/dev/null || { echo "SKIP remote_hl_screen: no tmux"; exit 0; }
 
-INIT="$ROOT/tests/.hlscreen_init.lua"
+WORK="$(mktemp -d -t jupynvim_hl.XXXXXX)"
+INIT="$WORK/init.lua"
 cat > "$INIT" <<LUA
 vim.opt.runtimepath:prepend("$ROOT")
 vim.o.termguicolors = true
@@ -25,13 +26,13 @@ LUA
 
 S="jupy_hl_$$"
 CAP_RAW() { tmux capture-pane -t "$S" -p -e; }   # -e keeps SGR escapes
-cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -f "$INIT"; }
+cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
 
 tmux kill-session -t "$S" 2>/dev/null
 tmux new-session -d -s "$S" -x 120 -y 40
 tmux set-option -t "$S" status off
-tmux send-keys -t "$S" "cd $ROOT && nvim -u $INIT" Enter
+tmux send-keys -t "$S" "cd $ROOT && XDG_STATE_HOME=$WORK/state XDG_CACHE_HOME=$WORK/cache nvim -u $INIT" Enter
 sleep 2
 
 fails=0

@@ -270,6 +270,7 @@ vim.fn.delete(tmp, "rf")
 
 if fails == 0 then
   io.write("\nALL DEPLOY-PROBE CHECKS PASSED\n")
+  vim.cmd("qa!")
 else
   io.write(("\nDEPLOY-PROBE: %d CHECK(S) FAILED\n"):format(fails))
   vim.cmd("cquit 1")

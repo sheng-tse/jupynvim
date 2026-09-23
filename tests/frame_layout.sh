@@ -11,7 +11,12 @@ BIN="$ROOT/core/target/release/jupynvim-core"
 [ -x "$BIN" ] || { echo "SKIP frame_layout: build core first ($BIN)"; exit 0; }
 command -v tmux >/dev/null || { echo "SKIP frame_layout: no tmux"; exit 0; }
 
-INIT="$ROOT/tests/.frame_init.lua"
+# Everything this run writes lives in its own directory: the init file, the
+# screen captures, and nvim's state and cache. Shared fixed paths let two runs
+# overwrite each other's captures, and the real state dir let a cursor
+# position persisted by an earlier run move the view this test measures.
+WORK="$(mktemp -d -t jupynvim_frame.XXXXXX)"
+INIT="$WORK/init.lua"
 cat > "$INIT" <<LUA
 vim.opt.runtimepath:prepend("$ROOT")
 vim.o.number = true
@@ -26,7 +31,9 @@ CAP() { tmux capture-pane -t "$S" -p; }
 tmux kill-session -t "$S" 2>/dev/null
 tmux new-session -d -s "$S" -x 160 -y 45
 tmux set-option -t "$S" status off
-tmux send-keys -t "$S" "cd $ROOT && nvim -u $INIT examples/demo.ipynb" Enter
+cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
+trap cleanup EXIT
+tmux send-keys -t "$S" "cd $ROOT && XDG_STATE_HOME=$WORK/state XDG_CACHE_HOME=$WORK/cache nvim -u $INIT examples/demo.ipynb" Enter
 
 # poll until the notebook actually renders (a box corner appears), up to ~20s
 rendered=0
@@ -36,7 +43,7 @@ for _ in $(seq 1 20); do
 done
 if [ "$rendered" -ne 1 ]; then
   echo "FAIL: notebook never rendered (no box corner in 20s)"; CAP | head -5
-  tmux kill-session -t "$S" 2>/dev/null; rm -f "$INIT"; exit 1
+  exit 1
 fi
 
 # deterministically bring cell #8 (the for-loop) into view and center it
@@ -44,27 +51,27 @@ tmux send-keys -t "$S" Escape; sleep 0.3
 tmux send-keys -t "$S" "gg"; sleep 0.3
 tmux send-keys -t "$S" "/for i in range(5)" Enter; sleep 0.4
 tmux send-keys -t "$S" "zz"; sleep 0.6
-CAP > /tmp/fl_baseline.txt
+CAP > "$WORK/fl_baseline.txt"
 
 # 1) terminal split, exit term-mode, back to the notebook, LEAVE the term open
 tmux send-keys -t "$S" ":botright 10split | terminal" Enter; sleep 2
 tmux send-keys -t "$S" C-\\ C-n; sleep 0.4
 tmux send-keys -t "$S" C-w k; sleep 1.0
 tmux send-keys -t "$S" "k" "j"; sleep 0.6
-CAP > /tmp/fl_after_term.txt
+CAP > "$WORK/fl_after_term.txt"
 
 # 2) floating window over the notebook, then close it
 tmux send-keys -t "$S" ":lua _G.__fw=vim.api.nvim_open_win(vim.api.nvim_create_buf(false,true),true,{relative='editor',row=3,col=6,width=70,height=14,style='minimal',border='single'})" Enter
 sleep 1
 tmux send-keys -t "$S" ":lua vim.api.nvim_win_close(_G.__fw,true)" Enter; sleep 0.6
 tmux send-keys -t "$S" "k" "j"; sleep 0.6
-CAP > /tmp/fl_after_float.txt
+CAP > "$WORK/fl_after_float.txt"
 
 tmux kill-session -t "$S" 2>/dev/null
-rm -f "$INIT"
 
-python3 - <<'PY'
-import sys
+WORK="$WORK" python3 - <<'PY'
+import os, sys
+W = os.environ["WORK"]
 def cols(path):
     lines = open(path, encoding="utf-8").read().splitlines()
     hdr = next((l for l in lines if "#8" in l and "╭" in l), None)
@@ -74,9 +81,9 @@ def cols(path):
     return hdr.index("╭"), src.index("│")
 
 fail = 0
-for name, path in [("baseline","/tmp/fl_baseline.txt"),
-                   ("after-terminal","/tmp/fl_after_term.txt"),
-                   ("after-float","/tmp/fl_after_float.txt")]:
+for name, path in [("baseline", f"{W}/fl_baseline.txt"),
+                   ("after-terminal", f"{W}/fl_after_term.txt"),
+                   ("after-float", f"{W}/fl_after_float.txt")]:
     hc, sc = cols(path)
     if hc is None:
         print(f"FAIL {name}: #8 header or source line not found"); fail += 1; continue

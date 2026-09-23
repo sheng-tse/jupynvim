@@ -189,6 +189,7 @@ chk("a bind pass while connected does not swallow your mapping",
 
 if fails == 0 then
   io.write("\nALL DISPATCH-KEY CHECKS PASSED\n")
+  vim.cmd("qa!")
 else
   io.write(("\nDISPATCH-KEYS: %d CHECK(S) FAILED\n"):format(fails))
   vim.cmd("cquit 1")
