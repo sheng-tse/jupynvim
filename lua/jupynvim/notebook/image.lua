@@ -627,6 +627,7 @@ local function stop_timer(p)
 end
 
 local inflight = {}  -- key -> "src_hash|renderer" of a transmit under way
+local gen = {}       -- key -> number of the newest transmit started for it
 
 -- Is the image the caller would ask for already transmitted for this cell?
 -- Keyed on the request, the source bytes and the renderer asked for, not on
@@ -636,6 +637,17 @@ local inflight = {}  -- key -> "src_hash|renderer" of a transmit under way
 function M.is_cached(cell_id, b64, renderer)
   local p = placements[cell_id]
   return p ~= nil and p.src_hash == quick_hash(b64) and p.want == (renderer or "chafa")
+end
+
+-- A newer request for this key started while this one was being sent: free
+-- this image and report nothing, so it does not cover the newer one.
+local function superseded(cell_id, opts, id, callback)
+  if opts._gen and gen[cell_id] ~= opts._gen then
+    kitty_call_async("kitty_clear_image", { image_id = id })
+    callback(nil)
+    return true
+  end
+  return false
 end
 
 function M.ensure_transmitted(cell_id, b64, callback, opts)
@@ -657,6 +669,11 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     local tag = tostring(src_hash) .. "|" .. want
     if inflight[cell_id] == tag then return end
     inflight[cell_id] = tag
+    -- A newer transmit for this key can start and finish inside this one's
+    -- wait, a frame loop for example. Whichever is older steps aside when it
+    -- lands (see superseded) instead of covering the newer image.
+    gen[cell_id] = (gen[cell_id] or 0) + 1
+    opts._gen = gen[cell_id]
     local done = callback
     callback = function(id)
       if inflight[cell_id] == tag then inflight[cell_id] = nil end
@@ -714,6 +731,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
       callback(nil)
       return
     end
+    if superseded(cell_id, opts, id, callback) then return end
     local p = {
       image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
       placement_id = 1, renderer = "placeholder",
@@ -751,6 +769,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
   if renderer == "chafa" and vim.fn.executable("chafa") == 1 then
     ascii_art_for(b64, function(lines)
       if lines then
+        if superseded(cell_id, opts, id, callback) then return end
         placements[cell_id] = {
           image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
           ascii_lines = lines, placement_id = id, renderer = "chafa",
@@ -768,6 +787,7 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     callback(nil)
     return
   end
+  if superseded(cell_id, opts, id, callback) then return end
   placements[cell_id] = {
     image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
     placement_id = id, placed_row = nil, placed_col = nil,
@@ -872,6 +892,11 @@ function M.output_key(cell_id, idx)
   key_owner[key] = cell_id
   return key
 end
+
+-- Is `key` still one of a cell's current image outputs? A local transmit
+-- waits in call_sync, and a render nested in that wait can find the output
+-- gone and drop the key before the image lands.
+function M.is_output_key_live(key) return key_owner[key] ~= nil end
 
 -- Free the output images of `cell_id` whose keys are not in `keep` (all of
 -- them when keep is nil). Markdown images are keyed separately and stay.

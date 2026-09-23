@@ -366,7 +366,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
       local Embedded = require("jupynvim.notebook.embedded")
       local src = cell.source or ""
       for _, img in ipairs(Embedded.list_images(cell.id) or {}) do
-        if src:find("jupynvim%-img:" .. img.idx, 1, false) then
+        if src:find("jupynvim%-img:" .. img.idx .. "%)") then
           local key = cell.id .. "_md_" .. img.idx
           local ph = image.placeholder_virt_lines(key)
           if ph then
@@ -401,10 +401,12 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
       local imgs = Embedded.list_images(cell.id)
       if imgs and #imgs > 0 then
         nb.image_ids = nb.image_ids or {}
+        local src = cell.source or ""
         for _, img in ipairs(imgs) do
           local key = cell.id .. "_md_" .. img.idx
           local renderer = (require("jupynvim").config.image_renderer) or "chafa"
-          if not nb.image_ids[key] then
+          -- a deleted image keeps its data for undo; send it only while shown
+          if not nb.image_ids[key] and src:find("jupynvim%-img:" .. img.idx .. "%)") then
             image.ensure_transmitted(key, img.b64, function(id)
               if id then
                 nb.image_ids[key] = id
@@ -536,6 +538,12 @@ function M.place_images(nb, cell, range, win, gut)
     local was_cached = image.is_cached(img.key, img.b64, renderer)
     image.ensure_transmitted(img.key, img.b64, function(id)
       if not id then return end
+      -- the output went away while its image was being sent: free it now,
+      -- nothing would ever clear it later, and a gif would animate forever
+      if not image.is_output_key_live(img.key) then
+        image.clear_for_cell(img.key)
+        return
+      end
       nb.image_ids[img.key] = id
       if renderer == "kitty" then
         vim.schedule(function()

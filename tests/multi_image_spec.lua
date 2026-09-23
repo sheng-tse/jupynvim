@@ -193,6 +193,90 @@ do
   close(buf, p)
 end
 
+-- ── an output that goes away while its image is being sent ──────────────
+-- A local transmit waits in call_sync, and a render nested in that wait can
+-- find the output gone. The image then landed for a key nothing would ever
+-- clear again, and a gif kept animating for the rest of the session.
+do
+  local buf, p = open({})
+  local nb = NB.get(buf)
+  local cl = J.client
+  local before = cl.call_sync
+  local fired = false
+  cl.call_sync = function(self, method, ...)
+    if method == "kitty_transmit_virtual" and not fired then
+      fired = true
+      nb.cells[1].outputs = {}
+      Render.refresh_sync(nb, vim.fn.bufwinid(buf))
+    end
+    return before(self, method, ...)
+  end
+  event(buf, { kind = "execute_input", execution_count = 1 })
+  event(buf, { kind = "display_data", data = { ["image/png"] = A }, metadata = {} })
+  vim.wait(2000, function() return fired end, 20)
+  vim.wait(400)
+  cl.call_sync = before
+  chk("an image whose output vanished while it was sent is freed", fired and Image._placements[key(1)] == nil,
+      fired and "still placed" or "the transmit never ran")
+  close(buf, p)
+end
+
+-- ── a newer frame overtakes an older one on the way ──────────────────────
+do
+  local buf, p = open({})
+  local cl = J.client
+  local before_sync, before_async = cl.call_sync, cl.call
+  local cleared = {}
+  cl.call = function(self, method, params, cb)
+    if method == "kitty_clear_image" then cleared[#cleared + 1] = params.image_id end
+    return before_async(self, method, params, cb)
+  end
+  local nested = false
+  cl.call_sync = function(self, method, params, ...)
+    if method == "kitty_transmit_virtual" and not nested then
+      nested = true
+      Image.ensure_transmitted(key(1), B, function() end, { renderer = "placeholder", mime = "image/png" })
+    end
+    return before_sync(self, method, params, ...)
+  end
+  local older
+  Image.ensure_transmitted(key(1), A, function(id) older = id end, { renderer = "placeholder", mime = "image/png" })
+  vim.wait(500)
+  cl.call_sync, cl.call = before_sync, before_async
+  chk("a newer frame is not covered by the older one landing after it", shown(1) == B,
+      shown(1) == A and "the older frame is showing" or "nothing is showing")
+  chk("and the older frame's image is freed", #cleared >= 1, vim.inspect(cleared))
+  close(buf, p)
+end
+
+-- ── deleting a markdown image, then undo ─────────────────────────────────
+do
+  local p = tmp .. "/md.ipynb"
+  local f = io.open(p, "w")
+  f:write(vim.json.encode({ cells = { { cell_type = "markdown", id = "m1", metadata = vim.empty_dict(),
+    source = "# pic\n\n![p](data:image/png;base64," .. A .. ")\n" } }, nbformat = 4, nbformat_minor = 5,
+    metadata = { kernelspec = { name = "python3", display_name = "P", language = "python" } } }))
+  f:close()
+  local buf = J.open(p)
+  vim.wait(3000, function() return NB.get(buf) ~= nil end, 20)
+  vim.api.nvim_set_current_buf(buf)
+  local nb = NB.get(buf)
+  vim.wait(3000, function() return Image._placements["m1_md_1"] ~= nil end, 20)
+  local src = nb.cells[1].source
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  J.delete_image(buf)
+  vim.wait(400)
+  chk("deleting a markdown image takes it off the screen", Image._placements["m1_md_1"] == nil)
+  -- what u does: the placeholder line comes back
+  nb.cells[1].source = src
+  J._populate_buffer(nb)
+  Render.refresh_sync(nb, vim.fn.bufwinid(buf))
+  vim.wait(2000, function() return Image._placements["m1_md_1"] ~= nil end, 20)
+  chk("undoing the delete brings the image back", Image._placements["m1_md_1"] ~= nil)
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  Image.clear_all()
+end
+
 vim.fn.delete(tmp, "rf")
 
 if fails == 0 then

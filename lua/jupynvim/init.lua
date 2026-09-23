@@ -2143,8 +2143,10 @@ function M.delete_image(buf)
     -- the .ipynb; if it's there (after undo), the data is restored.
     local pat = "%!%[[^%]]*%]%(jupynvim%-img:" .. idx .. "%)\n?"
     cell.source = (cell.source or ""):gsub(pat, "", 1)
-    -- markdown images are keyed per image, not by the cell id
+    -- markdown images are keyed per image, not by the cell id, and the id is
+    -- forgotten too, so an undo that brings the line back sends it again
     pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id .. "_md_" .. idx)
+    if nb.image_ids then nb.image_ids[cell.id .. "_md_" .. idx] = nil end
     M._populate_buffer(nb)
     Render.refresh(nb, vim.fn.bufwinid(buf))
     vim.bo[buf].modified = true
