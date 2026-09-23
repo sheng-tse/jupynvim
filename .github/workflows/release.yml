@@ -33,7 +33,7 @@ jobs:
           # free tier and Intel mac users fall back to cargo build via
           # install.lua. Re-add if demand arises.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: install rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,7 +63,7 @@ jobs:
           fi
           ls -lah dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jupynvim-core-${{ matrix.target }}
           path: dist/jupynvim-core-*
@@ -74,7 +74,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -90,7 +90,7 @@ jobs:
 
       # A tag with a suffix, like v0.4.6-beta.1, is a pre-release, so GitHub
       # keeps pointing "latest" at the last stable one.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
