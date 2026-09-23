@@ -361,7 +361,8 @@ end
 -- deletes alone made `u` mean "re-insert the last deleted cell", so dd then p
 -- then u re-applied the delete's inverse a second time and left a duplicate.
 --   { op = "delete", index, lines, cell_type }  -> undo re-inserts it
---   { op = "insert", index }                    -> undo removes that cell
+--   { op = "insert", id }                       -> undo removes that cell
+--   { op = "move", id, delta }                  -> undo moves it back
 local _undo = {}
 
 function M.push_undo(buf, entry)
@@ -377,11 +378,22 @@ function M.undo_cell(buf, api)
     return
   end
   local e = table.remove(stack)
-  if e.op == "insert" then
-    -- undo an insert (p, P, a, b, or a previous undo) by removing that cell
-    local total = #M.ranges(buf)
-    select_cell(buf, math.min(e.index, total))
-    with_modifiable(buf, function() api.delete_cell(buf, true) end)
+  if e.op == "insert" or e.op == "move" then
+    -- Find the cell by id. An insert used to be remembered by its index, so
+    -- moving the new cell and pressing u deleted whichever cell had taken
+    -- that index, unrecorded, so a second u could not bring it back.
+    local nb = Notebook.get(buf)
+    local at
+    for i, c in ipairs(nb and nb.cells or {}) do
+      if c.id == e.id then at = i; break end
+    end
+    if not at then return M.undo_cell(buf, api) end  -- already gone: undo the one before
+    select_cell(buf, at)
+    if e.op == "insert" then
+      with_modifiable(buf, function() api.delete_cell(buf, true) end)
+    else
+      api.move_cell(buf, -e.delta, true)
+    end
   else
     -- record = false: replaying must not push its own inverse back on
     M.insert_cell_with(buf, api, e.index, e.lines, e.cell_type, { record = false })

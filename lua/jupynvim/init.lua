@@ -1479,7 +1479,7 @@ function M.add_cell(buf, where, cb, no_record)
     Render.refresh(nb, vim.fn.bufwinid(buf))
     -- Into the new cell, and while editing, keep editing there
     require("jupynvim.notebook.cellmode").goto_cell(buf, insert_at + 2)
-    record_undo(buf, { op = "insert", index = insert_at + 2 }, no_record)
+    record_undo(buf, { op = "insert", id = res.cell_id }, no_record)
     if cb then cb(insert_at + 2) end
   end)
 end
@@ -1542,7 +1542,7 @@ function M.delete_cell(buf, no_record)
   end)
 end
 
-function M.move_cell(buf, delta)
+function M.move_cell(buf, delta, no_record)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
@@ -1559,6 +1559,9 @@ function M.move_cell(buf, delta)
     local new_idx = math.max(1, math.min(#nb.cells, idx + delta))
     local cell = table.remove(nb.cells, idx)
     table.insert(nb.cells, new_idx, cell)
+    if new_idx ~= idx then
+      record_undo(buf, { op = "move", id = cur_id, delta = new_idx - idx }, no_record)
+    end
     M._populate_buffer(nb)
     Render.refresh(nb, vim.fn.bufwinid(buf))
     -- The selection travels with the cell. Left behind, a second <leader>nj

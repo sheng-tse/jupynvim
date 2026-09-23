@@ -237,6 +237,29 @@ do
   os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
 end
 
+-- An insert is undone by cell id. It used to be remembered by index, so b,
+-- then moving the new cell down, then u deleted the real cell that had taken
+-- that index, unrecorded, so nothing could bring it back.
+do
+  local b, path = open_fixture()
+  local before = sources(b)
+  select_nth(b, 1)
+  vim.cmd("normal b")
+  vim.wait(1500)
+  select_nth(b, 2)                 -- the new, empty cell
+  J.move_cell(b, 1)
+  vim.wait(1500)
+  vim.cmd("normal u")
+  vim.wait(1500)
+  chk("u after a move moves the cell back", sources(b)[2] == "" and #sources(b) == #before + 1,
+      vim.inspect(sources(b)))
+  vim.cmd("normal u")
+  vim.wait(1500)
+  chk("and the next u removes the added cell, not a real one",
+      vim.deep_equal(sources(b), before), vim.inspect(sources(b)))
+  os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
+end
+
 -- Undo must work no matter which entry point made the change. Recording in
 -- the cell-mode keymaps only covered `a`/`b`/`dd`; <leader>nb and the
 -- :Jupynvim* commands recorded nothing, so u said "nothing to undo".
