@@ -88,8 +88,11 @@ jobs:
           sha256sum jupynvim-core-* > SHA256SUMS
           cat SHA256SUMS
 
+      # A tag with a suffix, like v0.4.6-beta.1, is a pre-release, so GitHub
+      # keeps pointing "latest" at the last stable one.
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
           fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

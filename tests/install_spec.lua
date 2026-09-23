@@ -456,8 +456,14 @@ end
 -- ── the README's mini.deps example pins the release this copy is ─────────
 do
   local readme = table.concat(vim.fn.readfile(REPO .. "/README.md"), "\n")
-  local pin = readme:match('checkout%s*=%s*"(v[%d%.]+)"')
-  chk("README's mini.deps checkout is v" .. VERSION, pin == "v" .. VERSION, tostring(pin))
+  local pin = readme:match('checkout%s*=%s*"(v[^"]+)"')
+  if VERSION:find("-", 1, true) then
+    -- a pre-release: the README keeps pointing at the last stable release
+    chk("README's mini.deps checkout is a stable release during a pre-release",
+        pin ~= nil and not pin:find("-", 1, true), tostring(pin))
+  else
+    chk("README's mini.deps checkout is v" .. VERSION, pin == "v" .. VERSION, tostring(pin))
+  end
 end
 
 J._plugin_root, RepoInstall.run = real_root, real_run
