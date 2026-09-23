@@ -301,8 +301,8 @@ an `.ipynb`.
 
 | Key | Action |
 |---|---|
-| `<S-CR>` or `<leader>nr` | Run cell, advance to next |
-| `<C-CR>` | Run cell, stay |
+| `<S-CR>` or `<leader>nr` | Run cell, advance to next. `<S-CR>` works in insert mode too |
+| `<C-CR>` | Run cell, stay. Works in insert mode too |
 | `<leader>nR` | Run all cells |
 | `<leader>nA` or `<leader>nB` | Run all cells above or below |
 
@@ -325,6 +325,8 @@ an `.ipynb`.
 | `<leader>nI` | Save current cell's image to file |
 | `<leader>nD` | Delete an embedded image from a markdown cell |
 | `]i` or `[i` | Jump to next or prev cell with an image |
+| `<leader>no` | Expand or collapse a truncated output |
+| `gx` | Open the link under the cursor |
 
 ### Kernel control
 
@@ -362,15 +364,18 @@ require("jupynvim").setup({
   -- plugin directory if unset.
   core_path = nil,
 
-  -- Per-action keymap overrides. Pass a string to replace the default lhs
-  -- (mode and description preserved), `false` to disable a binding. The
-  -- full action list lives in lua/jupynvim/keymaps.lua.
+  -- Per-action keymap overrides. A string replaces the default lhs, a table
+  -- sets the lhs and the mode, and `false` disables the binding. The full
+  -- action list lives in lua/jupynvim/notebook/keymaps.lua. <S-CR> and
+  -- <C-CR> are bound in normal and insert mode; a replacement that starts
+  -- with a printable key, like a space leader, stays out of insert mode
+  -- unless you pass `mode`, so typing that key in a cell never stalls.
   keymaps = {
-    -- example: rebind run-and-advance
+    -- example: rebind run-and-advance, in normal mode only as noted above
     -- run_advance = "<leader>jr",
     --
-    -- example: rebind run-and-stay and change mode to NORMAL only
-    -- run_stay = { mode = { "n" }, lhs = "<leader>js" },
+    -- example: rebind run-and-stay and pick its modes yourself
+    -- run_stay = { mode = { "n", "i" }, lhs = "<C-s>" },
     --
     -- example: disable move-cell-up
     -- move_up = false,

@@ -4,11 +4,16 @@
 --
 --   require("jupynvim").setup({
 --     keymaps = {
---       run_advance = "<leader>jr",   -- override lhs, keep default mode
---       run_stay = false,             -- disable a binding
+--       run_advance = "<leader>jr",                      -- replace the lhs
+--       run_stay = { lhs = "<leader>js", mode = "n" },   -- lhs and mode
+--       move_up = false,                                 -- disable a binding
 --     },
 --     disable_default_keymaps = false,  -- set true to skip ALL defaults
 --   })
+--
+-- A replaced lhs that starts with a printable key, which includes a space
+-- leader, is not bound in insert mode unless `mode` says so, because an
+-- insert-mode map on a printable prefix stalls every time that key is typed.
 
 local M = {}
 
@@ -84,28 +89,60 @@ local actions = {
   open_link        = function(buf, api) return function() api.open_link(buf) end end,
 }
 
+-- Does `lhs` begin with a key that inserts text? keycode expands <leader> the
+-- way keymap.set does, and special keys like <S-CR> or <F5> start with
+-- K_SPECIAL (0x80) while control keys sit below 0x20.
+local function starts_printable(lhs)
+  local ok, keys = pcall(vim.keycode, lhs)
+  local b = ok and keys:byte(1) or nil
+  return b ~= nil and b >= 0x20 and b ~= 0x7f and b ~= 0x80
+end
+
+-- Resolve an action's lhs and mode from its default and the user's override.
+-- Returns nil when the action should not be bound.
+local function resolve(def, override)
+  if override == false then return nil end
+  local lhs, mode, mode_given = def.lhs, def.mode, false
+  if type(override) == "string" then
+    lhs = override
+  elseif type(override) == "table" then
+    if override.lhs ~= nil then lhs = override.lhs end
+    if override.mode ~= nil then mode, mode_given = override.mode, true end
+  end
+  -- #30: the default modes of run_stay and run_advance include insert. Keep
+  -- that for their own keys, but not for a leader or other printable prefix,
+  -- or space in a cell waits out timeoutlen every time it is typed.
+  if not mode_given and lhs ~= def.lhs and type(mode) == "table"
+     and type(lhs) == "string" and starts_printable(lhs) then
+    mode = vim.tbl_filter(function(m) return m ~= "i" end, mode)
+  end
+  return lhs, mode
+end
+
+local warned = {}
+
 -- Bind every default (honouring overrides) onto `buf`.
 local function bind_all(buf, api)
   local cfg = api.config or {}
   local overrides = cfg.keymaps or {}
   for name, def in pairs(M.defaults) do
-    local override = overrides[name]
-    -- false explicitly disables the binding; nil leaves the default in place
-    if override == false then
-      -- skip
-    else
-      local lhs = def.lhs
-      local mode = def.mode
-      if type(override) == "string" then
-        lhs = override
-      elseif type(override) == "table" then
-        if override.lhs then lhs = override.lhs end
-        if override.mode then mode = override.mode end
-      end
-      local builder = actions[name]
-      if builder then
-        vim.keymap.set(mode, lhs, builder(buf, api),
-          { buffer = buf, silent = true, desc = def.desc })
+    local lhs, mode = resolve(def, overrides[name])
+    local builder = actions[name]
+    if lhs ~= nil and builder and not (type(mode) == "table" and #mode == 0) then
+      -- keymap.set throws on an unknown mode or an empty lhs. Uncaught, that
+      -- aborted M.open halfway and left the notebook half set up. A bad
+      -- override now falls back to the default binding, and says so once the
+      -- open has redrawn, or the redraw would wipe the message.
+      local opts = { buffer = buf, silent = true, desc = def.desc }
+      local ok, err = pcall(vim.keymap.set, mode, lhs, builder(buf, api), opts)
+      if not ok then
+        pcall(vim.keymap.set, def.mode, def.lhs, builder(buf, api), opts)
+        if not warned[name .. tostring(err)] then
+          warned[name .. tostring(err)] = true
+          local msg = ("jupynvim: keymaps.%s is invalid (%s), using the default %s")
+            :format(name, err, def.lhs)
+          vim.schedule(function() vim.notify(msg, vim.log.levels.WARN) end)
+        end
       end
     end
   end

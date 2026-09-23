@@ -30,9 +30,10 @@ M.config = {
   -- Kitty Unicode placeholder rendering. Reported as #7 by medwatt.
   image_rows = 16,
   image_cols = 48,
-  -- Per-action keymap overrides. Each value is either a string (replace lhs)
-  -- or `false` (disable). See lua/jupynvim/keymaps.lua for the full default
-  -- list. nil/missing leaves the default in place.
+  -- Per-action keymap overrides. Each value is a string (replace the lhs), a
+  -- table { lhs = ..., mode = ... }, or `false` (disable). See
+  -- lua/jupynvim/notebook/keymaps.lua for the full default list. nil/missing
+  -- leaves the default in place.
   keymaps = {},
   -- Skip ALL default keybindings if you want to bind everything yourself.
   disable_default_keymaps = false,
