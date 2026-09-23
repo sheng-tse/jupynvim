@@ -235,7 +235,16 @@ impl Cell {
                     .map(|n| json!(n))
                     .unwrap_or(Value::Null),
             );
-            obj.insert("outputs".to_string(), Value::Array(self.outputs.clone()));
+            // "transient" only lives in memory, so update_display_data can
+            // find its target. It is not part of nbformat and never saved.
+            let outputs = self.outputs.iter().map(|o| {
+                let mut o = o.clone();
+                if let Some(m) = o.as_object_mut() {
+                    m.remove("transient");
+                }
+                o
+            }).collect();
+            obj.insert("outputs".to_string(), Value::Array(outputs));
         }
         for (k, v) in &self.extra {
             obj.insert(k.clone(), v.clone());

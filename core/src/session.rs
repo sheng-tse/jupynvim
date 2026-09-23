@@ -66,6 +66,11 @@ pub struct Session {
     pub kernel: AsyncRwLock<Option<Kernel>>,
     /// Map msg_id → cell_id, so iopub events route to a cell
     pub msg_to_cell: DashMap<String, String>,
+    /// Cells with a clear_output(wait=True) not applied yet. Per the Jupyter
+    /// messaging spec the clear happens when the next output arrives, which
+    /// is what lets a live-updating loop replace its frame instead of
+    /// stacking one per iteration.
+    pub clear_pending: DashMap<String, ()>,
 }
 
 impl Session {
@@ -81,6 +86,7 @@ impl Session {
             notebook: RwLock::new(nb),
             kernel: AsyncRwLock::new(None),
             msg_to_cell: DashMap::new(),
+            clear_pending: DashMap::new(),
         }))
     }
 
@@ -291,9 +297,45 @@ impl Session {
         let cell_id = self.msg_to_cell.get(&parent)?.clone();
 
         let mut nb = self.notebook.write();
+
+        // A display handle's update can target outputs in any cell, so it is
+        // resolved against the whole notebook before one cell is borrowed.
+        if let KernelEvent::UpdateDisplayData { data, metadata, transient, .. } = ev {
+            let display_id = transient.get("display_id").and_then(|v| v.as_str())?;
+            let mut cells = Vec::new();
+            for c in nb.cells.iter_mut() {
+                let mut hit = false;
+                for o in c.outputs.iter_mut() {
+                    if output_display_id(o) == Some(display_id) {
+                        o["data"] = data.clone();
+                        o["metadata"] = metadata.clone();
+                        hit = true;
+                    }
+                }
+                if hit {
+                    cells.push(c.id.clone());
+                }
+            }
+            return Some((cell_id, json!({
+                "kind": "update_display_data", "display_id": display_id,
+                "data": data, "metadata": metadata, "cells": cells,
+            })));
+        }
+
         let cell = nb.cells.iter_mut().find(|c| c.id == cell_id)?;
 
-        let payload = match ev {
+        // The deferred half of clear_output(wait=True): the first output after
+        // it replaces what was there. The payload says so, so the frontend
+        // clears at the same point instead of tracking it separately.
+        let is_output = matches!(ev,
+            KernelEvent::Stream { .. } | KernelEvent::DisplayData { .. }
+            | KernelEvent::ExecuteResult { .. } | KernelEvent::Error { .. });
+        let clear_first = is_output && self.clear_pending.remove(&cell_id).is_some();
+        if clear_first {
+            cell.outputs.clear();
+        }
+
+        let mut payload = match ev {
             KernelEvent::Stream { name, text, .. } => {
                 let out = json!({
                     "output_type": "stream",
@@ -319,18 +361,22 @@ impl Session {
                 }
                 json!({ "kind": "stream", "name": name, "text": text })
             }
-            KernelEvent::DisplayData { data, metadata, .. } => {
-                let out = json!({
+            KernelEvent::DisplayData { data, metadata, transient, .. } => {
+                let mut out = json!({
                     "output_type": "display_data",
                     "data": data,
                     "metadata": metadata,
                 });
-                cell.outputs.push(out.clone());
-                json!({ "kind": "display_data", "data": data, "metadata": metadata })
+                // Kept in memory so update_display_data can find this output.
+                // Not part of nbformat: Cell::to_json drops it on save.
+                if transient.get("display_id").is_some() {
+                    out["transient"] = transient.clone();
+                }
+                cell.outputs.push(out);
+                json!({ "kind": "display_data", "data": data, "metadata": metadata,
+                        "transient": transient })
             }
-            KernelEvent::UpdateDisplayData { data, metadata, .. } => {
-                json!({ "kind": "update_display_data", "data": data, "metadata": metadata })
-            }
+            KernelEvent::UpdateDisplayData { .. } => unreachable!("handled above"),
             KernelEvent::ExecuteResult {
                 execution_count,
                 data,
@@ -365,6 +411,7 @@ impl Session {
             KernelEvent::ExecuteInput { execution_count, .. } => {
                 cell.execution_count = Some(*execution_count);
                 cell.outputs.clear(); // clear previous outputs at start of new execution
+                self.clear_pending.remove(&cell_id);
                 // Record Jupyter-standard timing metadata (the same keys
                 // JupyterLab's "record timing" writes and VSCode reads), so
                 // the execution duration survives save + reopen.
@@ -405,7 +452,9 @@ impl Session {
                 json!({ "kind": "execute_reply", "status": status, "execution_count": execution_count })
             }
             KernelEvent::ClearOutput { wait, .. } => {
-                if !wait {
+                if *wait {
+                    self.clear_pending.insert(cell_id.clone(), ());
+                } else {
                     cell.outputs.clear();
                 }
                 json!({ "kind": "clear_output", "wait": wait })
@@ -414,8 +463,16 @@ impl Session {
                 json!({ "kind": "kernel_info", "info": info })
             }
         };
+        if clear_first {
+            payload["clear_first"] = json!(true);
+        }
         Some((cell_id, payload))
     }
+}
+
+/// The display_id an output was created with, if it has one.
+fn output_display_id(o: &Value) -> Option<&str> {
+    o.get("transient")?.get("display_id")?.as_str()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -441,6 +498,7 @@ mod tests {
             notebook: RwLock::new(nb),
             kernel: AsyncRwLock::new(None),
             msg_to_cell: DashMap::new(),
+            clear_pending: DashMap::new(),
         };
         s.msg_to_cell.insert("msg1".into(), cell_id.clone());
         (s, cell_id)
@@ -456,6 +514,76 @@ mod tests {
             .get("execution")
             .cloned()
             .unwrap_or(json!(null))
+    }
+
+    fn outputs(s: &Session, cell_id: &str) -> Vec<Value> {
+        let nb = s.notebook.read();
+        nb.cells.iter().find(|c| c.id == cell_id).unwrap().outputs.clone()
+    }
+
+    fn display(png: &str, display_id: Option<&str>) -> KernelEvent {
+        KernelEvent::DisplayData {
+            msg_id: "d".into(),
+            parent_msg_id: Some("msg1".into()),
+            data: json!({ "image/png": png }),
+            metadata: json!({}),
+            transient: display_id.map(|d| json!({ "display_id": d })).unwrap_or(json!({})),
+        }
+    }
+
+    #[test]
+    fn clear_output_wait_replaces_on_the_next_output() {
+        // A live plot loop: display, clear_output(wait=True), display, ...
+        // Each clear must land when the next frame arrives, leaving one frame,
+        // not one per iteration (JupyterLab keeps 1; this used to keep all).
+        let (s, cid) = session_with_one_code_cell();
+        for frame in ["F1", "F2", "F3"] {
+            s.apply_event(&KernelEvent::ClearOutput { parent_msg_id: Some("msg1".into()), wait: true });
+            let (_, payload) = s.apply_event(&display(frame, None)).unwrap();
+            if frame != "F1" {
+                assert_eq!(payload["clear_first"], json!(true), "frontend not told to clear");
+            }
+        }
+        let outs = outputs(&s, &cid);
+        assert_eq!(outs.len(), 1, "frames stacked: {outs:?}");
+        assert_eq!(outs[0]["data"]["image/png"], json!("F3"));
+    }
+
+    #[test]
+    fn clear_output_wait_does_not_clear_early() {
+        // Until the next output arrives the old one stays, so there is no
+        // blank flash between frames.
+        let (s, cid) = session_with_one_code_cell();
+        s.apply_event(&display("F1", None));
+        s.apply_event(&KernelEvent::ClearOutput { parent_msg_id: Some("msg1".into()), wait: true });
+        assert_eq!(outputs(&s, &cid).len(), 1);
+        s.apply_event(&KernelEvent::ClearOutput { parent_msg_id: Some("msg1".into()), wait: false });
+        assert_eq!(outputs(&s, &cid).len(), 0, "clear_output(wait=False) is immediate");
+    }
+
+    #[test]
+    fn update_display_data_replaces_the_displayed_output() {
+        // h = display(fig, display_id=True); h.update(fig2) must show and save
+        // fig2. The update used to be forwarded and then dropped.
+        let (s, cid) = session_with_one_code_cell();
+        s.apply_event(&display("OLD", Some("h1")));
+        s.apply_event(&display("OTHER", Some("h2")));
+        let (_, payload) = s.apply_event(&KernelEvent::UpdateDisplayData {
+            msg_id: "u".into(),
+            parent_msg_id: Some("msg1".into()),
+            data: json!({ "image/png": "NEW" }),
+            metadata: json!({}),
+            transient: json!({ "display_id": "h1" }),
+        }).unwrap();
+        let outs = outputs(&s, &cid);
+        assert_eq!(outs[0]["data"]["image/png"], json!("NEW"));
+        assert_eq!(outs[1]["data"]["image/png"], json!("OTHER"), "wrong display updated");
+        assert_eq!(payload["cells"], json!([cid.clone()]));
+
+        // transient is how the update found its target; it is not nbformat
+        let saved = s.notebook.read().cells[0].to_json();
+        assert!(saved["outputs"][0].get("transient").is_none(), "transient leaked into the .ipynb");
+        assert_eq!(saved["outputs"][0]["data"]["image/png"], json!("NEW"));
     }
 
     #[test]
