@@ -463,11 +463,24 @@ for _, dir in ipairs({ "Up", "Down", "Left", "Right" }) do
     SCROLL_KEYS[vim.keycode("<" .. mod .. "ScrollWheel" .. dir .. ">")] = true
   end
 end
-local last_key_scrolled = false
+-- A mouse button, with or without modifiers or a multi-click prefix.
+local CLICK_KEYS = {}
+for _, b in ipairs({ "Left", "Middle", "Right" }) do
+  for _, a in ipairs({ "Mouse", "Drag", "Release" }) do
+    CLICK_KEYS[vim.keycode("<" .. b .. a .. ">")] = true
+  end
+end
+local function clicks(k)
+  if not k or k:byte(1) ~= 0x80 then return false end
+  if k:byte(2) == 0xfc then k = k:sub(4) end
+  return CLICK_KEYS[k] == true
+end
+local last_key_scrolled, last_key_clicked = false, false
 vim.on_key(function(key, typed)
   if (key and key ~= "") or (typed and typed ~= "") then
     -- typed catches a map ON a scroll key (neoscroll), key a map TO one
     last_key_scrolled = SCROLL_KEYS[key] == true or SCROLL_KEYS[typed] == true
+    last_key_clicked = clicks(key) or clicks(typed)
   end
 end, vim.api.nvim_create_namespace("jupynvim.cellmode.keys"))
 
@@ -483,8 +496,8 @@ end
 local function clamp_to_cell(buf)
   local st = state[buf]
   if not st or st.mode ~= "edit" or not st.edit_idx then return end
-  local win = vim.fn.bufwinid(buf)
-  if win == -1 or vim.api.nvim_get_current_buf() ~= buf then return end
+  if vim.api.nvim_get_current_buf() ~= buf then return end
+  local win = vim.api.nvim_get_current_win()
   local ranges = M.ranges(buf)
   -- cells were removed under the edited one: edit the last that is left
   if st.edit_idx > #ranges then st.edit_idx = #ranges end
@@ -502,9 +515,19 @@ local function clamp_to_cell(buf)
   -- not jumps. In visual mode the cursor is the far end of a selection, and
   -- following it let ggVGd select and delete every cell below. A scroll
   -- drags the cursor to the window edge. Both snap back as before.
-  -- a scroll of this window while another had focus leaves a flag behind
-  local dragged = st.dragged
-  st.dragged = nil
+  -- A scroll of this window while another had focus dragged the cursor to
+  -- where WinScrolled recorded it. Coming back to find it there is no jump;
+  -- a click or a jump elsewhere is, and so is a click on that very spot.
+  local drag = st.dragged and st.dragged[win]
+  local dragged = false
+  if drag then
+    st.dragged[win] = nil
+    dragged = cur[1] == drag[1] and cur[2] == drag[2]
+    if dragged and last_key_clicked then
+      local m = vim.fn.getmousepos()
+      dragged = not (m.winid == win and m.line == cur[1])
+    end
+  end
   if not in_src and not in_out and not selecting() and not last_key_scrolled and not dragged then
     local idx, other = M.cell_idx_at(buf, lnum)
     if idx ~= st.edit_idx and other then
@@ -746,7 +769,9 @@ function M.attach(buf, api)
     if M.is_command(buf) then
       M.enter_edit(buf)
     else
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
+      -- at the front of typeahead with its count, like cmdmap's keys
+      vim.api.nvim_feedkeys((vim.v.count > 0 and tostring(vim.v.count) or "")
+        .. vim.api.nvim_replace_termcodes("<CR>", true, false, true), "ni", false)
     end
   end, "jupynvim: edit cell")
   cmdmap("i", function() M.enter_edit(buf) end, "jupynvim: edit cell")
@@ -844,7 +869,9 @@ function M.attach(buf, api)
   local resize_group = vim.api.nvim_create_augroup("jupynvim_resize_" .. buf, { clear = true })
   -- The mouse wheel scrolls the window under it, even when another window has
   -- focus, and drags that window's cursor along. The next CursorMoved there
-  -- comes with the key that brought focus back, not a scroll key, so mark it.
+  -- comes with the key that brought focus back, not a scroll key, so record
+  -- where the cursor was left, per window. WinScrolled also fires for a
+  -- window that only changed size, which moves no cursor.
   vim.api.nvim_create_autocmd("WinScrolled", {
     group = resize_group,
     callback = function()
@@ -854,7 +881,8 @@ function M.attach(buf, api)
       for w in pairs(vim.v.event or {}) do
         local id = tonumber(w)
         if id and id ~= cur and vim.api.nvim_win_is_valid(id) and vim.api.nvim_win_get_buf(id) == buf then
-          st.dragged = true
+          st.dragged = st.dragged or {}
+          st.dragged[id] = vim.api.nvim_win_get_cursor(id)
         end
       end
     end,

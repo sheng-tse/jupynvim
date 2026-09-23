@@ -68,6 +68,20 @@ done
 sleep 0.5
 
 rec() { tmux send-keys -t "$S" ":lua __navrec()" Enter; sleep 0.4; }
+# a mouse click on the first place text $1 shows on screen
+click() {
+  local pos
+  pos=$(tmux capture-pane -t "$S" -p | python3 -c '
+import sys
+for row, l in enumerate(sys.stdin.read().splitlines()):
+    c = l.find(sys.argv[1])
+    if c >= 0:
+        print(row, c + 2); break' "$1")
+  [ -n "$pos" ] || return 0
+  set -- $pos
+  tmux send-keys -t "$S" ":lua vim.api.nvim_input_mouse('left','press','',0,$1,$2); vim.api.nvim_input_mouse('left','release','',0,$1,$2)" Enter
+  sleep 0.6
+}
 
 tmux send-keys -t "$S" Enter; sleep 0.4        # edit cell 1
 tmux send-keys -t "$S" "j" "j"; sleep 0.4      # somewhere inside it
@@ -122,6 +136,46 @@ tmux send-keys -t "$S" ":only" Enter; sleep 0.4
 tmux send-keys -t "$S" -l ':let @q = "otyped\<Esc>"'; tmux send-keys -t "$S" Enter; sleep 0.3
 tmux send-keys -t "$S" "@q"; sleep 0.6; rec
 
+# a split resizes the notebook while the split has focus, which is no scroll:
+# a click on another cell still edits that cell
+tmux send-keys -t "$S" Escape; sleep 0.3
+tmux send-keys -t "$S" "gg"; sleep 0.3
+tmux send-keys -t "$S" Enter; sleep 0.4
+tmux send-keys -t "$S" ":botright new" Enter; sleep 0.5
+click cell2_line2; rec
+tmux send-keys -t "$S" ":wincmd t | only" Enter; sleep 0.4
+
+# the wheel over the notebook while the split has focus drags its cursor into
+# another cell, and a click after that is still a jump: on a cell the wheel
+# brought into view, and on the very spot a scroll left the cursor
+NB="vim.fn.win_getid(1)"
+WHEEL="for _ = 1, 6 do vim.api.nvim_input_mouse('wheel','down','',0,1,20) end"
+tmux send-keys -t "$S" Escape; sleep 0.3
+tmux send-keys -t "$S" "gg"; sleep 0.3
+tmux send-keys -t "$S" Enter; sleep 0.4
+tmux send-keys -t "$S" ":botright new" Enter; sleep 0.5
+tmux send-keys -t "$S" ":lua $WHEEL" Enter; sleep 0.6
+click cell4_line2; rec
+tmux send-keys -t "$S" ":wincmd t | only" Enter; sleep 0.4
+tmux send-keys -t "$S" Escape; sleep 0.3
+tmux send-keys -t "$S" "gg"; sleep 0.3
+tmux send-keys -t "$S" Enter; sleep 0.4
+tmux send-keys -t "$S" ":botright new" Enter; sleep 0.5
+tmux send-keys -t "$S" ":lua vim.fn.win_execute($NB, 'call cursor(search(\"^cell3_line2$\", \"w\"), 1) | normal! zt')" Enter; sleep 0.5
+tmux send-keys -t "$S" ":lua local w = $NB; local c = vim.api.nvim_win_get_cursor(w); local p = vim.fn.screenpos(w, c[1], c[2] + 1); vim.api.nvim_input_mouse('left','press','',0,p.row-1,p.col-1); vim.api.nvim_input_mouse('left','release','',0,p.row-1,p.col-1)" Enter
+sleep 0.6; rec
+tmux send-keys -t "$S" ":wincmd t | only" Enter; sleep 0.4
+
+# <CR> while editing is vim's own, fed at the front of typeahead with its
+# count: a macro's <CR> ran after the text it typed, and 2<CR> moved one line
+tmux send-keys -t "$S" Escape; sleep 0.3
+tmux send-keys -t "$S" "gg"; sleep 0.3
+tmux send-keys -t "$S" Enter; sleep 0.4
+tmux send-keys -t "$S" "gg"; sleep 0.3
+tmux send-keys -t "$S" "2" Enter; sleep 0.5; rec
+tmux send-keys -t "$S" -l ':let @q = "\<CR>Atyped\<Esc>"'; tmux send-keys -t "$S" Enter; sleep 0.3
+tmux send-keys -t "$S" "@q"; sleep 0.6; rec
+
 # a visual selection is not a jump: ggVGd while editing cell 1 clears that
 # cell and leaves the other eight alone
 tmux send-keys -t "$S" Escape; sleep 0.3
@@ -146,6 +200,11 @@ want = [
     ("a mapping to <C-d> keeps it too", r"cell3_line\d edit"),
     ("so does the wheel over it while another window has focus", r"cell3_line\d edit"),
     ("a macro's o runs before the text it types", "typed edit"),
+    ("a click on another cell after a split edits that cell", "cell2_line2 edit"),
+    ("so does one after the wheel over it from the split", "cell4_line2 edit"),
+    ("and one on the spot a scroll left the cursor", "cell3_line2 edit"),
+    ("2<CR> while editing moves two lines", "cell1_line3 edit"),
+    ("a macro's <CR> runs before the text it types", "cell1_line4typed edit"),
     ("ggVGd while editing a cell deletes only inside it", "cells=9"),
 ]
 got = open(sys.argv[1]).read().splitlines()
