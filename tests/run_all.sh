@@ -57,10 +57,26 @@ echo "==================================================="
 echo "  jupynvim — comprehensive test suite"
 echo "==================================================="
 
-# ── 1. Rust ─────────────────────────────────────────────
-# Runs BEFORE conda is activated. The jupynvim env exports CC, LD and LDFLAGS
+# Every headless nvim gets a deadline. A spec that hangs, the way the chafa
+# render loop spun forever, fails its section instead of stalling the suite.
+nv() { perl -e 'alarm 300; exec @ARGV' nvim "$@"; }
+
+# conda's activate functions reference unset vars, so they abort under
+# `set -u` (which silently killed the whole suite in non-interactive / CI
+# shells). Relax set -u around every conda call.
+set +u
+# shellcheck disable=SC1091
+[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
+# Cargo must not see a conda env. The jupynvim env exports CC, LD and LDFLAGS
 # for its own clang, whose linker cannot read a newer macOS SDK, so anything
 # cargo has to relink fails there. A warm target/ hid that until a rebuild.
+# Leave whatever env the caller had active, not just the one we activate.
+if command -v conda >/dev/null 2>&1; then
+  while [ "${CONDA_SHLVL:-0}" -gt 0 ]; do conda deactivate || break; done
+fi
+set -u
+
+# ── 1. Rust ─────────────────────────────────────────────
 # The exit status is taken inside the subshell: outside it, PIPESTATUS only
 # holds the subshell's own status, which is tail's, which is always 0.
 echo
@@ -72,13 +88,9 @@ section "cargo test" "$?"
 ( cd core && cargo build --release 2>&1 | tail -3; exit "${PIPESTATUS[0]}" )
 section "cargo build" "$?"
 
-# Activate the conda env for the Python deps. conda's activate functions
-# reference unset vars, so they abort under `set -u` (which silently killed the
-# whole suite in non-interactive / CI shells). Relax set -u just for this.
+# Now the conda env, for the Python deps.
 set +u
-# shellcheck disable=SC1091
-[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate jupynvim 2>/dev/null
+command -v conda >/dev/null 2>&1 && conda activate jupynvim 2>/dev/null
 set -u
 
 # ── 2. Backend integration ──────────────────────────────
@@ -92,7 +104,7 @@ echo
 echo "── 3/5 lua e2e (headless nvim) ─"
 STATUS_FILE="$(mktemp -t jupynvim_lua_status.XXXXXX)"
 JUPYNVIM_TEST_STATUS_FILE="$STATUS_FILE" \
-  nvim --headless -u NONE -c "luafile $ROOT/tests/lua_e2e.lua" -c 'qa!' 2>&1
+  nv --headless -u NONE -c "luafile $ROOT/tests/lua_e2e.lua" -c 'qa!' 2>&1
 LUA_RC=$?
 if [ -f "$STATUS_FILE" ]; then
   status=$(head -n1 "$STATUS_FILE")
@@ -109,19 +121,19 @@ fi
 # ── 4. Cell-UI + markdown + remote-hl specs ─────────────
 echo
 echo "── 4/5 cell-ui + markdown + remote-hl specs (headless nvim) ─"
-ui_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellui_spec.lua" -c 'qa!' 2>&1)
+ui_out=$(nv --headless -u NONE -c "luafile $ROOT/tests/cellui_spec.lua" -c 'qa!' 2>&1)
 echo "$ui_out" | tail -1
 echo "$ui_out" | grep -q "ALL CELL-UI CHECKS PASSED"
 section "cell-ui spec" "$?"
-md_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c 'qa!' 2>&1)
+md_out=$(nv --headless -u NONE -c "luafile $ROOT/tests/markdown_spec.lua" -c 'qa!' 2>&1)
 echo "$md_out" | tail -1
 echo "$md_out" | grep -q "ALL MARKDOWN CHECKS PASSED"
 section "markdown spec" "$?"
-co_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/cellops_spec.lua" -c 'qa!' 2>&1)
+co_out=$(nv --headless -u NONE -c "luafile $ROOT/tests/cellops_spec.lua" -c 'qa!' 2>&1)
 echo "$co_out" | tail -1
 echo "$co_out" | grep -q "ALL CELL-OPS CHECKS PASSED"
 section "cell-ops spec" "$?"
-hl_out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/remote_hl_spec.lua" -c 'qa!' 2>&1)
+hl_out=$(nv --headless -u NONE -c "luafile $ROOT/tests/remote_hl_spec.lua" -c 'qa!' 2>&1)
 echo "$hl_out" | tail -1
 echo "$hl_out" | grep -q "ALL REMOTE-HL CHECKS PASSED"
 section "remote-hl spec" "$?"
@@ -132,7 +144,7 @@ section "remote-hl spec" "$?"
 for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec deploy_probe_spec \
             keymap_override_spec image_b64_spec reopen_lsp_spec edit_nav_spec \
             multi_image_spec install_spec; do
-  out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'cquit 3' 2>&1)
+  out=$(nv --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'cquit 3' 2>&1)
   rc=$?
   echo "$out" | tail -1
   section "$spec" "$rc"

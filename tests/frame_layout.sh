@@ -17,6 +17,43 @@ command -v tmux >/dev/null || { echo "SKIP frame_layout: no tmux"; exit 0; }
 # position persisted by an earlier run move the view this test measures.
 WORK="$(mktemp -d -t jupynvim_frame.XXXXXX)"
 INIT="$WORK/init.lua"
+
+# The notebook is generated rather than read from examples/, which is not in
+# the repository, so the test runs on a fresh clone. Markdown, a plot, text
+# outputs, and cell #8 holding the for-loop the checks look for.
+python3 - "$WORK/frame.ipynb" <<'PY'
+import base64, json, struct, sys, zlib
+def png(w, h):
+    rows = b"".join(b"\0" + b"".join(bytes((x * 7 % 256, y * 5 % 256, (x + y) % 256))
+                                     for x in range(w)) for y in range(h))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+def md(i, s): return {"cell_type": "markdown", "id": f"c{i}", "metadata": {}, "source": s}
+def code(i, s, outputs=()):
+    return {"cell_type": "code", "id": f"c{i}", "metadata": {}, "source": s,
+            "execution_count": 1 if outputs else None, "outputs": list(outputs)}
+def stream(t): return {"output_type": "stream", "name": "stdout", "text": t}
+cells = [
+    md(1, "# frame layout\n\nA notebook with the usual mix of cells."),
+    code(2, "import math\nprint(math.pi)", [stream("3.141592653589793\n")]),
+    md(3, "## a plot"),
+    code(4, "plot()", [{"output_type": "display_data", "metadata": {},
+                         "data": {"image/png": base64.b64encode(png(160, 120)).decode(),
+                                  "text/plain": "<Figure>"}}]),
+    code(5, "x = 1"),
+    code(6, "x + 1", [{"output_type": "execute_result", "execution_count": 1,
+                        "metadata": {}, "data": {"text/plain": "2"}}]),
+    md(7, "## plain-text output"),
+    code(8, "for i in range(5):\n    print(f'iteration {i}: {2 ** i}')",
+         [stream("".join(f"iteration {i}: {2 ** i}\n" for i in range(5)))]),
+    code(9, "y = 2"),
+]
+json.dump({"cells": cells, "nbformat": 4, "nbformat_minor": 5,
+           "metadata": {"kernelspec": {"name": "python3", "display_name": "P", "language": "python"}}},
+          open(sys.argv[1], "w"))
+PY
 cat > "$INIT" <<LUA
 vim.opt.runtimepath:prepend("$ROOT")
 vim.o.number = true
@@ -33,7 +70,10 @@ tmux new-session -d -s "$S" -x 160 -y 45
 tmux set-option -t "$S" status off
 cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
-tmux send-keys -t "$S" "cd $ROOT && XDG_STATE_HOME=$WORK/state XDG_CACHE_HOME=$WORK/cache nvim -u $INIT examples/demo.ipynb" Enter
+# Only the state dir is isolated: that is where a saved cursor could move the
+# view. The cache is left alone, because the :terminal below inherits it and
+# a user's shell setup rebuilt from an empty cache on every run.
+tmux send-keys -t "$S" "cd $ROOT && XDG_STATE_HOME=$WORK/state nvim -u $INIT $WORK/frame.ipynb" Enter
 
 # poll until the notebook actually renders (a box corner appears), up to ~20s
 rendered=0
