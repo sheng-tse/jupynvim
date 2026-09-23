@@ -101,10 +101,11 @@ run_wait() {
   if [ "$(ran)" -lt 1 ]; then echo "FAIL the kernel never ran the cell"; FAILS=$((FAILS + 1)); fi
   sleep 0.6
 }
-# the undo warning is in :messages
-warned() {
+# the undo warning, or the text given, is in :messages
+warned() { warned_about "stops at the last cell change"; }
+warned_about() {
   k ":lua __rec(vim.fn.execute('messages'))" Enter
-  grep -q "stops at the last cell change" "$WORK/rec" 2>/dev/null
+  grep -q "$1" "$WORK/rec" 2>/dev/null
 }
 
 # check NAME EXPR, over what :w wrote

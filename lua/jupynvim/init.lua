@@ -1012,9 +1012,11 @@ end
 -- ones. `before` is changenr() from just before the write, nil when the write
 -- was joined to the change in progress on purpose. A write that opened an
 -- undo step of its own holds nothing of the user's, so u and <C-r> step over
--- it, unless `how.edit` says the user asked for it: deleting an image,
--- clearing or expanding an output. Stepping over one of those, u took back
--- an edit of the user's in some other cell instead. The step is closed, so the user's next keys start their own
+-- it, unless `how.edit` says the user asked for it: deleting an image or
+-- clearing outputs. Stepping over one of those, u took back an edit of the
+-- user's in some other cell instead. `how.clear` marks a clear, which u
+-- cannot really take back, since the cells no longer have the outputs. The
+-- step is closed, so the user's next keys start their own
 -- instead of joining it. `how.chained` says the write was joined onto the
 -- rewrite step before it. A write that went into a step the user still has
 -- open, while typing or when a pasted data URI is swapped for a
@@ -1030,15 +1032,19 @@ function M._record_boundaries(nb, before, how)
   if before and (nr ~= before or (how and how.chained)) then
     nb._rewrites = nb._rewrites or {}
     nb._rewrites[nr] = not (how and how.edit) or nil
+    if how and how.clear then
+      nb._clears = nb._clears or {}
+      nb._clears[nr] = true
+    end
     close_step(buf)
   end
   remember(nb, lines, (boundary_seq(lines)), nr)
 end
 
 -- Rewrite every output region that no longer matches its cell's outputs,
--- joined to the change in progress. An undo can take an output away, and it
--- comes back with the next edit, once there is no redo left to protect.
-function M._resync_outputs(nb)
+-- joined to the change in progress, or with `own` as a step of the plugin's
+-- own, which is all a write right after an undo can be.
+function M._resync_outputs(nb, own)
   local CellMode = require("jupynvim.notebook.cellmode")
   local ranges = CellMode.ranges(nb.buf)
   local ids = {}
@@ -1050,7 +1056,7 @@ function M._resync_outputs(nb)
       if (#want > 0) ~= (r.out_sep ~= nil) or not vim.deep_equal(want, have) then ids[c.id] = true end
     end
   end
-  if next(ids) then M._apply_output_sync(nb, ids, { join = true }) end
+  if next(ids) then M._apply_output_sync(nb, ids, not own and { join = true } or nil) end
 end
 
 -- Is `seq` a layout the current cells can have: one separator between each
@@ -1298,7 +1304,9 @@ function M._guard_boundaries(nb, lines)
     -- undo, redo or a jump onto a state of this cell list
     local jumped = nb._jumped
     nb._jumped = nil
-    if not jumped and require("jupynvim.notebook.cellmode").last_key_stepped() then
+    local CellMode = require("jupynvim.notebook.cellmode")
+    local undid = not jumped and nr < good.nr and CellMode.last_key_undid()
+    if not jumped and CellMode.last_key_stepped() then
       -- where each u came from, for a <C-r> an output cut off, see _redo_after_branch
       nb._redo_to = nb._redo_to or {}
       if nr < good.nr then
@@ -1312,8 +1320,20 @@ function M._guard_boundaries(nb, lines)
     elseif not jumped then
       nb._redo_to = nil
     end
-    nb._outputs_stale = true
     remember(nb, lines, seq, changenr(buf))
+    if undid then
+      -- u takes back the user's edit, not an output. Stepping over the output
+      -- a run wrote took its lines off the screen too, until the next edit,
+      -- though the cells kept them. Put them back now. It starts a branch of
+      -- the undo tree, and <C-r> gets past it through _redo_after_branch.
+      if nb._clears and nb._clears[good.nr] then
+        vim.notify("jupynvim: u cannot bring back cleared outputs. Run the cells again for them.",
+          vim.log.levels.WARN)
+      end
+      M._resync_outputs(nb, true)
+      return false, nb._good.lines
+    end
+    nb._outputs_stale = true
     return false, lines
   end
 
@@ -1395,7 +1415,7 @@ function M._start_history(nb, uf)
   local buf = nb.buf
   local ut = vim.api.nvim_buf_call(buf, vim.fn.undotree)
   nb._seen, nb._seen_n, nb._rewrites, nb._outputs_stale = {}, 0, {}, nil
-  nb._redo_to, nb._jumped, nb._shifted = nil, nil, nil
+  nb._redo_to, nb._jumped, nb._shifted, nb._clears = nil, nil, nil, nil
   nb._seq_max = ut.seq_last
   local floor = 0
   if #ut.entries == 0 then
@@ -2398,7 +2418,7 @@ function M.clear_outputs(buf)
   -- rewritten or the old output text stays on screen until the next reopen.
   -- Refresh immediately so this works even against an older backend that has
   -- no clear_outputs RPC; the call below is best-effort.
-  M._populate_buffer(nb, { edit = true })
+  M._populate_buffer(nb, { edit = true, clear = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   -- AFTER the repopulate: _populate_buffer resets modified, and without this
   -- :w / :wqa would skip the buffer and the clear would not reach disk.
@@ -2435,7 +2455,7 @@ function M.clear_cell_output(buf)
   for _, key in ipairs(Image.clear_outputs_for_cell(cell.id)) do nb.image_ids[key] = nil end
   -- Same as clear_outputs: the output text lives in the buffer, so the model
   -- edit only shows up once the buffer is rewritten.
-  M._populate_buffer(nb, { edit = true })
+  M._populate_buffer(nb, { edit = true, clear = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.bo[buf].modified = true   -- after the repopulate, which resets it
   M._ensure_client():call("clear_cell_output",
@@ -2708,7 +2728,7 @@ function M.toggle_output_expand(buf)
     return
   end
   local expanded = Notebook.toggle_output_expanded(cell_id)
-  M._populate_buffer(nb, { edit = true })
+  M._populate_buffer(nb)
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.notify("jupynvim: output " .. (expanded and "expanded" or "collapsed"),
     vim.log.levels.INFO)

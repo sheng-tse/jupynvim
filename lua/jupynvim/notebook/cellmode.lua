@@ -492,7 +492,7 @@ end
 -- u, <C-r>, g- and g+: one step of undo, which the cell guard lets go on
 -- past an output the plugin wrote. :undo N and :earlier land where sent.
 local function steps(k) return k == "u" or k == "\18" end
-local last_key_scrolled, last_key_clicked, last_key_stepped, prev_key = false, false, false, nil
+local last_key_scrolled, last_key_clicked, last_key_stepped, last_key_undid, prev_key = false, false, false, false, nil
 vim.on_key(function(key, typed)
   if (key and key ~= "") or (typed and typed ~= "") then
     -- typed catches a map ON a scroll key (neoscroll), key a map TO one
@@ -500,6 +500,7 @@ vim.on_key(function(key, typed)
     last_key_clicked = clicks(key) or clicks(typed)
     last_key_stepped = steps(key) or steps(typed)
       or ((key == "-" or key == "+") and prev_key == "g")
+    last_key_undid = key == "u" or typed == "u"
     prev_key = key
     -- a <C-r> an output written after u may have cut off, see _redo_after_branch
     if (key == "\18" or typed == "\18") and vim.api.nvim_get_mode().mode == "n" then
@@ -515,6 +516,7 @@ vim.on_key(function(key, typed)
   end
 end, vim.api.nvim_create_namespace("jupynvim.cellmode.keys"))
 function M.last_key_stepped() return last_key_stepped end
+function M.last_key_undid() return last_key_undid end
 
 local function selecting()
   local m = vim.api.nvim_get_mode().mode:sub(1, 1)

@@ -344,9 +344,31 @@ case_21() {
   start
   k j; k j; k Enter; k A; type_text "  # one"; k Escape; k Escape
   k '\'; k n; k C; sleep 0.6
-  k Enter; k u; k Escape
+  k Enter; k u; sleep 0.5
+  local shown; shown=$(screen | grep -c OUT1)
+  k Escape
   save
   check "u after clearing outputs keeps the edit before the clear" "cells['c3'] == ('a3 = 3  # one\nb3 = 3', 0)"
+  holds "and does not show the cleared output as if it were back" "[ $shown -eq 0 ]"
+  holds "but says why" 'warned_about "cannot bring back cleared outputs"'
+}
+
+# u after running another cell takes back the edit and leaves the output on
+# screen. Stepping over the output took its lines away until the next edit.
+case_22() {
+  start
+  k j; k j; k Enter; k A; type_text "  # mine"; k Escape; k Escape
+  k j; run_wait
+  k k; k Enter; k u; sleep 0.5
+  local shown; shown=$(ran)
+  local gone; gone=$(screen | grep -c "# mine")
+  k C-r; sleep 0.8
+  local back; back=$(screen | grep -c "# mine")
+  save
+  holds "u after a run leaves the output on screen" "[ $shown -ge 1 ]"
+  holds "and takes the edit away" "[ $gone -eq 0 ]"
+  holds "and <C-r> brings the edit back" "[ $back -ge 1 ]"
+  check "and :w keeps both" "cells['c3'] == ('a3 = 3  # mine\nb3 = 3', 0) and cells['c4'][1] >= 1"
 }
 
 run_cases "$@"
