@@ -1323,7 +1323,7 @@ function M.run_cell(buf, opts)
     -- For markdown cells, just re-render
     if cell.cell_type == "markdown" then
       vim.schedule(function() Render.refresh(nb, vim.fn.bufwinid(buf)) end)
-      if opts.advance then M.jump_cell(buf, 1) end
+      if opts.advance then vim.schedule(function() M._advance_after_run(buf) end) end
       return
     end
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
@@ -1344,8 +1344,32 @@ function M.run_cell(buf, opts)
       end
     end)
     if opts.advance then
-      vim.schedule(function() M.jump_cell(buf, 1, true) end)
+      vim.schedule(function() M._advance_after_run(buf) end)
     end
+  end)
+end
+
+-- Run-and-advance the way VSCode and JupyterLab do it. An existing next cell
+-- is selected in command mode, from edit or insert mode alike, and only a
+-- cell created at the end is opened for editing. Moving just the cursor used
+-- to be undone by the edit-mode clamp, so <S-CR> while editing never left the
+-- cell it ran.
+function M._advance_after_run(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  local win = vim.fn.bufwinid(buf)
+  if win == -1 then return end
+  local CellMode = require("jupynvim.notebook.cellmode")
+  local cur = CellMode.cell_idx_at(buf, vim.api.nvim_win_get_cursor(win)[1])
+  local inserting = vim.api.nvim_get_mode().mode:sub(1, 1) == "i"
+  if cur < #CellMode.ranges(buf) then
+    if inserting then vim.cmd("stopinsert") end
+    if not CellMode.is_command(buf) then CellMode.enter_command(buf) end
+    CellMode.goto_cell(buf, cur + 1)
+    return
+  end
+  M.add_cell(buf, "below", function()
+    if CellMode.is_command(buf) then CellMode.enter_edit(buf) end
+    if inserting then vim.cmd("startinsert") end
   end)
 end
 
@@ -1456,10 +1480,8 @@ function M.add_cell(buf, where, cb, no_record)
     table.insert(nb.cells, insert_at + 2, { id = res.cell_id, cell_type = "code", source = "", outputs = {} })
     M._populate_buffer(nb)
     Render.refresh(nb, vim.fn.bufwinid(buf))
-    -- Move cursor into the new cell
-    local _, ranges = nb:to_lines()
-    local r = ranges[insert_at + 2]
-    if r then vim.api.nvim_win_set_cursor(vim.fn.bufwinid(buf), { r.start + 1, 0 }) end
+    -- Into the new cell, and while editing, keep editing there
+    require("jupynvim.notebook.cellmode").goto_cell(buf, insert_at + 2)
     record_undo(buf, { op = "insert", index = insert_at + 2 }, no_record)
     if cb then cb(insert_at + 2) end
   end)
@@ -1542,6 +1564,9 @@ function M.move_cell(buf, delta)
     table.insert(nb.cells, new_idx, cell)
     M._populate_buffer(nb)
     Render.refresh(nb, vim.fn.bufwinid(buf))
+    -- The selection travels with the cell. Left behind, a second <leader>nj
+    -- moved the cell that had swapped into its place, undoing the first.
+    require("jupynvim.notebook.cellmode").goto_cell(buf, new_idx)
   end)
 end
 
@@ -2042,10 +2067,8 @@ function M.jump_image(buf, delta)
   nb:sync_from_buffer()
   local _, ranges = nb:to_lines()
   if #ranges == 0 then return end
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local cur_id = nb:cell_at_line(lnum)
-  local cur_idx = 1
-  for i, r in ipairs(ranges) do if r.id == cur_id then cur_idx = i; break end end
+  local CellMode = require("jupynvim.notebook.cellmode")
+  local cur_idx = CellMode.cell_idx_at(buf, vim.api.nvim_win_get_cursor(0)[1])
 
   local Embedded = require("jupynvim.notebook.embedded")
   local function has_image(cell)
@@ -2055,7 +2078,7 @@ function M.jump_image(buf, delta)
     end
     for _, o in ipairs(cell.outputs or {}) do
       local d = (o.output_type == "execute_result" or o.output_type == "display_data") and o.data or nil
-      if d and d["image/png"] then return true end
+      if d and (d["image/png"] or d["image/jpeg"] or d["image/gif"]) then return true end
     end
     return false
   end
@@ -2067,8 +2090,7 @@ function M.jump_image(buf, delta)
     if idx < 1 or idx > n then break end
     local cell = nb.cells[idx]
     if cell and has_image(cell) then
-      local r = ranges[idx]
-      vim.api.nvim_win_set_cursor(0, { r.start + 1, 0 })
+      CellMode.goto_cell(buf, idx)
       return
     end
   end
@@ -2076,29 +2098,16 @@ function M.jump_image(buf, delta)
     vim.log.levels.INFO)
 end
 
-function M.jump_cell(buf, delta, advance_to_end)
+function M.jump_cell(buf, delta)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb:sync_from_buffer()
-  local _, ranges = nb:to_lines()
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local cur_id, _, idx_at = nb:cell_at_line(lnum)
-  -- find current index in ranges
-  local cur_idx
-  for i, r in ipairs(ranges) do if r.id == cur_id then cur_idx = i; break end end
-  if not cur_idx then return end
-  local target = cur_idx + delta
-  if target < 1 then target = 1 end
-  if target > #ranges then
-    if advance_to_end then
-      -- Insert a new cell below
-      M.add_cell(buf, "below")
-      return
-    end
-    target = #ranges
-  end
-  local r = ranges[target]
-  if r then vim.api.nvim_win_set_cursor(0, { r.start + 1, 0 }) end
+  local CellMode = require("jupynvim.notebook.cellmode")
+  local cur = CellMode.cell_idx_at(buf, vim.api.nvim_win_get_cursor(0)[1])
+  local target = math.max(1, math.min(cur + delta, #CellMode.ranges(buf)))
+  -- ]c on the last cell stays put rather than jumping to its first line
+  if target == cur then return end
+  CellMode.goto_cell(buf, target)
 end
 
 function M.refresh(buf)

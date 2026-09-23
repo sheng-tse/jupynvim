@@ -16,11 +16,13 @@
 #      + image_b64_spec.lua (whitespace in image base64, and what a render
 #      may cost once an image is transmitted)
 #      + reopen_lsp_spec.lua (which language servers attach, issue #32)
-#      + edit_nav_spec.lua (which cell an output row belongs to)
+#      + edit_nav_spec.lua (moving between cells while editing, issue #27,
+#      and which cell an output row belongs to)
 #   5. frame_layout.sh (real rendered screen via tmux: frame alignment across
 #      terminal-split / floating-window layout changes)
 #      remote_hl_screen.sh (real rendered screen via tmux: dashboard/explorer
 #      highlights actually paint)
+#      edit_nav_screen.sh (real nvim via tmux: ]c/[c while editing a cell)
 #
 # All must pass for the suite to succeed.
 
@@ -139,6 +141,8 @@ bash "$ROOT/tests/frame_layout.sh"
 section "frame layout" "$?"
 bash "$ROOT/tests/remote_hl_screen.sh"
 section "remote-hl screen" "$?"
+bash "$ROOT/tests/edit_nav_screen.sh"
+section "edit-nav screen" "$?"
 
 # ── Summary ─────────────────────────────────────────────
 echo

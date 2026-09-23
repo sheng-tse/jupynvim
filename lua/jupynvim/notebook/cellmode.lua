@@ -82,6 +82,7 @@ function M.cell_idx_at(buf, lnum)
 end
 
 function M.mode(buf) return (state[buf] or {}).mode or "edit" end
+function M._state_for_test(buf) return state[buf] or {} end
 function M.is_command(buf) return M.mode(buf) == "command" end
 
 function M.selected_idx(buf)
@@ -315,6 +316,25 @@ end
 function M.select_first(buf) select_cell(buf, 1) end
 function M.select_last(buf) select_cell(buf, #M.ranges(buf)) end
 
+-- Put the cursor on cell `idx` from code: ]c/[c, ]i/[i, a new cell, a moved
+-- cell. Command mode selects it. Edit mode keeps editing, in that cell: the
+-- edited cell has to change BEFORE the cursor moves, or clamp_to_cell sees a
+-- cursor outside the edited cell and snaps it back, which is why ]c while
+-- editing only scrolled the view once and then did nothing (#27).
+function M.goto_cell(buf, idx)
+  local st = state[buf]
+  if not st or st.mode == "command" then return select_cell(buf, idx) end
+  local ranges = M.ranges(buf)
+  idx = math.max(1, math.min(idx, #ranges))
+  local r = ranges[idx]
+  local win = vim.fn.bufwinid(buf)
+  if not (r and win ~= -1) then return end
+  st.edit_idx = idx
+  st.region = "src"
+  pcall(vim.api.nvim_win_set_cursor, win, { r.start + 1, 0 })
+  refresh_render(buf)  -- the edited-cell frame follows, and markdown shows raw
+end
+
 -- whole-cell clipboard (source lines + type), VSCode yy/p semantics
 local _clip = nil
 
@@ -419,6 +439,24 @@ local function clamp_to_cell(buf)
   local lnum = cur[1]
   local in_src = lnum - 1 >= r.start and lnum - 1 < r.stop
   local in_out = r.out_sep and lnum - 1 > r.out_sep and r.out_stop and lnum - 1 < r.out_stop
+  -- Motions inside the cell are kept inside it (j/k and the paragraph keys
+  -- stop at its edges on their own). Anything that still lands in ANOTHER
+  -- cell's text is a jump someone asked for: a search match, a diagnostic,
+  -- go-to-definition, a mouse click. Follow it and edit that cell, the way
+  -- VSCode moves the editor focus, instead of snapping back.
+  if not in_src and not in_out then
+    local idx, other = M.cell_idx_at(buf, lnum)
+    if idx ~= st.edit_idx and other then
+      local o_src = lnum - 1 >= other.start and lnum - 1 < other.stop
+      local o_out = other.out_sep and lnum - 1 > other.out_sep
+        and other.out_stop and lnum - 1 < other.out_stop
+      if o_src or o_out then
+        st.edit_idx, r = idx, other
+        in_src, in_out = o_src, o_out
+        refresh_render(buf)
+      end
+    end
+  end
   if in_src then
     st.region = "src"
   elseif in_out then
@@ -526,6 +564,38 @@ function M.attach(buf, api)
     local n = math.min(vim.v.count1, math.max(0, l - floor))
     if n > 0 then vim.cmd("normal! " .. n .. "k") end
   end
+  -- Paragraph and sentence motions reach for the next blank line or full
+  -- stop wherever it is, which is usually several cells away. In a cell they
+  -- stop at its edge, like j/k. Unclamped they would read as a jump and move
+  -- the editing into whatever cell they landed in.
+  local function edit_clamped(motion)
+    return function()
+      local r = edit_cell_range()
+      if not r then return end
+      local st = state[buf]
+      local lo, hi
+      if st and st.region == "out" and r.out_sep and r.out_stop then
+        lo, hi = r.out_sep + 2, math.max(r.out_stop, r.out_sep + 2)
+      else
+        lo, hi = r.start + 1, math.max(r.stop, r.start + 1)
+      end
+      pcall(vim.cmd, "normal! " .. vim.v.count1 .. motion)
+      local l = vim.api.nvim_win_get_cursor(0)[1]
+      if l > hi then
+        local last = vim.api.nvim_buf_get_lines(buf, hi - 1, hi, false)[1] or ""
+        pcall(vim.api.nvim_win_set_cursor, 0, { hi, math.max(0, #last - 1) })
+      elseif l < lo then
+        pcall(vim.api.nvim_win_set_cursor, 0, { lo, 0 })
+      end
+    end
+  end
+  for _, m in ipairs({ "}", "{", ")", "(" }) do
+    local passthrough = function()
+      vim.api.nvim_feedkeys(vim.v.count1 .. m, "n", false)
+    end
+    cmdmap(m, passthrough, "jupynvim: " .. m .. " within the cell", edit_clamped(m))
+  end
+
   cmdmap("j", function() M.move_selection(buf, 1) end, "jupynvim: next cell", edit_down)
   cmdmap("k", function() M.move_selection(buf, -1) end, "jupynvim: prev cell", edit_up)
   cmdmap("<Down>", function() M.move_selection(buf, 1) end, "jupynvim: next cell", edit_down)

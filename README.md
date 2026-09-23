@@ -297,11 +297,19 @@ actually run.
 All notebook keymaps are buffer-local. They only exist while you're inside
 an `.ipynb`.
 
+A notebook opens in command mode, like VSCode and JupyterLab. `j` and `k`
+select whole cells, `dd`, `yy`, `p`, `a` and `b` act on cells, and `u`
+undoes the last cell change. Enter or `i` edits the selected cell with
+plain vim, and Esc goes back. While editing, `j`, `k`, `gg`, `G` and the
+paragraph motions stay inside the cell. `]c` and `[c` move to the next or
+previous cell and keep you editing, and a search, a diagnostic jump or a
+click that lands in another cell moves the editing there.
+
 ### Cell execution
 
 | Key | Action |
 |---|---|
-| `<S-CR>` or `<leader>nr` | Run cell, advance to next. `<S-CR>` works in insert mode too |
+| `<S-CR>` or `<leader>nr` | Run cell and select the next one, or add and edit a new cell at the end. `<S-CR>` works in insert mode too |
 | `<C-CR>` | Run cell, stay. Works in insert mode too |
 | `<leader>nR` | Run all cells |
 | `<leader>nA` or `<leader>nB` | Run all cells above or below |
@@ -315,13 +323,13 @@ an `.ipynb`.
 | `<leader>nk` or `<leader>nj` | Move cell up or down |
 | `<leader>nm` or `<leader>ny` | Convert to markdown or code |
 | `<leader>nc` or `<leader>nC` | Clear current cell output, or clear all |
-| `]c` or `[c` | Jump to next or prev cell |
+| `]c` or `[c` | Jump to next or prev cell, in either mode |
 
 ### Outputs and images
 
 | Key | Action |
 |---|---|
-| `<C-j>` or `<C-k>` | Enter the next or prev cell's output in a scratch split with full vim motions |
+| `<C-j>` or `<C-k>` | While editing, hop between the cell's source and its output, which takes every vim motion. In command mode they move between windows |
 | `<leader>nI` | Save current cell's image to file |
 | `<leader>nD` | Delete an embedded image from a markdown cell |
 | `]i` or `[i` | Jump to next or prev cell with an image |
