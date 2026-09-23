@@ -61,14 +61,22 @@ echo "==================================================="
 
 # Every headless nvim gets a deadline. A spec that hangs, the way the chafa
 # render loop spun forever, fails its section instead of stalling the suite.
-nv() { perl -e 'alarm 300; exec @ARGV' nvim "$@"; }
+# If nvim cannot be executed at all, perl's exec fails and a bare -e script
+# would exit 0, a silent pass; exit 127 instead.
+nv() { perl -e 'alarm 300; exec { $ARGV[0] } @ARGV or do { print STDERR "exec $ARGV[0]: $!\n"; exit 127 }' nvim "$@"; }
 
 # conda's activate functions reference unset vars, so they abort under
 # `set -u` (which silently killed the whole suite in non-interactive / CI
 # shells). Relax set -u around every conda call.
 set +u
 # shellcheck disable=SC1091
-[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
+# Load conda's shell functions from wherever it is installed. An activated
+# env exports CONDA_EXE; ~/miniconda3 is the fallback for a clean shell.
+if [ -n "${CONDA_EXE:-}" ] && [ -x "$CONDA_EXE" ]; then
+  eval "$("$CONDA_EXE" shell.bash hook)"
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+  source "$HOME/miniconda3/etc/profile.d/conda.sh"
+fi
 # Cargo must not see a conda env. The jupynvim env exports CC, LD and LDFLAGS
 # for its own clang, whose linker cannot read a newer macOS SDK, so anything
 # cargo has to relink fails there. A warm target/ hid that until a rebuild.

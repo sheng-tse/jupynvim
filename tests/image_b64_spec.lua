@@ -165,7 +165,22 @@ do
   local both = image_cell("c1", "image/png", PNG)
   both.outputs[1].data["image/svg+xml"] = SVG
   buf = open(write_nb({ both }))
-  chk("an output with png and svg saves the png", save_bytes(buf) == RAW)
+  -- pairs() order differs between runs, so make it hand over the svg first:
+  -- a picker that walks pairs() then fails every time, not half the time
+  local real_pairs = pairs
+  pairs = function(t)
+    if type(t) == "table" and t["image/png"] and t["image/svg+xml"] then
+      local keys = {}
+      for k in next, t do keys[#keys + 1] = k end
+      table.sort(keys, function(x, y) return x > y end)
+      local i = 0
+      return function() i = i + 1; if keys[i] then return keys[i], t[keys[i]] end end
+    end
+    return real_pairs(t)
+  end
+  local saved = save_bytes(buf)
+  pairs = real_pairs
+  chk("an output with png and svg saves the png", saved == RAW)
   close(buf)
   -- a markdown data URI is base64 whatever its mime, svg included
   buf = open(write_nb({ {

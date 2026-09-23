@@ -11,10 +11,10 @@ BIN="$ROOT/core/target/release/jupynvim-core"
 [ -x "$BIN" ] || { echo "SKIP frame_layout: build core first ($BIN)"; exit 0; }
 command -v tmux >/dev/null || { echo "SKIP frame_layout: no tmux"; exit 0; }
 
-# Everything this run writes lives in its own directory: the init file, the
-# screen captures, and nvim's state and cache. Shared fixed paths let two runs
-# overwrite each other's captures, and the real state dir let a cursor
-# position persisted by an earlier run move the view this test measures.
+# The init file and the screen captures live in a directory of this run's
+# own, so two runs cannot overwrite each other's captures. nvim's state dir is
+# isolated too, where a cursor saved by an earlier run could move the view
+# this test measures. The cache dir is not; see the launch line below.
 WORK="$(mktemp -d -t jupynvim_frame.XXXXXX)"
 INIT="$WORK/init.lua"
 
