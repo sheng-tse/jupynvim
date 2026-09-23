@@ -146,6 +146,36 @@ do
   close(buf)
 end
 
+-- ── saving: which bytes land in the file ─────────────────────────────────
+do
+  local SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>'
+  local function svg_cell(v)
+    return { cell_type = "code", id = "c1", metadata = vim.empty_dict(), source = "svg()",
+             execution_count = 1, outputs = { { output_type = "display_data",
+             metadata = vim.empty_dict(), data = { ["image/svg+xml"] = v } } } }
+  end
+  -- nbformat stores an output's svg as the XML itself, as one string or as lines
+  local buf = open(write_nb({ svg_cell(SVG) }))
+  chk("a code cell's svg saves as the XML it is", save_bytes(buf) == SVG)
+  close(buf)
+  buf = open(write_nb({ svg_cell({ SVG:sub(1, 40), SVG:sub(41) }) }))
+  chk("and so does one stored as a list of lines", save_bytes(buf) == SVG)
+  close(buf)
+  -- an output carrying both: the raster, every time, not whichever pairs() gave
+  local both = image_cell("c1", "image/png", PNG)
+  both.outputs[1].data["image/svg+xml"] = SVG
+  buf = open(write_nb({ both }))
+  chk("an output with png and svg saves the png", save_bytes(buf) == RAW)
+  close(buf)
+  -- a markdown data URI is base64 whatever its mime, svg included
+  buf = open(write_nb({ {
+    cell_type = "markdown", id = "m1", metadata = vim.empty_dict(),
+    source = "![s](data:image/svg+xml;base64," .. vim.base64.encode(SVG) .. ")\n",
+  } }))
+  chk("a markdown base64 svg saves decoded", save_bytes(buf) == SVG)
+  close(buf)
+end
+
 -- ── a cache hit must not rescan the image ──────────────────────────────
 do
   local buf = open(write_nb({ image_cell("c1", "image/png", l76(PNG)) }))
