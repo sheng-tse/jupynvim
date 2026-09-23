@@ -453,8 +453,7 @@ end
 -- to follow. vim.on_key sees the key itself, so the user's own scroll maps
 -- (snacks.scroll, neoscroll) keep working untouched.
 local SCROLL_KEYS = {}
-for _, k in ipairs({ "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageUp>",
-                     "<PageDown>", "<kPageUp>", "<kPageDown>", "<S-Up>", "<S-Down>",
+for _, k in ipairs({ "<PageUp>", "<PageDown>", "<kPageUp>", "<kPageDown>", "<S-Up>", "<S-Down>",
                      "<S-PageUp>", "<S-PageDown>", "<S-kPageUp>", "<S-kPageDown>" }) do
   SCROLL_KEYS[vim.keycode(k)] = true
 end
@@ -462,6 +461,21 @@ for _, dir in ipairs({ "Up", "Down", "Left", "Right" }) do
   for _, mod in ipairs({ "", "S-", "C-", "M-", "D-", "C-S-", "S-M-", "C-M-", "C-S-M-" }) do
     SCROLL_KEYS[vim.keycode("<" .. mod .. "ScrollWheel" .. dir .. ">")] = true
   end
+end
+-- These scroll only outside insert mode. In it <C-u> and <C-w> delete, <C-d>
+-- dedents and <C-e> and <C-y> copy a character, and <C-u> at a cell's start
+-- joins it onto the separator, which is no reason to leave the cursor where
+-- a broken layout put it.
+local CTRL_SCROLL = {}
+for _, k in ipairs({ "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>", "<C-b>" }) do
+  CTRL_SCROLL[vim.keycode(k)] = true
+end
+local function scrolls(k)
+  if not k or k == "" then return false end
+  if SCROLL_KEYS[k] then return true end
+  if not CTRL_SCROLL[k] then return false end
+  local m = vim.api.nvim_get_mode().mode:sub(1, 1)
+  return m ~= "i" and m ~= "R"
 end
 -- A mouse button, with or without modifiers or a multi-click prefix.
 local CLICK_KEYS = {}
@@ -475,14 +489,32 @@ local function clicks(k)
   if k:byte(2) == 0xfc then k = k:sub(4) end
   return CLICK_KEYS[k] == true
 end
-local last_key_scrolled, last_key_clicked = false, false
+-- u, <C-r>, g- and g+: one step of undo, which the cell guard lets go on
+-- past an output the plugin wrote. :undo N and :earlier land where sent.
+local function steps(k) return k == "u" or k == "\18" end
+local last_key_scrolled, last_key_clicked, last_key_stepped, prev_key = false, false, false, nil
 vim.on_key(function(key, typed)
   if (key and key ~= "") or (typed and typed ~= "") then
     -- typed catches a map ON a scroll key (neoscroll), key a map TO one
-    last_key_scrolled = SCROLL_KEYS[key] == true or SCROLL_KEYS[typed] == true
+    last_key_scrolled = scrolls(key) or scrolls(typed)
     last_key_clicked = clicks(key) or clicks(typed)
+    last_key_stepped = steps(key) or steps(typed)
+      or ((key == "-" or key == "+") and prev_key == "g")
+    prev_key = key
+    -- a <C-r> an output written after u may have cut off, see _redo_after_branch
+    if (key == "\18" or typed == "\18") and vim.api.nvim_get_mode().mode == "n" then
+      local buf = vim.api.nvim_get_current_buf()
+      local nb = Notebook.get(buf)
+      if nb and nb._redo_to and #nb._redo_to > 0 then
+        local before = vim.fn.changenr()
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(buf) then require("jupynvim")._redo_after_branch(buf, before) end
+        end)
+      end
+    end
   end
 end, vim.api.nvim_create_namespace("jupynvim.cellmode.keys"))
+function M.last_key_stepped() return last_key_stepped end
 
 local function selecting()
   local m = vim.api.nvim_get_mode().mode:sub(1, 1)
@@ -498,6 +530,12 @@ local function clamp_to_cell(buf)
   if not st or st.mode ~= "edit" or not st.edit_idx then return end
   if vim.api.nvim_get_current_buf() ~= buf then return end
   local win = vim.api.nvim_get_current_win()
+  -- CursorMoved fires before TextChanged, so a change the cell guard has not
+  -- checked yet can have merged two cells. Ranges read from it would move
+  -- the edit or the cursor into the wrong cell. The guard's TextChanged
+  -- handler calls this again once the layout holds.
+  local nb = Notebook.get(buf)
+  if nb and nb._guard_tick and vim.api.nvim_buf_get_changedtick(buf) ~= nb._guard_tick then return end
   local ranges = M.ranges(buf)
   -- cells were removed under the edited one: edit the last that is left
   if st.edit_idx > #ranges then st.edit_idx = #ranges end
@@ -757,6 +795,19 @@ function M.attach(buf, api)
     with_modifiable(buf, function() api.delete_cell(buf) end)
   end, "jupynvim: delete cell")
   cmdmap("u", function() M.undo_cell(buf, api) end, "jupynvim: undo cell delete")
+  -- U takes back the changes on the line changed last, which vim knows by
+  -- number only. An output written since, above that line, shifted the
+  -- lines, and U rewrote whatever line took the number, in another cell.
+  map("n", "U", function()
+    local nb = Notebook.get(buf)
+    if M.is_command(buf) then return end
+    if nb and nb._shifted then
+      vim.notify("jupynvim: an output moved the lines since that change, so U could hit another line. Use u.",
+        vim.log.levels.WARN)
+      return
+    end
+    vim.api.nvim_feedkeys("U", "ni", false)
+  end, "jupynvim: U, unless an output moved the lines")
   cmdmap("yy", function() M.yank_cell(buf) end, "jupynvim: yank cell")
   cmdmap("p", function() M.paste_cell(buf, api) end, "jupynvim: paste cell below")
   cmdmap("P", function() M.paste_cell(buf, api, { above = true }) end,

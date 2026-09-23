@@ -232,27 +232,35 @@ function M._apply_output_sync(nb, ids, opts)
   local was_modifiable = vim.bo[buf].modifiable
   vim.bo[buf].modifiable = true
   local ranges = CellMode.ranges(buf)
-  CellMode.keep_edit_cursor(buf, function()
-    for i = #nb.cells, 1, -1 do
-      local cell = nb.cells[i]
-      if cell and ids[cell.id] and ranges[i] then
-        local r = ranges[i]
-        local rep = {}
-        if cell.cell_type == "code" then
-          local out_lines = Notebook.output_lines(cell)
-          if #out_lines > 0 then
-            rep = { Notebook.OUT_SEP }
-            vim.list_extend(rep, out_lines)
+  -- Outputs streaming in between two of the user's edits share one undo
+  -- step. A step per sync pushed the user's own changes out of 'undolevels'
+  -- within minutes of a chatty run. After an undo nothing can be joined, and
+  -- the write starts a step of its own.
+  local before = vim.api.nvim_buf_call(buf, vim.fn.changenr)
+  local chained = not join and nb._rewrites and nb._rewrites[before] or false
+  vim.api.nvim_buf_call(buf, function()
+    CellMode.keep_edit_cursor(buf, function()
+      for i = #nb.cells, 1, -1 do
+        local cell = nb.cells[i]
+        if cell and ids[cell.id] and ranges[i] then
+          local r = ranges[i]
+          local rep = {}
+          if cell.cell_type == "code" then
+            local out_lines = Notebook.output_lines(cell)
+            if #out_lines > 0 then
+              rep = { Notebook.OUT_SEP }
+              vim.list_extend(rep, out_lines)
+            end
           end
+          local s0 = r.out_sep or r.stop
+          local e0 = r.out_stop or s0
+          if join or chained then pcall(vim.cmd, "undojoin") end
+          pcall(vim.api.nvim_buf_set_lines, buf, s0, e0, false, rep)
         end
-        local s0 = r.out_sep or r.stop
-        local e0 = r.out_stop or s0
-        if join then pcall(vim.cmd, "undojoin") end
-        pcall(vim.api.nvim_buf_set_lines, buf, s0, e0, false, rep)
       end
-    end
+    end)
   end)
-  M._record_boundaries(nb, join)
+  M._record_boundaries(nb, not join and before or nil, { chained = chained })
   vim.bo[buf].modifiable = not CellMode.is_command(buf) and was_modifiable or false
   if not CellMode.is_command(buf) then vim.bo[buf].modifiable = true end
   Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -506,12 +514,15 @@ function M.open(path, opts)
   -- cells correctly. Vim's normal-load path auto-reads the undo file, but
   -- our BufReadCmd hijack bypasses that, so we rundo manually here.
   vim.bo[buf].undofile = true
+  local uf = vim.api.nvim_buf_call(buf, function() return vim.fn.undofile(abs) end)
   vim.api.nvim_buf_call(buf, function()
-    local uf = vim.fn.undofile(abs)
     if uf ~= "" and vim.fn.filereadable(uf) == 1 then
       pcall(vim.cmd, "silent! rundo " .. vim.fn.fnameescape(uf))
     end
   end)
+  -- the cell guard's undo numbers from the populate above named states the
+  -- wipe and the rundo replaced
+  M._start_history(nb, uf)
   M._attach_autocmds(buf)
   Keymaps.attach(buf, M)
   require("jupynvim.notebook.cellmode").attach(buf, M)
@@ -894,31 +905,78 @@ end
 -- separators by position, so the next :w put a cell's code under its
 -- neighbor's id, or dropped it. One keystroke lost a cell.
 --
--- The last good state is remembered: its lines, its separator sequence and
--- its undo number. Only whole-line separators matter for the pairing, so
--- separator text inside an ordinary line is left alone.
---   * A new change that alters the separators is taken back by restoring
---     just the lines it touched, joined to the same undo step. A join at a
---     cell's edge then has no effect, the way Backspace at the start of a
---     VSCode cell does nothing, and marks elsewhere stay where they were.
---   * Undo and redo may land on any state seen for the current cell list,
---     including ones that differ only in output regions, which are display.
---     Landing on a state from before a cell was added, removed or moved would
---     pair text with the wrong cells, so that jumps back to the last good
---     state by number, whichever way the history branched.
+-- The last good state is remembered: its lines, its layout and its undo
+-- number. The layout is the order of the whole-line separators plus the
+-- number of lines under each output marker. Output text is display and is
+-- never saved, so a source line moved under an output marker was dropped by
+-- the next :w. Separator text inside an ordinary line is left alone.
+--   * A new change that alters the layout is taken back by restoring just
+--     the lines it touched, joined to the same undo step, so marks elsewhere
+--     stay put. A join at a cell's edge keeps whatever was typed with it:
+--     <BS> at the start of a cell does nothing, the way it does in VSCode,
+--     and . or a macro that repeats it loses no text. A change that empties
+--     a cell leaves it one line to type on.
+--   * The plugin's own rewrites of outputs and cells get undo steps of
+--     their own, and outputs streaming in share one. u and <C-r> step over
+--     them, so u takes back the user's last edit and not an output. :undo N,
+--     :earlier and the like land exactly where they are sent.
+--   * Undo and redo may land on any state of the current cell list. Landing
+--     on a state from before a cell was added, removed or moved would pair
+--     text with the wrong cells, so that jumps back to the last good state
+--     by number, whichever way the history branched.
+--   * Opening wipes the undo history and reads it back from the undo file.
+--     A note saved next to that file says how far back it belongs to the
+--     cell list that was saved.
 
+-- The layout of `lines`: "C" for each cell separator, "O<n>" for each output
+-- marker with the n output lines under it. Also returns the 0-based lines
+-- where a cell has no source line left, nil when every cell has one.
 local function boundary_seq(lines)
   local CS, OS = Notebook.CELL_SEP, Notebook.OUT_SEP
-  local seq = {}
-  for _, l in ipairs(lines) do
-    if l == CS then seq[#seq + 1] = "C" elseif l == OS then seq[#seq + 1] = "O" end
+  local seq, empty = {}, nil
+  local n            -- lines since an output marker, nil in a cell's source
+  local bare = true  -- no source line yet in this cell
+  for i = 1, #lines do
+    local l = lines[i]
+    if l == CS or l == OS then
+      if n then
+        seq[#seq + 1] = n
+      elseif bare then
+        empty = empty or {}
+        empty[#empty + 1] = i - 1
+      end
+      if l == CS then
+        seq[#seq + 1] = "C"
+        n, bare = nil, true
+      else
+        seq[#seq + 1] = "O"
+        n = 0
+      end
+    elseif n then
+      n = n + 1
+    else
+      bare = false
+    end
   end
-  return table.concat(seq)
+  if n then
+    seq[#seq + 1] = n
+  elseif bare then
+    empty = empty or {}
+    empty[#empty + 1] = #lines
+  end
+  return table.concat(seq), empty
 end
 
 local function changenr(buf)
   if vim.api.nvim_get_current_buf() == buf then return vim.fn.changenr() end
   return vim.api.nvim_buf_call(buf, vim.fn.changenr)
+end
+
+-- Setting 'undolevels', even to the value it has, closes the open undo step.
+local function close_step(buf)
+  pcall(vim.api.nvim_buf_call, buf, function()
+    vim.cmd("noautocmd let &l:undolevels = &l:undolevels")
+  end)
 end
 
 -- A small id for the current cell list, reused when a list comes back.
@@ -938,27 +996,43 @@ local function remember(nb, lines, seq, nr)
   nb._good = { lines = lines, seq = seq, nr = nr }
   nb._seen = nb._seen or {}
   nb._seen[nr] = nb._ck
+  if nr > (nb._seq_max or 0) then nb._seq_max = nr end
   nb._seen_n = (nb._seen_n or 0) + 1
   if nb._seen_n > 5000 then   -- keep the recent history only
-    local keep = {}
-    for k, v in pairs(nb._seen) do if k > nr - 2000 then keep[k] = v end end
-    nb._seen, nb._seen_n = keep, vim.tbl_count(keep)
+    local keep, rw = {}, {}
+    for k, v in pairs(nb._seen) do if k == 0 or k > nr - 2000 then keep[k] = v end end
+    for k in pairs(nb._rewrites or {}) do if k > nr - 2000 then rw[k] = true end end
+    nb._seen, nb._seen_n, nb._rewrites = keep, vim.tbl_count(keep), rw
   end
+  -- CursorMoved leaves the cursor alone until this catches up with a change
+  nb._guard_tick = vim.api.nvim_buf_get_changedtick(nb.buf)
 end
 
--- The plugin rewrote the buffer (populate, output sync): the new layout and
--- cell list are the good ones. The undo step is marked as the plugin's own,
--- unless the rewrite was joined into one of the user's changes.
-function M._record_boundaries(nb, joined)
-  local lines = vim.api.nvim_buf_get_lines(nb.buf, 0, -1, false)
-  local nr = changenr(nb.buf)
+-- The plugin rewrote the buffer: the new layout and cell list are the good
+-- ones. `before` is changenr() from just before the write, nil when the write
+-- was joined to the change in progress on purpose. A write that opened an
+-- undo step of its own holds nothing of the user's, so u and <C-r> step over
+-- it, unless `how.edit` says the user asked for it: deleting an image,
+-- clearing or expanding an output. Stepping over one of those, u took back
+-- an edit of the user's in some other cell instead. The step is closed, so the user's next keys start their own
+-- instead of joining it. `how.chained` says the write was joined onto the
+-- rewrite step before it. A write that went into a step the user still has
+-- open, while typing or when a pasted data URI is swapped for a
+-- placeholder, belongs to that step.
+function M._record_boundaries(nb, before, how)
+  local buf = nb.buf
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  -- lines added or taken away: U's line number may name another line now
+  if nb._good and #lines ~= #nb._good.lines then nb._shifted = true end
+  local nr = changenr(buf)
   local ck = cells_id(nb)
   if ck ~= nb._ck then nb._ck, nb._ck_nr = ck, nr end
-  if not joined then
+  if before and (nr ~= before or (how and how.chained)) then
     nb._rewrites = nb._rewrites or {}
-    nb._rewrites[nr] = true
+    nb._rewrites[nr] = not (how and how.edit) or nil
+    close_step(buf)
   end
-  remember(nb, lines, boundary_seq(lines), nr)
+  remember(nb, lines, (boundary_seq(lines)), nr)
 end
 
 -- Rewrite every output region that no longer matches its cell's outputs,
@@ -985,9 +1059,18 @@ local function valid_layout(nb, seq)
   local groups = vim.split(seq, "C", { plain = true })
   if #groups ~= #nb.cells then return false end
   for i, g in ipairs(groups) do
-    if g ~= "" and not (g == "O" and nb.cells[i].cell_type == "code") then return false end
+    if g ~= "" and not (g:match("^O%d+$") and nb.cells[i].cell_type == "code") then return false end
   end
   return true
+end
+
+-- Does the state numbered `nr`, laid out as `seq`, belong to the current
+-- cell list? A state no event recorded, inside a macro or read back from
+-- the undo file, does when it is no older than the list and fits it.
+local function ours(nb, nr, seq, empty)
+  local s = nb._seen and nb._seen[nr]
+  if s ~= nil then return s == nb._ck end
+  return nr >= (nb._ck_nr or 0) and not empty and valid_layout(nb, seq)
 end
 
 local function with_modifiable(buf, fn)
@@ -998,115 +1081,240 @@ local function with_modifiable(buf, fn)
   if not ok then error(err, 0) end
 end
 
--- Put back the lines a change touched, from the last good state, joined to
--- the change's undo step. Returns whether the change was a single join.
-local function restore_region(buf, now, good)
+local function is_sep(l) return l == Notebook.CELL_SEP or l == Notebook.OUT_SEP end
+
+-- Hide restored separator lines at once. The render that redraws the frames
+-- is debounced, and the literal marker showed until then.
+local function conceal_seps(nb, from, lines)
+  for i, l in ipairs(lines) do
+    if is_sep(l) then
+      pcall(vim.api.nvim_buf_set_extmark, nb.buf, nb.border_ns, from + i - 1, 0, {
+        end_col = #l, conceal = "", priority = 200,
+      })
+    end
+  end
+end
+
+-- Put back what a change did to the layout, joined to its undo step. Only
+-- the lines it touched are rewritten. Returns what was done and the lines:
+--   "quiet"    a join at a cell's edge, taken back with nothing lost
+--   "kept"     a join that carried typed text, split so the text stays
+--   "partial"  the separator and output lines put back, the rest kept
+--   "back"     the whole change taken back
+local function restore_region(nb, now, good)
+  local buf = nb.buf
   local p = 1
   while p <= #now and p <= #good and now[p] == good[p] do p = p + 1 end
   local s = 0
   while s < #now - p + 1 and s < #good - p + 1 and now[#now - s] == good[#good - s] do s = s + 1 end
   local cur_last, good_last = #now - s, #good - s
-  local rep = {}
-  for i = p, good_last do rep[#rep + 1] = good[i] end
   local win = vim.fn.bufwinid(buf)
   local cur = win ~= -1 and vim.api.nvim_win_get_cursor(win) or nil
-  local CS, OS = Notebook.CELL_SEP, Notebook.OUT_SEP
-  local join = cur_last == p and good_last == p + 1
-  with_modifiable(buf, function()
-    pcall(vim.cmd, "undojoin")
-    vim.api.nvim_buf_set_lines(buf, p - 1, cur_last, false, rep)
-  end)
-  if cur and win ~= -1 and cur[1] >= p and cur[1] <= math.max(cur_last, p) then
-    local pos
-    if join then
-      local a = good[p]
-      if a == CS or a == OS then
-        -- joined onto the separator above (<BS> at a cell's start): back to
-        -- where that cell's first line was being edited
-        pos = { p + 1, math.max(0, cur[2] - #a) }
-      else
-        -- the separator below joined on (<Del> or J at a cell's end): stay
-        -- at the join, so text typed next lands where it was going
-        pos = { p, math.min(cur[2], #a) }
-      end
-    else
-      pos = { math.min(cur[1], math.max(good_last, p)), cur[2] }
+  local rep, how, pos = {}, "back", nil
+
+  if cur_last == good_last then
+    -- As many lines as before, as after a :s that matched separator text:
+    -- put back each separator and output line, and keep the rest of it.
+    local out = false
+    for i = 1, p - 1 do
+      if good[i] == Notebook.CELL_SEP then out = false elseif good[i] == Notebook.OUT_SEP then out = true end
     end
-    pcall(vim.api.nvim_win_set_cursor, win, pos)
+    for i = p, good_last do
+      local g = good[i]
+      if g == Notebook.CELL_SEP then out = false end
+      rep[#rep + 1] = (out or is_sep(g) or is_sep(now[i])) and g or now[i]
+      if g == Notebook.OUT_SEP then out = true end
+    end
+    how = "back"
+    for i, l in ipairs(rep) do
+      if l ~= good[p + i - 1] then how = "partial"; break end
+    end
+  elseif cur_last == p and good_last == p + 1 then
+    -- two lines became one
+    local a, b, l = good[p], good[p + 1], now[p]
+    if is_sep(a) and vim.startswith(l, a) then
+      -- onto the separator above: <BS>, <C-w> or <C-u> at a cell's start
+      rep = { a, l:sub(#a + 1) }
+      how = rep[2] == b and "quiet" or "kept"
+      if cur and cur[1] == p then pos = { p + 1, math.max(0, cur[2] - #a) } end
+    elseif is_sep(b) and vim.endswith(l, b) then
+      -- the separator below pulled up: J, gJ or <Del> at a cell's end. J
+      -- adds a space, which goes again.
+      local rest = l:sub(1, #l - #b)
+      if vim.startswith(rest, a) and rest:sub(#a + 1):match("^%s*$") then rest = a end
+      rep = { rest, b }
+      how = rest == a and "quiet" or "kept"
+      if cur and cur[1] == p then pos = { p, math.min(cur[2], #rest) } end
+    else
+      -- the separator itself was eaten into. Holding <BS> or <Del> is quiet.
+      rep = { a, b }
+      local held = (is_sep(a) and vim.endswith(l, b) and vim.startswith(a, l:sub(1, #l - #b)))
+        or (is_sep(b) and vim.startswith(l, a) and vim.endswith(b, l:sub(#a + 1)))
+      how = held and "quiet" or "back"
+      if cur and cur[1] == p then
+        pos = is_sep(a) and { p + 1, 0 } or { p, math.min(cur[2], #a) }
+      end
+    end
+  else
+    for i = p, good_last do rep[#rep + 1] = good[i] end
   end
-  return join
+
+  with_modifiable(buf, function()
+    vim.api.nvim_buf_call(buf, function()
+      pcall(vim.cmd, "undojoin")
+      vim.api.nvim_buf_set_lines(buf, p - 1, cur_last, false, rep)
+    end)
+  end)
+  conceal_seps(nb, p - 1, rep)
+  if not pos and cur and cur[1] >= p and cur[1] <= math.max(cur_last, p) then
+    -- onto the line the cursor was on, where it is now, not onto whatever
+    -- took its number, such as a separator
+    local text = now[cur[1]]
+    if text and not is_sep(text) then
+      for i, l in ipairs(rep) do
+        if l == text then pos = { p + i - 1, cur[2] }; break end
+      end
+    end
+    pos = pos or { math.min(cur[1], math.max(p + #rep - 1, p)), cur[2] }
+    local l = rep[pos[1] - p + 1]
+    if l and is_sep(l) then
+      -- never on a separator: onto the source line next to it
+      pos = { pos[1] > p and pos[1] - 1 or math.min(pos[1] + 1, p + #rep), 0 }
+    end
+  end
+  if pos and win ~= -1 then pcall(vim.api.nvim_win_set_cursor, win, pos) end
+  return how, vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+end
+
+-- Give every emptied cell one empty line, joined to the change that emptied
+-- it, the way vim keeps a line in a buffer dd empties and VSCode one in a
+-- cleared cell. Without it the cursor sat on a separator, where every key
+-- was taken back, and o opened its line in the next cell.
+local function fill_empty(buf, empty)
+  local win = vim.fn.bufwinid(buf)
+  local cur = win ~= -1 and vim.api.nvim_win_get_cursor(win) or nil
+  with_modifiable(buf, function()
+    vim.api.nvim_buf_call(buf, function()
+      for k = #empty, 1, -1 do
+        pcall(vim.cmd, "undojoin")
+        vim.api.nvim_buf_set_lines(buf, empty[k], empty[k], false, { "" })
+      end
+    end)
+  end)
+  if cur then
+    -- parked on a separator next to an emptied cell: onto its new line
+    for k, at in ipairs(empty) do
+      if cur[1] == at or cur[1] == at + 1 then
+        pcall(vim.api.nvim_win_set_cursor, win, { at + k, 0 })
+        break
+      end
+    end
+  end
+  return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+end
+
+-- u and <C-r> are about the user's edits. After one that took back or redid
+-- a rewrite of the plugin's own, keep going, but never onto a state from
+-- another cell list. `from` is the number the buffer was at before.
+local function step_over_rewrites(nb, nr, from)
+  local buf = nb.buf
+  local rw = nb._rewrites or {}
+  local function step(cmd)
+    pcall(vim.api.nvim_buf_call, buf, function() vim.cmd("silent! " .. cmd) end)
+  end
+  local function landed_ours()
+    local l = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local sq, em = boundary_seq(l)
+    return ours(nb, changenr(buf), sq, em)
+  end
+  if nr < from then
+    local undone = from
+    while rw[undone] do
+      local at = changenr(buf)
+      step("undo")
+      if changenr(buf) == at then break end
+      if not landed_ours() then step("redo"); break end
+      undone = at
+    end
+  else
+    while rw[changenr(buf)] do
+      local at = changenr(buf)
+      step("redo")
+      if changenr(buf) == at then break end
+      if not landed_ours() then step("undo"); break end
+    end
+  end
 end
 
 -- `lines` is the buffer as the TextChanged handler read it. Returns true when
--- it took the change back, and the handler should not act on these lines.
+-- the change was taken back and there is nothing to act on. Otherwise returns
+-- false and the lines to act on, which differ from `lines` when the buffer
+-- moved on: an undo that kept going past an output, text kept from a join, a
+-- line given to an emptied cell, or an output put back.
 function M._guard_boundaries(nb, lines)
   local buf = nb.buf
   lines = lines or vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local good = nb._good
-  if not good then M._record_boundaries(nb); return false end
-  local seq, nr = boundary_seq(lines), changenr(buf)
-  local seen = nb._seen and nb._seen[nr]
+  if not good then M._record_boundaries(nb); return false, lines end
+  local seq, empty = boundary_seq(lines)
+  local nr = changenr(buf)
 
-  if seen ~= nil and nr ~= good.nr then
-    -- undo or redo onto a state we accepted before
-    if seen == nb._ck then
-      local rw = nb._rewrites or {}
-      local function step(cmd) pcall(vim.api.nvim_buf_call, buf, function() vim.cmd("silent! " .. cmd) end) end
-      if nr < good.nr and rw[good.nr] then
-        -- u meant the user's own last edit. One that only took back an
-        -- output the plugin wrote keeps going, and stops short of anything
-        -- from before a cell change.
-        local undone = good.nr
-        while rw[undone] do
-          local at = changenr(buf)
-          step("undo")
-          local now = changenr(buf)
-          if now == at then break end
-          if nb._seen[now] ~= nil and nb._seen[now] ~= nb._ck then step("redo"); break end
-          undone = at
-        end
-      elseif nr > good.nr then
-        -- and redo steps over the plugin's output rewrites the same way
-        while rw[changenr(buf)] do
-          local at = changenr(buf)
-          step("redo")
-          if changenr(buf) == at then break end
-        end
-      end
-      lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-      seq, nr = boundary_seq(lines), changenr(buf)
-      nb._outputs_stale = true
-      remember(nb, lines, seq, nr)
-      return false
-    end
-  elseif nr >= good.nr then
+  if nr == good.nr or nr > (nb._seq_max or nr) then
     -- A new change, or more of the one in progress: every keystroke of an
     -- insert shares one undo number, so a Backspace across a cell's start
-    -- mid-insert carries the last good state's number. It may not touch the
-    -- separators.
+    -- mid-insert carries the last good state's number.
+    if nr ~= good.nr then
+      -- a change of the user's own, which also puts U's line back in step
+      nb._redo_to, nb._shifted = nil, nil
+    end
     if seq == good.seq then
-      remember(nb, lines, seq, nr)
+      if empty then lines = fill_empty(buf, empty) end
+      remember(nb, lines, seq, changenr(buf))
       if nb._outputs_stale then
         nb._outputs_stale = nil
         M._resync_outputs(nb)
+        lines = nb._good.lines
       end
-      return false
+      return false, lines
     end
-    local joined = restore_region(buf, lines, good.lines)
-    local after = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    if boundary_seq(after) == good.seq then
-      remember(nb, after, good.seq, changenr(buf))
-      if not joined then
-        vim.notify("jupynvim: that edit would have merged or split cells, so it was taken back. " ..
-          "Delete a cell with dd outside it, or add one with a or b.", vim.log.levels.WARN)
+    local how, after = restore_region(nb, lines, good.lines)
+    local aseq, aempty = boundary_seq(after)
+    if aseq == good.seq and not aempty then
+      remember(nb, after, aseq, changenr(buf))
+      Render.refresh(nb, vim.fn.bufwinid(buf))
+      if how == "partial" then
+        vim.notify("jupynvim: separator and output lines are read-only, so that edit left them as they were.",
+          vim.log.levels.WARN)
+      elseif how == "back" then
+        vim.notify(seq:gsub("%d", "") == good.seq:gsub("%d", "")
+          and "jupynvim: outputs are read-only, so that edit was taken back."
+          or "jupynvim: that edit would have merged or split cells, so it was taken back. " ..
+             "Delete a cell with dd outside it, or add one with a or b.", vim.log.levels.WARN)
       end
+      if how == "kept" or how == "partial" then return false, after end
       return true
     end
-  elseif nr >= (nb._ck_nr or 0) and valid_layout(nb, seq) then
-    -- undo onto a state from this cell list that no event recorded, such as
-    -- a step inside a macro
-    remember(nb, lines, seq, nr)
-    return false
+  elseif ours(nb, nr, seq, empty) then
+    -- undo, redo or a jump onto a state of this cell list
+    local jumped = nb._jumped
+    nb._jumped = nil
+    if not jumped and require("jupynvim.notebook.cellmode").last_key_stepped() then
+      -- where each u came from, for a <C-r> an output cut off, see _redo_after_branch
+      nb._redo_to = nb._redo_to or {}
+      if nr < good.nr then
+        table.insert(nb._redo_to, good.nr)
+      else
+        table.remove(nb._redo_to)
+      end
+      step_over_rewrites(nb, nr, good.nr)
+      lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      seq = boundary_seq(lines)
+    elseif not jumped then
+      nb._redo_to = nil
+    end
+    nb._outputs_stale = true
+    remember(nb, lines, seq, changenr(buf))
+    return false, lines
   end
 
   -- An undo that would reach past a cell change, or a repair that did not
@@ -1114,23 +1322,115 @@ function M._guard_boundaries(nb, lines)
   -- there, rebuild from the cells, which nothing broken has been synced into.
   pcall(vim.api.nvim_buf_call, buf, function() vim.cmd("silent! undo " .. good.nr) end)
   local after = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  if boundary_seq(after) == good.seq then
-    remember(nb, after, good.seq, changenr(buf))
+  local aseq, aempty = boundary_seq(after)
+  if aseq == good.seq and not aempty then
+    remember(nb, after, aseq, changenr(buf))
   else
     M._populate_buffer(nb)
   end
+  Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.notify("jupynvim: undo inside a cell stops at the last cell change. " ..
     "Press u outside the cell to undo adding, deleting or moving cells.", vim.log.levels.WARN)
   return true
 end
 
-function M._populate_buffer(nb)
+-- An output written after u, while a cell streams, starts a branch of the
+-- undo tree, and <C-r> then says "Already at newest change" with the undone
+-- edit one branch over. Cell mode calls this after a <C-r> that redid
+-- nothing: go back to the state the last u came from.
+function M._redo_after_branch(buf, before)
+  local nb = Notebook.get(buf)
+  if not (nb and nb._redo_to and #nb._redo_to > 0) then return end
+  if changenr(buf) ~= before or not (nb._rewrites and nb._rewrites[before]) then return end
+  local target = table.remove(nb._redo_to)
+  nb._jumped = true
+  pcall(vim.api.nvim_buf_call, buf, function() vim.cmd("silent! undo " .. target) end)
+  M._sync_model(nb)
+  Render.refresh(nb, vim.fn.bufwinid(buf))
+end
+
+-- Sync the cells from the buffer, putting a change TextChanged has not seen
+-- yet through the guard first. A run key can arrive in the same read as the
+-- <BS> that broke a boundary, and ":s/x/y/ | w" saves before TextChanged
+-- fires at all, so both synced a broken layout into the cells.
+function M._sync_model(nb)
+  if nb._good and vim.api.nvim_buf_get_changedtick(nb.buf) ~= nb._guard_tick then
+    M._guard_boundaries(nb)
+  end
+  nb:sync_from_buffer()
+end
+
+-- ---------- undo history across opens ----------
+
+local function history_note(uf)
+  return vim.fn.stdpath("state") .. "/jupynvim/undo/" .. vim.fn.sha256(uf) .. ".json"
+end
+
+-- Written with the undo file on every save: how far back that history
+-- belongs to the cell list saved with it, and which of its steps are the
+-- plugin's own rewrites. The undo file itself cannot say.
+function M._note_history(nb, uf)
+  local ut = vim.api.nvim_buf_call(nb.buf, vim.fn.undotree)
+  local floor = nb._ck_nr or 0
+  local rw = {}
+  for k in pairs(nb._rewrites or {}) do if k >= floor then rw[#rw + 1] = k end end
+  table.sort(rw)
+  local path = history_note(uf)
+  pcall(vim.fn.mkdir, vim.fn.fnamemodify(path, ":h"), "p")
+  local f = io.open(path, "w")
+  if not f then return end
+  f:write(vim.json.encode({ hash = nb.saved_hash, cur = ut.seq_cur, last = ut.seq_last,
+                            floor = floor, rewrites = rw }))
+  f:close()
+end
+
+-- Open wipes the undo history, then reads it back from the undo file, so the
+-- numbers recorded while the buffer was populated no longer name anything.
+-- Start again from where the history stands. With nothing read back, an undo
+-- to the root reads as change 0, which is this opened state. History read
+-- back is trusted as far as the note saved with it says, and not at all
+-- without one: a cell moved in that session would pair text with the wrong
+-- cells.
+function M._start_history(nb, uf)
+  local buf = nb.buf
+  local ut = vim.api.nvim_buf_call(buf, vim.fn.undotree)
+  nb._seen, nb._seen_n, nb._rewrites, nb._outputs_stale = {}, 0, {}, nil
+  nb._redo_to, nb._jumped, nb._shifted = nil, nil, nil
+  nb._seq_max = ut.seq_last
+  local floor = 0
+  if #ut.entries == 0 then
+    nb._seen[0] = nb._ck
+  else
+    floor = ut.seq_last + 1
+    local f = uf and uf ~= "" and io.open(history_note(uf), "r")
+    local ok, note = false, nil
+    if f then
+      ok, note = pcall(vim.json.decode, f:read("*a"))
+      f:close()
+    end
+    if ok and type(note) == "table" and note.hash == nb.saved_hash and note.cur == ut.seq_cur
+        and note.last == ut.seq_last and type(note.floor) == "number" then
+      floor = note.floor
+      for _, k in ipairs(type(note.rewrites) == "table" and note.rewrites or {}) do
+        nb._rewrites[k] = true
+      end
+    end
+  end
+  nb._ck_nr = floor
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  remember(nb, lines, (boundary_seq(lines)), changenr(buf))
+end
+
+-- `how` goes to _record_boundaries: { edit = true } for a rewrite the user
+-- asked for, which u takes back like any other change.
+function M._populate_buffer(nb, how)
   local lines = nb:to_lines()
   vim.bo[nb.buf].modifiable = true
+  local before = changenr(nb.buf)
   require("jupynvim.notebook.cellmode").keep_edit_cursor(nb.buf, function()
     vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
   end)
-  M._record_boundaries(nb)
+  M._record_boundaries(nb, before, how)
   vim.bo[nb.buf].modified = false
   -- cell command mode keeps the buffer non-modifiable; restore the lock
   -- after this (possibly async) repopulation
@@ -1375,9 +1675,15 @@ function M._attach_autocmds(buf)
       -- One read of the buffer serves the boundary check, the modified check
       -- and the sync. A change that broke a cell boundary is taken back first,
       -- which leaves the buffer as it was at the last good state, already
-      -- synced.
+      -- synced. When the guard moved the buffer on and let it stand, it hands
+      -- back the lines it ended on.
       local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-      if M._guard_boundaries(nb, lines) then return end
+      local took
+      took, lines = M._guard_boundaries(nb, lines)
+      -- CursorMoved came before this and left a cursor in a layout that was
+      -- not checked yet alone. Now that it holds, keep the cursor in its cell.
+      require("jupynvim.notebook.cellmode").clamp_to_cell(buf)
+      if took then return end
       -- Mark the buffer modified IF the current text actually differs from
       -- the last-saved state. Vim's automatic modified tracking depends on a
       -- saved-tick reference that we never update because BufWriteCmd
@@ -1533,7 +1839,7 @@ function M._restore_cursor_positions(nb, buf, win)
 end
 
 function M._save(nb)
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local cl = M._ensure_client()
   local Embedded = require("jupynvim.notebook.embedded")
   local incoming = {}
@@ -1579,12 +1885,13 @@ function M._save(nb)
     -- via the backend, bypassing vim's write path. Call wundo so subsequent
     -- session opens can rundo and restore undo across the gap.
     if vim.bo[nb.buf].undofile then
-      vim.api.nvim_buf_call(nb.buf, function()
-        local uf = vim.fn.undofile(nb.path)
-        if uf ~= "" then
+      local uf = vim.api.nvim_buf_call(nb.buf, function() return vim.fn.undofile(nb.path) end)
+      if uf ~= "" then
+        vim.api.nvim_buf_call(nb.buf, function()
           pcall(vim.cmd, "silent! wundo! " .. vim.fn.fnameescape(uf))
-        end
-      end)
+        end)
+        pcall(M._note_history, nb, uf)
+      end
     end
   end
 end
@@ -1595,7 +1902,7 @@ function M.run_cell(buf, opts)
   opts = opts or {}
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cell_id, range = nb:cell_at_line(lnum)
   if not cell_id then return end
@@ -1663,7 +1970,7 @@ end
 function M.run_all(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   -- Sequence cells: each one's execute fires only after the previous update + execute have completed
   local cl = M._nb_client(nb)
   local code_cells = {}
@@ -1686,7 +1993,7 @@ end
 function M.run_above(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local cl = M._nb_client(nb)
@@ -1710,7 +2017,7 @@ end
 function M.run_below(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local seen = false
@@ -1764,7 +2071,7 @@ function M.add_cell(buf, where, cb, no_record)
   M._settle(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id, range = nb:cell_at_line(lnum)
   local _, cur_idx = nb:get_cell(cur_id)
@@ -1802,7 +2109,7 @@ function M.set_cell_content(buf, idx, lines, cell_type)
   cell.source = table.concat(lines or {}, "\n")
   if cell_type then cell.cell_type = cell_type end
   cell.outputs = {}
-  M._populate_buffer(nb)
+  M._populate_buffer(nb, { edit = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.bo[buf].modified = true   -- after the repopulate, which resets it
   local cl = M._nb_client(nb)
@@ -1818,7 +2125,7 @@ function M.delete_cell(buf, no_record)
   M._settle(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   if not cur_id then return end
@@ -1860,7 +2167,7 @@ function M.move_cell(buf, delta, no_record)
   M._settle(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   if not cur_id then return end
@@ -1890,7 +2197,7 @@ end
 function M.set_cell_type(buf, t)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   if not cur_id then return end
@@ -2069,6 +2376,8 @@ end
 function M.clear_outputs(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
+  -- the buffer is rebuilt from the cells below: bring them up to date first
+  M._sync_model(nb)
   local Image = require("jupynvim.notebook.image")
   nb.image_ids = nb.image_ids or {}
   for _, c in ipairs(nb.cells) do
@@ -2089,7 +2398,7 @@ function M.clear_outputs(buf)
   -- rewritten or the old output text stays on screen until the next reopen.
   -- Refresh immediately so this works even against an older backend that has
   -- no clear_outputs RPC; the call below is best-effort.
-  M._populate_buffer(nb)
+  M._populate_buffer(nb, { edit = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   -- AFTER the repopulate: _populate_buffer resets modified, and without this
   -- :w / :wqa would skip the buffer and the clear would not reach disk.
@@ -2109,7 +2418,7 @@ end
 function M.clear_cell_output(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cell_id = nb:cell_at_line(lnum)
   if not cell_id then return end
@@ -2126,7 +2435,7 @@ function M.clear_cell_output(buf)
   for _, key in ipairs(Image.clear_outputs_for_cell(cell.id)) do nb.image_ids[key] = nil end
   -- Same as clear_outputs: the output text lives in the buffer, so the model
   -- edit only shows up once the buffer is rewritten.
-  M._populate_buffer(nb)
+  M._populate_buffer(nb, { edit = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.bo[buf].modified = true   -- after the repopulate, which resets it
   M._ensure_client():call("clear_cell_output",
@@ -2158,7 +2467,7 @@ end
 function M.delete_image(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cell_id = nb:cell_at_line(lnum)
   if not cell_id then return end
@@ -2186,7 +2495,8 @@ function M.delete_image(buf)
     -- forgotten too, so an undo that brings the line back sends it again
     pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id .. "_md_" .. idx)
     if nb.image_ids then nb.image_ids[cell.id .. "_md_" .. idx] = nil end
-    M._populate_buffer(nb)
+    -- an edit, which u takes back like one, bringing the image with it
+    M._populate_buffer(nb, { edit = true })
     Render.refresh(nb, vim.fn.bufwinid(buf))
     vim.bo[buf].modified = true
     vim.notify("jupynvim: deleted image " .. idx .. " (undo with `u` to restore)",
@@ -2302,7 +2612,7 @@ end
 function M.save_image(buf, path)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cell_id = nb:cell_at_line(lnum)
   if not cell_id then return end
@@ -2388,6 +2698,7 @@ end
 function M.toggle_output_expand(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
+  M._sync_model(nb)   -- the buffer is rebuilt from the cells below
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cell_id = nb:cell_at_line(lnum)
   if not cell_id then return end
@@ -2397,7 +2708,7 @@ function M.toggle_output_expand(buf)
     return
   end
   local expanded = Notebook.toggle_output_expanded(cell_id)
-  M._populate_buffer(nb)
+  M._populate_buffer(nb, { edit = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.notify("jupynvim: output " .. (expanded and "expanded" or "collapsed"),
     vim.log.levels.INFO)
@@ -2411,7 +2722,7 @@ function M.toggle_output(buf) M.enter_output(buf, "down") end
 function M.jump_image(buf, delta)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local _, ranges = nb:to_lines()
   if #ranges == 0 then return end
   local CellMode = require("jupynvim.notebook.cellmode")
@@ -2448,7 +2759,7 @@ end
 function M.jump_cell(buf, delta)
   local nb = Notebook.get(buf)
   if not nb then return end
-  nb:sync_from_buffer()
+  M._sync_model(nb)
   local CellMode = require("jupynvim.notebook.cellmode")
   local cur = CellMode.cell_idx_at(buf, vim.api.nvim_win_get_cursor(0)[1])
   local target = math.max(1, math.min(cur + delta, #CellMode.ranges(buf)))
