@@ -22,8 +22,13 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
+          # Static musl, so it runs on any x86_64 Linux. A glibc build made
+          # on the current Ubuntu needs a glibc that new, which rules out
+          # most servers and HPC login nodes. It is published under the
+          # -gnu name as well, which is what installers before this looked
+          # for, so they get a binary that runs too.
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
           # x86_64-apple-darwin omitted: macos-13 runners queue slowly on
           # free tier and Intel mac users fall back to cargo build via
           # install.lua. Re-add if demand arises.
@@ -34,6 +39,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: musl linker
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: cache
         uses: Swatinem/rust-cache@v2
@@ -49,12 +58,15 @@ jobs:
           mkdir -p dist
           cp core/target/${{ matrix.target }}/release/jupynvim-core dist/jupynvim-core-${{ matrix.target }}
           strip dist/jupynvim-core-${{ matrix.target }} || true
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            cp dist/jupynvim-core-x86_64-unknown-linux-musl dist/jupynvim-core-x86_64-unknown-linux-gnu
+          fi
           ls -lah dist/
 
       - uses: actions/upload-artifact@v4
         with:
           name: jupynvim-core-${{ matrix.target }}
-          path: dist/jupynvim-core-${{ matrix.target }}
+          path: dist/jupynvim-core-*
           if-no-files-found: error
 
   release:
