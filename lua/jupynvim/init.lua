@@ -250,6 +250,7 @@ function M._apply_output_sync(nb, ids)
       end
     end
   end)
+  M._record_boundaries(nb)
   vim.bo[buf].modifiable = not CellMode.is_command(buf) and was_modifiable or false
   if not CellMode.is_command(buf) then vim.bo[buf].modifiable = true end
   Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -850,12 +851,99 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
   end
 end
 
+-- ---------- cell boundaries ----------
+--
+-- Cells, their outputs and the boundaries between them are all real buffer
+-- lines, so ordinary editing can break a boundary. <BS> at the start of a
+-- cell joined its first line onto the separator above, and J or <Del> at a
+-- cell's end joined the one below. dj, dG or d} from a cell's last line
+-- deleted one outright. sync_from_buffer pairs cells with the text between
+-- separators by position, so the next :w put a cell's code under its
+-- neighbour's id, or dropped it. One keystroke lost a cell.
+--
+-- The marker lines seen after the last good change are remembered, and a
+-- change that alters them is taken back. A marker glued to text is split
+-- back out, joined to the same undo step, so the edit simply has no effect,
+-- the way Backspace at the start of a VSCode cell does nothing. A marker
+-- deleted, added or reordered is reverted, with a message saying why.
+
+local function boundary_scan(lines)
+  local CS, OS = Notebook.CELL_SEP, Notebook.OUT_SEP
+  local seq, glued = {}, false
+  for _, l in ipairs(lines) do
+    if l == CS then seq[#seq + 1] = "C"
+    elseif l == OS then seq[#seq + 1] = "O"
+    elseif l:find(CS, 1, true) or l:find(OS, 1, true) then glued = true end
+  end
+  return table.concat(seq), glued
+end
+
+function M._record_boundaries(nb)
+  nb._boundaries = boundary_scan(vim.api.nvim_buf_get_lines(nb.buf, 0, -1, false))
+end
+
+-- Split every marker glued to text back onto its own line. Whitespace next to
+-- a marker (from J, or an indent) is dropped rather than kept as a new line.
+local function unglue(buf)
+  local CS, OS = Notebook.CELL_SEP, Notebook.OUT_SEP
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local win = vim.fn.bufwinid(buf)
+  local cur = win ~= -1 and vim.api.nvim_win_get_cursor(win) or nil
+  local out, new_cur = {}, nil
+  for i, l in ipairs(lines) do
+    local mark = (l ~= CS and l ~= OS) and ((l:find(CS, 1, true) and CS) or (l:find(OS, 1, true) and OS))
+    if not mark then
+      out[#out + 1] = l
+    else
+      local a = l:find(mark, 1, true)
+      local before, after = l:sub(1, a - 1), l:sub(a + #mark)
+      if before:match("%S") then out[#out + 1] = (before:gsub("%s+$", "")) end
+      out[#out + 1] = mark
+      if after:match("%S") then
+        out[#out + 1] = (after:gsub("^%s+", ""))
+        -- a join at the start of a cell: the cursor goes back to that line
+        if cur and cur[1] == i then new_cur = { #out, 0 } end
+      elseif cur and cur[1] == i then
+        new_cur = { math.max(#out - 1, 1), 0 }
+      end
+    end
+  end
+  pcall(vim.cmd, "undojoin")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, out)
+  if new_cur and win ~= -1 then pcall(vim.api.nvim_win_set_cursor, win, new_cur) end
+end
+
+-- Returns true when it took the change back.
+function M._guard_boundaries(nb)
+  local buf = nb.buf
+  local seq, glued = boundary_scan(vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  if glued then
+    unglue(buf)
+    M._record_boundaries(nb)
+    return true
+  end
+  if nb._boundaries == nil or seq == nb._boundaries then
+    nb._boundaries = seq
+    return false
+  end
+  -- Take back exactly the change that did it. That change was either an edit,
+  -- undone by undo, or an undo reaching past one of our own rewrites, undone
+  -- by redo; undoing further would walk the wrong way through history.
+  local ut = vim.fn.undotree(buf)
+  local cmd = (ut.seq_cur < ut.seq_last) and "silent! redo" or "silent! undo"
+  vim.api.nvim_buf_call(buf, function() vim.cmd(cmd) end)
+  vim.notify("jupynvim: that change would have merged or split cells, so it was reverted. " ..
+    "Delete a cell with dd outside the cell, or add one with a or b.", vim.log.levels.WARN)
+  return true
+end
+
 function M._populate_buffer(nb)
   local lines = nb:to_lines()
   vim.bo[nb.buf].modifiable = true
   require("jupynvim.notebook.cellmode").keep_edit_cursor(nb.buf, function()
     vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
   end)
+  M._record_boundaries(nb)
   vim.bo[nb.buf].modified = false
   -- cell command mode keeps the buffer non-modifiable; restore the lock
   -- after this (possibly async) repopulation
@@ -1097,6 +1185,9 @@ function M._attach_autocmds(buf)
     callback = function()
       local nb = Notebook.get(buf)
       if not nb then return end
+      -- a change that broke a cell boundary is taken back before anything
+      -- reads the buffer; the repair itself fires this again
+      if M._guard_boundaries(nb) then return end
       -- Mark the buffer modified IF the current text actually differs from
       -- the last-saved state. Vim's automatic modified tracking depends on a
       -- saved-tick reference that we never update because BufWriteCmd

@@ -322,6 +322,57 @@ do
   pcall(vim.api.nvim_buf_delete, buf, { force = true })
 end
 
+-- ── cell boundaries survive edits that would break them ─────────────────
+-- Separators are real lines, and sync_from_buffer pairs cells with the text
+-- between them by position. Backspace at the start of a cell glued its first
+-- line onto the separator, and :w then dropped a cell. tests/boundary_screen.sh
+-- drives the real keys; this pins the guard itself.
+do
+  local b, path = open_fixture()
+  local nb = NB.get(b)
+  local function lines() return vim.api.nvim_buf_get_lines(b, 0, -1, false) end
+  local r2 = CM.ranges(b)[2]
+  vim.bo[b].modifiable = true
+  -- what <BS> at the start of cell 2 does: join its first line onto the separator
+  local sep = r2.start - 1
+  vim.api.nvim_buf_set_lines(b, sep, sep + 2, false, { NB.CELL_SEP .. "print(2)" })
+  J._guard_boundaries(nb)
+  local l = lines()
+  chk("a separator glued to a cell's first line is split back",
+      l[sep + 1] == NB.CELL_SEP and l[sep + 2] == "print(2)", vim.inspect(l))
+  nb:sync_from_buffer()
+  chk("and every cell keeps its own source", sources(b)[2] == "print(2)" and #sources(b) == 3,
+      vim.inspect(sources(b)))
+
+  -- what dj from cell 1's last line does: delete it and the separator below
+  local before = lines()
+  local r1 = CM.ranges(b)[1]
+  vim.api.nvim_buf_set_lines(b, r1.stop - 1, r1.stop + 1, false, {})
+  local notes = {}
+  local real = vim.notify
+  vim.notify = function(m) notes[#notes + 1] = m end
+  local reverted = J._guard_boundaries(nb)
+  vim.notify = real
+  chk("a deleted separator is reverted", reverted and vim.deep_equal(lines(), before),
+      vim.inspect(lines()))
+  chk("with a message saying why", #notes == 1 and notes[1]:find("merged or split", 1, true) ~= nil)
+
+  -- the check runs on every keystroke, so it has to stay cheap on a big notebook
+  local big = {}
+  for i = 1, 400 do
+    for j = 1, 10 do big[#big + 1] = ("x%d_%d = %d"):format(i, j, j) end
+    if i < 400 then big[#big + 1] = NB.CELL_SEP end
+  end
+  vim.api.nvim_buf_set_lines(b, 0, -1, false, big)
+  nb._boundaries = nil
+  J._guard_boundaries(nb)
+  local t0 = vim.uv.hrtime()
+  for _ = 1, 50 do J._guard_boundaries(nb) end
+  local ms = (vim.uv.hrtime() - t0) / 1e6 / 50
+  chk("the boundary check on a 4400-line notebook costs under 2ms", ms < 2, ("%.2f ms"):format(ms))
+  os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
+end
+
 -- ── 5. notebook keymaps must survive a later buffer-local binder ─────────
 -- We attach during BufReadCmd; plugins that map the same keys buffer-locally
 -- on FileType land afterwards and win. LazyVim's treesitter-textobjects takes

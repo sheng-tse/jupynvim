@@ -26,6 +26,8 @@
 #      remote_hl_screen.sh (real rendered screen via tmux: dashboard/explorer
 #      highlights actually paint)
 #      edit_nav_screen.sh (real nvim via tmux: ]c/[c while editing a cell)
+#      boundary_screen.sh (real nvim via tmux: edits that would break a cell
+#      boundary, and what :w saves)
 #
 # All must pass for the suite to succeed.
 
@@ -159,6 +161,8 @@ bash "$ROOT/tests/remote_hl_screen.sh"
 section "remote-hl screen" "$?"
 bash "$ROOT/tests/edit_nav_screen.sh"
 section "edit-nav screen" "$?"
+bash "$ROOT/tests/boundary_screen.sh"
+section "boundary screen" "$?"
 
 # ── Summary ─────────────────────────────────────────────
 echo
