@@ -98,6 +98,7 @@ vim.fn.system = function(cmd)
   -- master_alive actually checks.
   orig_fn_system({ "true" })
   if joined:match("shasum") then
+    _G.__shasums = (_G.__shasums or 0) + 1
     -- stand-in hash: the file's own bytes, so "v1" and "v2" differ
     local f = io.open(fake_bin, "r")
     local body = f and f:read("*a") or ""
@@ -194,15 +195,17 @@ else
 end
 
 -- ---- 3. a spawn that dies before answering drops the record -----------
--- 127 missing binary, 126 wrong arch, 2 srun, 1 tcsh: all say the record lied
+-- when that spawn trusted the record without a probe: 127 missing binary,
+-- 126 wrong arch, 2 srun, 1 tcsh all say the record lied
 for _, code in ipairs({ 127, 126, 2, 1 }) do
-  verify("before " .. code)
+  verify("re-probe before " .. code)   -- after a drop this probes and records again
+  verify("trusted before " .. code)    -- warm: the spawn rests on the record alone
   if spawn_exit then spawn_exit(code) end
   vim.wait(50)
   if J._deploy_record_get("probehost", HOST, CORE) ~= nil then
-    fail(("a spawn dying with %d before it answered must drop the deploy record"):format(code))
+    fail(("a trusted spawn dying with %d before it answered must drop the deploy record"):format(code))
   else
-    ok(("spawn dying with %d before answering dropped the deploy record"):format(code))
+    ok(("a trusted spawn dying with %d before answering dropped the deploy record"):format(code))
   end
 end
 local n3 = verify("after a failed spawn")
@@ -211,10 +214,29 @@ if n3 ~= 1 then
 else
   ok("after a failed spawn the next verify re-probed (" .. n3 .. " round trip)")
 end
+-- that verify probed, so the spawn did not rest on the record: an early
+-- death there is the transport's or the job's, not the binary's
+if spawn_exit then spawn_exit(1) end
+vim.wait(50)
+if J._deploy_record_get("probehost", HOST, CORE) == nil then
+  fail("a spawn that followed a probe must not drop the record it just confirmed")
+else
+  ok("a spawn that followed a probe keeps the record when it dies")
+end
+-- ssh's own 255 (no master yet, auth refused, our own stop) is not the binary
+verify("trusted before 255")
+if spawn_exit then spawn_exit(255) end
+vim.wait(50)
+if J._deploy_record_get("probehost", HOST, CORE) == nil then
+  fail("ssh exiting 255 must not drop the deploy record")
+else
+  ok("ssh exiting 255 keeps the deploy record")
+end
 -- a backend that answered and later went away (stopped, link cut) says
 -- nothing about the binary; clearing then would cost a probe every reconnect
+verify("trusted before a late exit")
 spawned.heard = true
-if spawn_exit then spawn_exit(255) end
+if spawn_exit then spawn_exit(1) end
 vim.wait(50)
 if J._deploy_record_get("probehost", HOST, CORE) == nil then
   fail("a backend that answered and then exited must keep the deploy record")
@@ -222,10 +244,35 @@ else
   ok("a backend exiting after it answered keeps the record")
 end
 
+-- the real RPC client marks a backend that has spoken at all
+do
+  local function run(cmd)
+    local done = false
+    local cl = orig_spawn({ cmd = cmd, on_exit = function() done = true end })
+    vim.wait(3000, function() return done end, 20)
+    vim.wait(100)
+    return cl
+  end
+  -- one framed msgpack notification, [2, "x", []], then exit 1
+  local talker = run({ "sh", "-c", "printf '\\000\\000\\000\\005\\223\\002\\241x\\220'; exit 1" })
+  local mute = run({ "sh", "-c", "exit 1" })
+  if talker.heard and not mute.heard then
+    ok("a backend that sent anything counts as heard, one that sent nothing does not")
+  else
+    fail(("heard: talker=%s mute=%s"):format(tostring(talker.heard), tostring(mute.heard)))
+  end
+end
+
 -- ---- 4. a changed binary re-probes and re-uploads ----------------------
 uploaded = 0
 write_bin("v2")                       -- new artifact => new sha
+_G.__shasums = 0
 local n4 = verify("changed")
+if _G.__shasums ~= 1 then
+  fail(("a changed binary must be hashed once per verify, was hashed %d times"):format(_G.__shasums))
+else
+  ok("the changed binary was hashed once, not once per lookup")
+end
 if n4 ~= 1 then
   fail("a changed local binary must re-probe exactly once, made " .. n4)
 else

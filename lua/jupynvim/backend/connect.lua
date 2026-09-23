@@ -334,7 +334,7 @@ local function ensure_remote_binary(alias, profile)
   local have  -- { triple, bin, sha } already resolved, so it is not built twice
   if record.arch and record.sha and ARCH_TRIPLE[record.arch] then
     local bin, sha = local_artifact(ARCH_TRIPLE[record.arch])
-    if bin and sha and sha == record.sha then return end  -- already deployed
+    if bin and sha and sha == record.sha then return true end  -- deployed, on the record's word
     arch = record.arch
     have = { triple = ARCH_TRIPLE[record.arch], bin = bin, sha = sha }
   end
@@ -401,15 +401,19 @@ local function spawn_client(cmd_vec, alias)
     on_exit = function(code)
       M.clients[alias] = nil
       if alias == "local" then M.client = nil end
-      -- A remote backend that died before it ever answered did not start,
-      -- and the deploy record that skipped the probe was wrong about it: the
-      -- binary is gone (127), built for another arch (126), or the shell or
-      -- srun said so another way (1, 2). Drop the record so the next connect
-      -- probes and re-uploads. Only an early death counts. A backend that
-      -- answered and later exits, stopped or cut off, says nothing about
-      -- the binary, and clearing then would cost a probe on every reconnect.
+      -- A remote backend that died before it ever answered did not start.
+      -- 127 always means the binary is gone. Any other early death (126 for
+      -- another arch, 2 from srun, 1 from tcsh) counts against the deploy
+      -- record only when this spawn trusted it without a probe. ssh's own
+      -- 255 (no master yet, refused auth, our own stop) and a failing srun
+      -- or setup_cmd say nothing about the binary, and dropping the record
+      -- for them put the 20-50s probe back on every later connect. A backend
+      -- that answered and later exits says nothing about the binary either.
       if alias ~= "local" and code ~= 0 and not (client and client.heard) then
-        pcall(M._deploy_record_clear, alias)
+        local trusted = M._record_trusted and M._record_trusted[alias]
+        if code == 127 or (trusted and code ~= 255) then
+          pcall(M._deploy_record_clear, alias)
+        end
         if M._binary_verified then M._binary_verified[alias] = nil end
       end
       vim.schedule(function()
@@ -576,7 +580,10 @@ function M.client_for(alias)
   -- spawn below uses the fresh binary.
   M._binary_verified = M._binary_verified or {}
   if not M._binary_verified[alias] then
-    pcall(ensure_remote_binary, alias, profile)
+    local okp, trusted = pcall(ensure_remote_binary, alias, profile)
+    -- whether this spawn rests on the deploy record alone, with no probe
+    M._record_trusted = M._record_trusted or {}
+    M._record_trusted[alias] = (okp and trusted == true) or nil
     M._binary_verified[alias] = true
   end
   -- Attach alias as `label` so build_ssh_cmd can find the cached slurm string.
