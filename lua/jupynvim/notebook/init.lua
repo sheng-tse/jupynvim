@@ -321,8 +321,8 @@ end
 -- Re-derive cell sources from current buffer contents.
 -- Updates self.cells[i].source in place. Cell count must match separator count + 1;
 -- if it doesn't, we rebuild the cell list (assigning new ids from existing where positionally aligned).
-function Notebook:sync_from_buffer()
-  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+function Notebook:sync_from_buffer(lines)
+  lines = lines or vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
   local sources = { {} }
   local in_out = false
   for _, l in ipairs(lines) do

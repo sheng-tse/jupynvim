@@ -364,7 +364,7 @@ do
     if i < 400 then big[#big + 1] = NB.CELL_SEP end
   end
   vim.api.nvim_buf_set_lines(b, 0, -1, false, big)
-  nb._boundaries = nil
+  nb._good = nil   -- take the big buffer as the new baseline
   J._guard_boundaries(nb)
   local t0 = vim.uv.hrtime()
   for _ = 1, 50 do J._guard_boundaries(nb) end
