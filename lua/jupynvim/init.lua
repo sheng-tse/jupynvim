@@ -231,23 +231,25 @@ function M._apply_output_sync(nb, ids)
   local was_modifiable = vim.bo[buf].modifiable
   vim.bo[buf].modifiable = true
   local ranges = CellMode.ranges(buf)
-  for i = #nb.cells, 1, -1 do
-    local cell = nb.cells[i]
-    if cell and ids[cell.id] and ranges[i] then
-      local r = ranges[i]
-      local rep = {}
-      if cell.cell_type == "code" then
-        local out_lines = Notebook.output_lines(cell)
-        if #out_lines > 0 then
-          rep = { Notebook.OUT_SEP }
-          vim.list_extend(rep, out_lines)
+  CellMode.keep_edit_cursor(buf, function()
+    for i = #nb.cells, 1, -1 do
+      local cell = nb.cells[i]
+      if cell and ids[cell.id] and ranges[i] then
+        local r = ranges[i]
+        local rep = {}
+        if cell.cell_type == "code" then
+          local out_lines = Notebook.output_lines(cell)
+          if #out_lines > 0 then
+            rep = { Notebook.OUT_SEP }
+            vim.list_extend(rep, out_lines)
+          end
         end
+        local s0 = r.out_sep or r.stop
+        local e0 = r.out_stop or s0
+        pcall(vim.api.nvim_buf_set_lines, buf, s0, e0, false, rep)
       end
-      local s0 = r.out_sep or r.stop
-      local e0 = r.out_stop or s0
-      pcall(vim.api.nvim_buf_set_lines, buf, s0, e0, false, rep)
     end
-  end
+  end)
   vim.bo[buf].modifiable = not CellMode.is_command(buf) and was_modifiable or false
   if not CellMode.is_command(buf) then vim.bo[buf].modifiable = true end
   Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -841,7 +843,9 @@ end
 function M._populate_buffer(nb)
   local lines = nb:to_lines()
   vim.bo[nb.buf].modifiable = true
-  vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
+  require("jupynvim.notebook.cellmode").keep_edit_cursor(nb.buf, function()
+    vim.api.nvim_buf_set_lines(nb.buf, 0, -1, false, lines)
+  end)
   vim.bo[nb.buf].modified = false
   -- cell command mode keeps the buffer non-modifiable; restore the lock
   -- after this (possibly async) repopulation

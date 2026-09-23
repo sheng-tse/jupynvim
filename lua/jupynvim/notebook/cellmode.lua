@@ -423,6 +423,27 @@ function M.paste_cell(buf, api, opts)
 end
 
 -- ── edit-mode confinement ──────────────────────────────────────────────────
+
+-- The last key typed was a scroll. Scrolling drags the cursor along to keep
+-- it on screen, into whatever cell sits at the edge, and that is not a jump
+-- to follow. vim.on_key sees the key itself, so the user's own scroll maps
+-- (snacks.scroll, neoscroll) keep working untouched.
+local SCROLL_KEYS = {}
+for _, k in ipairs({ "<ScrollWheelUp>", "<ScrollWheelDown>", "<ScrollWheelLeft>",
+                     "<ScrollWheelRight>", "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>",
+                     "<C-b>", "<PageUp>", "<PageDown>" }) do
+  SCROLL_KEYS[vim.keycode(k)] = true
+end
+local last_key_scrolled = false
+vim.on_key(function(key, typed)
+  local k = (typed and typed ~= "") and typed or key
+  if k and k ~= "" then last_key_scrolled = SCROLL_KEYS[k] == true end
+end, vim.api.nvim_create_namespace("jupynvim.cellmode.keys"))
+
+local function selecting()
+  local m = vim.api.nvim_get_mode().mode:sub(1, 1)
+  return m == "v" or m == "V" or m == "\22" or m == "s" or m == "S" or m == "\19"
+end
 -- VSCode can't move focus out of a cell editor with plain motions: clamp
 -- the cursor back into the edited cell whenever it strays (covers G, gg,
 -- }, searches, everything). The clamp is REGION-aware: while the cursor
@@ -433,7 +454,10 @@ local function clamp_to_cell(buf)
   if not st or st.mode ~= "edit" or not st.edit_idx then return end
   local win = vim.fn.bufwinid(buf)
   if win == -1 or vim.api.nvim_get_current_buf() ~= buf then return end
-  local r = M.ranges(buf)[st.edit_idx]
+  local ranges = M.ranges(buf)
+  -- cells were removed under the edited one: edit the last that is left
+  if st.edit_idx > #ranges then st.edit_idx = #ranges end
+  local r = ranges[st.edit_idx]
   if not r then return end
   local cur = vim.api.nvim_win_get_cursor(win)
   local lnum = cur[1]
@@ -443,8 +467,11 @@ local function clamp_to_cell(buf)
   -- stop at its edges on their own). Anything that still lands in ANOTHER
   -- cell's text is a jump someone asked for: a search match, a diagnostic,
   -- go-to-definition, a mouse click. Follow it and edit that cell, the way
-  -- VSCode moves the editor focus, instead of snapping back.
-  if not in_src and not in_out then
+  -- VSCode moves the editor focus, instead of snapping back. Two moves are
+  -- not jumps. In visual mode the cursor is the far end of a selection, and
+  -- following it let ggVGd select and delete every cell below. A scroll
+  -- drags the cursor to the window edge. Both snap back as before.
+  if not in_src and not in_out and not selecting() and not last_key_scrolled then
     local idx, other = M.cell_idx_at(buf, lnum)
     if idx ~= st.edit_idx and other then
       local o_src = lnum - 1 >= other.start and lnum - 1 < other.stop
@@ -478,6 +505,39 @@ local function clamp_to_cell(buf)
   end
 end
 M.clamp_to_cell = clamp_to_cell
+
+-- Run a buffer rewrite without it moving the edit. set_lines keeps the
+-- cursor's line NUMBER, so when an output above or under the cursor shrinks
+-- (a clear, a collapse, a re-run), that number lands in the next cell and the
+-- jump follower in clamp_to_cell would switch the edited cell. This puts the
+-- cursor back at the same place in the same cell before CursorMoved sees it.
+function M.keep_edit_cursor(buf, fn)
+  local st = state[buf]
+  local win = vim.fn.bufwinid(buf)
+  if not (st and st.mode == "edit" and st.edit_idx and win ~= -1) then return fn() end
+  local r = M.ranges(buf)[st.edit_idx]
+  if not r then return fn() end
+  local cur = vim.api.nvim_win_get_cursor(win)
+  local l0 = cur[1] - 1
+  local in_out = r.out_sep and l0 > r.out_sep and r.out_stop and l0 < r.out_stop
+  local off = in_out and (l0 - r.out_sep) or (l0 - r.start)
+  local ret = fn()
+  local n = M.ranges(buf)[st.edit_idx]
+  if n then
+    local lnum
+    if in_out and n.out_sep and n.out_stop and n.out_stop > n.out_sep + 1 then
+      lnum = math.min(n.out_sep + off, n.out_stop - 1) + 1
+    elseif in_out then
+      -- the output it sat in is gone: back to the end of the source
+      st.region = "src"
+      lnum = math.max(n.stop, n.start + 1)
+    else
+      lnum = math.min(n.start + off, math.max(n.stop - 1, n.start)) + 1
+    end
+    pcall(vim.api.nvim_win_set_cursor, win, { lnum, cur[2] })
+  end
+  return ret
+end
 
 -- C-j/C-k inside a cell: hop between the source editor and its output
 -- region (both are real buffer lines).
@@ -590,8 +650,10 @@ function M.attach(buf, api)
     end
   end
   for _, m in ipairs({ "}", "{", ")", "(" }) do
+    -- synchronous: feedkeys would queue it behind keys already typed or in a
+    -- macro, and run them out of order
     local passthrough = function()
-      vim.api.nvim_feedkeys(vim.v.count1 .. m, "n", false)
+      pcall(vim.cmd, "normal! " .. vim.v.count1 .. m)
     end
     cmdmap(m, passthrough, "jupynvim: " .. m .. " within the cell", edit_clamped(m))
   end

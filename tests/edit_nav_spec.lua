@@ -213,6 +213,10 @@ do
   chk("<leader>nc on an output clears THAT cell's output",
       #nb.cells[1].outputs == 0 and #nb.cells[2].outputs == 1,
       ("c1 has %d, c2 has %d"):format(#nb.cells[1].outputs, #nb.cells[2].outputs))
+  moved(buf)
+  chk("and the rewrite does not move the editing into the next cell",
+      edit_idx(buf) == 1 and idx_here(buf) == 1 and not CM.is_command(buf),
+      ("edit_idx %s, cursor in cell %d"):format(tostring(edit_idx(buf)), idx_here(buf)))
   close(buf, p)
 end
 
