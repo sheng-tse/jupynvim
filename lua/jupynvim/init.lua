@@ -336,6 +336,28 @@ local function find_local_venv_python(start_dir)
 end
 M._find_local_venv_python = find_local_venv_python
 
+-- The kernel's language as a Neovim filetype. Only a notebook with no
+-- language metadata at all is assumed to be Python. Any other unknown
+-- language used to become "python" too, and pyright attached to it.
+local KNOWN_FT = { python = "python", julia = "julia", r = "r", javascript = "javascript",
+                   typescript = "typescript", bash = "sh", sh = "sh", zsh = "zsh" }
+local function language_filetype(snap)
+  local meta = snap.metadata or {}
+  local info = meta.language_info or {}
+  local lang = (meta.kernelspec or {}).language or info.name
+  if type(lang) ~= "string" or lang == "" then return "python" end
+  lang = lang:lower()
+  if KNOWN_FT[lang] then return KNOWN_FT[lang] end
+  local ext = info.file_extension
+  if type(ext) == "string" and ext ~= "" then
+    local ft = vim.filetype.match({ filename = "cell" .. ext })
+    if ft then return ft end
+  end
+  lang = lang:gsub("[^%w_.-]", "")
+  return lang ~= "" and lang or "text"
+end
+M._language_filetype = language_filetype
+
 function M.open(path, opts)
   opts = opts or {}
   -- Route through the right client. opts.alias picks a specific remote
@@ -431,6 +453,7 @@ function M.open(path, opts)
   vim.b[buf].jupynvim_filetype = ft
 
   local nb = Notebook.create(buf, abs, sid, snap)
+  nb.notebook_meta = { language = ft }
   M._populate_buffer(nb)
   -- Snapshot the rendered buffer text as the "saved" baseline. TextChanged
   -- compares against this to decide whether to force modified=true. Without
@@ -574,7 +597,10 @@ function M.open(path, opts)
   -- introspection runs locally. For remote notebooks the kernel lives on the
   -- remote backend; the LSP work that wants sys.path won't make sense anyway
   -- until we implement Phase 6 (remote LSP relay). Skip both for now.
-  if not is_remote then
+  -- Python notebooks only. For any other kernel argv[1] is its own runtime,
+  -- and probing it with `-c "import sys"` handed a julia binary to pyright
+  -- as the python path.
+  if not is_remote and ft == "python" then
     if M.config.auto_venv ~= false then
       local nb_dir = vim.fn.fnamemodify(abs, ":h")
       py_path = find_local_venv_python(nb_dir)
@@ -654,16 +680,6 @@ function M.open(path, opts)
   -- Auto-start kernel based on notebook metadata
   vim.defer_fn(function() M.start_kernel(buf) end, 50)
   return buf
-end
-
-function language_filetype(snap)
-  local meta = snap.metadata or {}
-  local kspec = meta.kernelspec or {}
-  local lang = kspec.language or meta.language_info and meta.language_info.name
-  if not lang then return "python" end
-  -- Map known kernel languages to Neovim filetypes
-  local map = { python = "python", julia = "julia", r = "r", javascript = "javascript", typescript = "typescript" }
-  return map[lang:lower()] or "python"
 end
 
 -- Attach LSP clients manually. Two problems we work around here:
@@ -885,7 +901,9 @@ end
 -- AST sees only code.
 function M._sync_treesitter_ranges(nb)
   if not vim.treesitter then return end
-  local ok, parser = pcall(vim.treesitter.get_parser, nb.buf, vim.bo[nb.buf].filetype)
+  local ft = vim.bo[nb.buf].filetype
+  local ok, parser = pcall(vim.treesitter.get_parser, nb.buf,
+    vim.treesitter.language.get_lang(ft) or ft)
   if not ok or not parser then return end
   -- When the treesitter highlighter is active, turn off Vim's regex syntax.
   -- They otherwise both run: treesitter (scoped to code cells below) colors the
@@ -969,7 +987,12 @@ function M._attach_autocmds(buf)
     callback = function()
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(buf) then return end
-        local want_ft = vim.b[buf].jupynvim_filetype or "python"
+        -- Unset means no live notebook here yet: :bdelete clears b: vars but
+        -- keeps this buffer-local autocmd, and on the next :e it fires before
+        -- M.open is done. Guessing "python" then started pyright on a Julia
+        -- notebook (#32), and nothing ever detached it.
+        local want_ft = vim.b[buf].jupynvim_filetype
+        if not want_ft then return end
         if vim.bo[buf].filetype ~= want_ft then
           vim.bo[buf].filetype = want_ft
         end
@@ -1631,7 +1654,7 @@ function M.start_kernel(buf, kernel_name)
     vim.notify("jupynvim: kernel '" .. (res.kernel_name or "?") .. "' started", vim.log.levels.INFO)
     -- Auto-inject inline plotting magic for python kernels (silent — no output)
     local lang = (nb.notebook_meta and nb.notebook_meta.language) or "python"
-    if (res.kernel_name or ""):lower():find("python") or lang == "python" then
+    if lang == "python" then
       cl:call("execute_silent", {
         session_id = nb.session_id,
         code = "try:\n    get_ipython().run_line_magic('matplotlib', 'inline')\nexcept Exception:\n    pass\n",
@@ -1641,7 +1664,7 @@ function M.start_kernel(buf, kernel_name)
     -- matches what `pip list` in that env reports. Local-only — the LSP
     -- runs on the user's machine and can't introspect a remote python.
     -- Phase 6 (remote LSP relay) will be the right path for remote.
-    if nb.alias then return end
+    if nb.alias or lang ~= "python" then return end
     cl:call("list_kernels", {}, function(_, kernels)
       if not kernels then return end
       local active = res.kernel_name
@@ -2197,6 +2220,11 @@ function M.setup(opts)
       if M._opening and M._opening[abs] then return end
       local b = vim.fn.bufnr(abs)
       local force = b > 0 and Notebook.get(b) ~= nil
+      -- A reopen after :bdelete finds the old notebook's buffer-local
+      -- autocmds still attached to a buffer whose options and b: vars were
+      -- reset. Drop them now, before BufEnter queues one; M.open attaches a
+      -- fresh set.
+      if force then pcall(vim.api.nvim_del_augroup_by_name, "Jupynvim_" .. b) end
       -- Pre-populate the buffer with the on-disk file's line count of empty
       -- placeholder lines BEFORE scheduling M.open. Plugins that grep the
       -- raw .ipynb json and then call nvim_win_set_cursor on a matched line
