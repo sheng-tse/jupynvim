@@ -18,6 +18,8 @@
 #      + reopen_lsp_spec.lua (which language servers attach, issue #32)
 #      + edit_nav_spec.lua (moving between cells while editing, issue #27,
 #      and which cell an output row belongs to)
+#      + multi_image_spec.lua (several images in one cell, issue #34, and
+#      clear_output(wait) / update_display_data)
 #   5. frame_layout.sh (real rendered screen via tmux: frame alignment across
 #      terminal-split / floating-window layout changes)
 #      remote_hl_screen.sh (real rendered screen via tmux: dashboard/explorer
@@ -127,7 +129,8 @@ section "remote-hl spec" "$?"
 # the spec never reached its own exit: a Lua error aborts the chunk, and with a
 # plain `qa!` there that crash used to count as a pass.
 for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec deploy_probe_spec \
-            keymap_override_spec image_b64_spec reopen_lsp_spec edit_nav_spec; do
+            keymap_override_spec image_b64_spec reopen_lsp_spec edit_nav_spec \
+            multi_image_spec; do
   out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'cquit 3' 2>&1)
   rc=$?
   echo "$out" | tail -1

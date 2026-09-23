@@ -618,6 +618,16 @@ function M.resume_animations()
 end
 function M.animations_paused() return M._anim_paused end
 
+local function stop_timer(p)
+  if p and p.timer then
+    pcall(p.timer.stop, p.timer)
+    pcall(p.timer.close, p.timer)
+    p.timer = nil
+  end
+end
+
+local inflight = {}  -- key -> "src_hash|renderer" of a transmit under way
+
 -- Is the image the caller would ask for already transmitted for this cell?
 -- Keyed on the request, the source bytes and the renderer asked for, not on
 -- what was stored: a jpeg or gif is stored as its converted png, and a failed
@@ -638,6 +648,25 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
   if existing and existing.src_hash == src_hash and existing.want == want then
     callback(existing.image_id)
     return
+  end
+  -- A local-mode transmit waits in call_sync, and vim.wait runs scheduled
+  -- renders meanwhile, which asked for the same image again and sent it a
+  -- second time under a new id that nothing ever freed. The outer transmit
+  -- finishes and refreshes, so a nested request for it just stands down.
+  if not opts._src_hash then
+    local tag = tostring(src_hash) .. "|" .. want
+    if inflight[cell_id] == tag then return end
+    inflight[cell_id] = tag
+    local done = callback
+    callback = function(id)
+      if inflight[cell_id] == tag then inflight[cell_id] = nil end
+      -- the image this one replaced is still held by the terminal; free it
+      if id and existing and existing.image_id ~= id and placements[cell_id] ~= existing then
+        stop_timer(existing)
+        kitty_call_async("kitty_clear_image", { image_id = existing.image_id })
+      end
+      done(id)
+    end
   end
   -- Outputs are cleaned once when they enter the model. This covers anything
   -- that did not come through there, and only runs on a miss, where a
@@ -826,14 +855,6 @@ function M.reassert_virtual_placements()
   end
 end
 
-local function stop_timer(p)
-  if p and p.timer then
-    pcall(p.timer.stop, p.timer)
-    pcall(p.timer.close, p.timer)
-    p.timer = nil
-  end
-end
-
 function M.clear_for_cell(cell_id)
   local p = placements[cell_id]
   if not p then return end
@@ -842,11 +863,37 @@ function M.clear_for_cell(cell_id)
   placements[cell_id] = nil
 end
 
+-- Registry key of a code cell's image output, one per output. The owner is
+-- recorded rather than parsed back out of the key, because nothing stops a
+-- cell id from looking like another cell's id plus a suffix.
+local key_owner = {}
+function M.output_key(cell_id, idx)
+  local key = tostring(cell_id) .. "\31out" .. tostring(idx)
+  key_owner[key] = cell_id
+  return key
+end
+
+-- Free the output images of `cell_id` whose keys are not in `keep` (all of
+-- them when keep is nil). Markdown images are keyed separately and stay.
+-- Returns the keys it cleared.
+function M.clear_outputs_for_cell(cell_id, keep)
+  local cleared = {}
+  for key, owner in pairs(key_owner) do
+    if owner == cell_id and not (keep and keep[key]) then
+      M.clear_for_cell(key)
+      key_owner[key] = nil
+      cleared[#cleared + 1] = key
+    end
+  end
+  return cleared
+end
+
 function M.clear_all()
   for k, p in pairs(placements) do
     stop_timer(p)
     placements[k] = nil
   end
+  for k in pairs(key_owner) do key_owner[k] = nil end
   kitty_call_async("kitty_clear_all", {})
 end
 

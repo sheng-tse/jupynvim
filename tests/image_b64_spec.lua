@@ -79,6 +79,8 @@ local function open(path)
   return buf
 end
 
+local C1 = Image.output_key("c1", 1)   -- the first output of cell c1
+
 local function placement(key, ms)
   vim.wait(ms or 3000, function() return Image._placements[key] ~= nil end, 20)
   return Image._placements[key]
@@ -114,7 +116,7 @@ for _, v in ipairs({
 }) do
   local label, value = v[1], v[2]
   local buf = open(write_nb({ image_cell("c1", "image/png", value) }))
-  local p = placement("c1")
+  local p = placement(C1)
   chk(label .. ": the image is transmitted", p and p.renderer == "placeholder",
       p and ("renderer " .. tostring(p.renderer)) or "no placement")
   local stored = NB.get(buf).cells[1].outputs[1].data["image/png"]
@@ -127,7 +129,7 @@ end
 do
   local buf = open(write_nb({ image_cell("c1", "image/png", "\n") }))
   vim.wait(500)
-  chk("whitespace-only data renders nothing", Image._placements.c1 == nil)
+  chk("whitespace-only data renders nothing", Image._placements[C1] == nil)
   notes = {}
   chk("whitespace-only data saves nothing", save_bytes(buf) == nil)
   chk("whitespace-only data says there is no image",
@@ -147,13 +149,13 @@ end
 -- ── a cache hit must not rescan the image ──────────────────────────────
 do
   local buf = open(write_nb({ image_cell("c1", "image/png", l76(PNG)) }))
-  placement("c1")
+  placement(C1)
   local stored = NB.get(buf).cells[1].outputs[1].data["image/png"]
   if type(stored) == "table" then stored = table.concat(stored, "") end
   local noop = function() end
   local t0 = vim.uv.hrtime()
   for _ = 1, 500 do
-    Image.ensure_transmitted("c1", stored, noop, { renderer = "placeholder", mime = "image/png" })
+    Image.ensure_transmitted(C1, stored, noop, { renderer = "placeholder", mime = "image/png" })
   end
   local ms = (vim.uv.hrtime() - t0) / 1e6
   chk("500 cache hits on a 77KB image stay cheap (render path, every keystroke)", ms < 30,
@@ -173,7 +175,7 @@ end
 
 if magick then
   local buf = open(write_nb({ image_cell("c1", "image/jpeg", PNG) }))
-  placement("c1", 8000)
+  placement(C1, 8000)
   vim.wait(300)
   conversions = 0
   local win = vim.fn.bufwinid(buf)
@@ -193,7 +195,7 @@ if vim.fn.executable("chafa") == 1 then
     return real_exec(name)
   end
   local buf = open(write_nb({ image_cell("c1", "image/jpeg", PNG) }))
-  local p = placement("c1", 8000)
+  local p = placement(C1, 8000)
   chk("without ImageMagick a jpeg falls back to chafa", p and p.renderer == "chafa")
   local n0 = Render._render_n or 0
   vim.wait(1500)

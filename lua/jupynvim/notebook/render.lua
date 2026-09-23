@@ -218,33 +218,48 @@ end
 -- under the input editor (VSCode's output gutter).
 local OUT_INDENT = "  "
 
--- Output IMAGES as virt rows. Text outputs are REAL buffer lines now (the
--- OUT_SEP region emitted by Notebook:to_lines), so only kitty/ascii image
--- rows remain virtual. `lead` prefixes every row (these rows render with
--- virt_lines_leftcol).
-local function build_image_virt_lines(cell, width, nb, lead)
-  lead = (lead or "") .. OUT_INDENT
-  local rows = {}
-  local b64
-  for _, o in ipairs(cell.outputs or {}) do
+-- Every image output of a code cell, in output order. Each has its own
+-- registry key, so its own kitty image id, placement and rows: two
+-- plt.show() calls in one cell are two images (#34). They used to share one
+-- slot keyed by the cell, so the render kept only the first while the live
+-- path kept overwriting it with the latest. gif > png > jpeg within one
+-- output, so a bundle carrying both animates.
+local function image_outputs(cell)
+  local list = {}
+  for i, o in ipairs(cell.outputs or {}) do
     if o.output_type == "execute_result" or o.output_type == "display_data" then
       local data = o.data or {}
       for _, m in ipairs({ "image/gif", "image/png", "image/jpeg" }) do
         local v = data[m]
         if type(v) == "table" then v = table.concat(v, "") end
-        if type(v) == "string" and v ~= "" then b64 = v; break end
+        if type(v) == "string" and v ~= "" then
+          list[#list + 1] = { key = image.output_key(cell.id, i), b64 = v, mime = m }
+          break
+        end
       end
-      if b64 then break end
     end
   end
-  if b64 then
-    local ph = image.placeholder_virt_lines(cell.id)
+  return list
+end
+M._image_outputs = image_outputs
+
+-- Output IMAGES as virt rows. Text outputs are REAL buffer lines now (the
+-- OUT_SEP region emitted by Notebook:to_lines), so only kitty/ascii image
+-- rows remain virtual. `lead` prefixes every row (these rows render with
+-- virt_lines_leftcol). Images stack in output order with a blank row
+-- between them.
+local function build_image_virt_lines(cell, width, nb, lead)
+  lead = (lead or "") .. OUT_INDENT
+  local rows = {}
+  for n, img in ipairs(image_outputs(cell)) do
+    if n > 1 then table.insert(rows, { { lead, HL_OUTPUT } }) end
+    local ph = image.placeholder_virt_lines(img.key)
     if ph then
       for _, line in ipairs(ph) do
         table.insert(rows, { { lead, "Normal" }, { line[1][1], line[1][2] } })
       end
     else
-      local ascii = image.ascii_lines_for(cell.id)
+      local ascii = image.ascii_lines_for(img.key)
       if ascii then
         for _, line in ipairs(ascii) do
           table.insert(rows, { { lead .. line, "Normal" } })
@@ -504,53 +519,45 @@ end
 -- directly at the correct screen row using Kitty's a=T (transmit-and-place).
 function M.place_images(nb, cell, range, win, gut)
   nb.image_ids = nb.image_ids or {}
-  local b64, mime
-  for _, o in ipairs(cell.outputs or {}) do
-    if (o.output_type == "execute_result" or o.output_type == "display_data") then
-      local d = o.data or {}
-      for _, m in ipairs({ "image/gif", "image/png", "image/jpeg" }) do
-        local v = d[m]
-        if type(v) == "table" then v = table.concat(v, "") end
-        if type(v) == "string" and v ~= "" then b64 = v; mime = m; break end
-      end
-      if b64 then break end
-    end
+  local imgs = image_outputs(cell)
+  local keep = {}
+  for _, img in ipairs(imgs) do keep[img.key] = true end
+  -- outputs that are gone (a re-run with fewer plots, a clear) free theirs
+  for _, key in ipairs(image.clear_outputs_for_cell(cell.id, keep)) do
+    nb.image_ids[key] = nil
   end
-  if not b64 then
-    image.clear_for_cell(cell.id)
-    nb.image_ids[cell.id] = nil
-    return
-  end
+  if #imgs == 0 then return end
   local renderer = (require("jupynvim").config.image_renderer) or "chafa"
-  -- Only a fresh transmit needs the follow-up refresh. Deciding that from the
-  -- stored renderer looped forever when a jpeg fell back to chafa: the stored
-  -- renderer never matched the one asked for, so every render scheduled
-  -- another.
-  local was_cached = image.is_cached(cell.id, b64, renderer)
-  image.ensure_transmitted(cell.id, b64, function(id)
-    if not id then return end
-    nb.image_ids[cell.id] = id
-    if renderer == "kitty" then
-      vim.schedule(function()
-        if not win or not vim.api.nvim_win_is_valid(win) then
-          win = vim.fn.bufwinid(nb.buf)
-        end
-        if not win or win == -1 then return end
-        local anchor_lnum = math.min(range.stop, vim.api.nvim_buf_line_count(nb.buf))
-        local pos = vim.fn.screenpos(win, anchor_lnum, 1)
-        if pos and pos.row and pos.row > 0 then
-          local img_row = pos.row + 2
-          local img_col = (gut or 7) + 3
-          local cfg = require("jupynvim").config or {}
-          image.place_at_screen_row(cell.id, img_row, img_col,
-            cfg.image_rows or 10, cfg.image_cols or 44)
-        end
-      end)
-    end
-    if not was_cached then
-      vim.schedule(function() M.refresh(nb, win) end)
-    end
-  end, { renderer = renderer, mime = mime })
+  local cfg = require("jupynvim").config or {}
+  for n, img in ipairs(imgs) do
+    -- Only a fresh transmit needs the follow-up refresh. Deciding that from
+    -- the stored renderer looped forever when a jpeg fell back to chafa:
+    -- the stored renderer never matched the one asked for.
+    local was_cached = image.is_cached(img.key, img.b64, renderer)
+    image.ensure_transmitted(img.key, img.b64, function(id)
+      if not id then return end
+      nb.image_ids[img.key] = id
+      if renderer == "kitty" then
+        vim.schedule(function()
+          if not win or not vim.api.nvim_win_is_valid(win) then
+            win = vim.fn.bufwinid(nb.buf)
+          end
+          if not win or win == -1 then return end
+          local anchor_lnum = math.min(range.stop, vim.api.nvim_buf_line_count(nb.buf))
+          local pos = vim.fn.screenpos(win, anchor_lnum, 1)
+          if pos and pos.row and pos.row > 0 then
+            local rows = cfg.image_rows or 10
+            local img_row = pos.row + 2 + (n - 1) * (rows + 1)
+            local img_col = (gut or 7) + 3
+            image.place_at_screen_row(img.key, img_row, img_col, rows, cfg.image_cols or 44)
+          end
+        end)
+      end
+      if not was_cached then
+        vim.schedule(function() M.refresh(nb, win) end)
+      end
+    end, { renderer = renderer, mime = img.mime })
+  end
 end
 
 local function clear_separators(nb, ranges)

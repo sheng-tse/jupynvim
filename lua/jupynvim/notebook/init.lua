@@ -81,7 +81,7 @@ local function _out_key(cell)
   local p = { M.max_output_lines, M._output_expanded[cell.id] and 1 or 0 }
   for _, o in ipairs(cell.outputs or {}) do
     local t, d = o.text, o.data
-    p[#p + 1] = (o.output_type or "?")
+    p[#p + 1] = (o.output_type or "?") .. (o._rev or "")
     p[#p + 1] = (type(t) == "string" and #t) or (type(t) == "table" and #t) or 0
     if d then
       local tp = d["text/plain"]
@@ -391,11 +391,31 @@ function Notebook:get_cell(cell_id)
   end
 end
 
+-- Returns the ids of the cells whose outputs changed, when that is not just
+-- `cell_id` (a display update can reach into any cell).
 function Notebook:apply_cell_event(cell_id, ev)
   M.normalize_output_data(ev.data)
+  local kind = ev.kind
+  if kind == "update_display_data" then
+    -- h = display(x, display_id=True); h.update(y): replace every output
+    -- showing that display, wherever it is. The rev bumps the output memo,
+    -- which keys on lengths and would miss a same-length update.
+    local changed = {}
+    for _, cell in ipairs(self.cells) do
+      for _, o in ipairs(cell.outputs or {}) do
+        if o.transient and o.transient.display_id == ev.display_id then
+          o.data, o.metadata = ev.data, ev.metadata or {}
+          o._rev = (o._rev or 0) + 1
+          changed[#changed + 1] = cell.id
+        end
+      end
+    end
+    return changed
+  end
   local c = self:get_cell(cell_id)
   if not c then return end
-  local kind = ev.kind
+  -- the deferred half of clear_output(wait=True), decided by the backend
+  if ev.clear_first then c.outputs = {} end
   if kind == "execute_input" then
     c.execution_count = ev.execution_count
     c.outputs = {}
@@ -423,6 +443,8 @@ function Notebook:apply_cell_event(cell_id, ev)
       output_type = "display_data",
       data = ev.data,
       metadata = ev.metadata or {},
+      -- display_id lives here in memory only, for update_display_data
+      transient = (type(ev.transient) == "table" and ev.transient.display_id) and ev.transient or nil,
     })
   elseif kind == "error" then
     table.insert(c.outputs, {

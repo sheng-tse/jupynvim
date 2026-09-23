@@ -256,49 +256,31 @@ function M._handle_cell_event(p)
   Log.debug("cell_event cell=" .. tostring(p.cell_id) .. " kind=" .. tostring(p.event and p.event.kind))
   for buf, nb in pairs(Notebook.all()) do
     if nb.session_id == p.session_id then
-      nb:apply_cell_event(p.cell_id, p.event or {})
+      local changed = nb:apply_cell_event(p.cell_id, p.event or {})
       -- Output events change cell.outputs but not buffer TEXT, so vim's
       -- "modified" flag stays false. That's why :wqa was a no-op after
       -- running a cell - vim skipped :w because the buffer looked
       -- unchanged. Mark modified so :w / :wqa trigger BufWriteCmd.
       local ek = p.event and p.event.kind
+      local touched
       if ek == "execute_input" or ek == "stream" or ek == "execute_result"
          or ek == "display_data" or ek == "error" or ek == "clear_output" then
+        touched = { p.cell_id }
+      elseif ek == "update_display_data" then
+        touched = changed or {}
+      end
+      if touched and #touched > 0 then
         vim.schedule(function()
           if vim.api.nvim_buf_is_valid(buf) then
             vim.bo[buf].modified = true
           end
         end)
-        M._queue_output_sync(buf, nb, p.cell_id)
+        for _, id in ipairs(touched) do M._queue_output_sync(buf, nb, id) end
       end
-      -- EAGER image transmission — must use the SAME renderer as the active
-      -- config so the cache entry matches what render_cell expects.
-      -- Prefer image/gif (animations) over image/png so display_data with
-      -- both formats animates instead of showing a static frame.
-      local ev = p.event or {}
-      if ev.kind == "display_data" or ev.kind == "execute_result" then
-        if ev.data then
-          local b64, mime
-          for _, m in ipairs({ "image/gif", "image/png", "image/jpeg" }) do
-            local v = ev.data[m]
-            if type(v) == "table" then v = table.concat(v, "") end
-            if type(v) == "string" and v ~= "" then
-              b64, mime = v, m
-              break
-            end
-          end
-          if b64 and Image.supported() then
-            nb.image_ids = nb.image_ids or {}
-            local renderer = M.config.image_renderer or "chafa"
-            Image.ensure_transmitted(p.cell_id, b64, function(id)
-              if id then
-                nb.image_ids[p.cell_id] = id
-                vim.schedule(function() Render.refresh(nb, vim.fn.bufwinid(buf)) end)
-              end
-            end, { renderer = renderer, mime = mime })
-          end
-        end
-      end
+      -- Images are transmitted by the render the output sync triggers, one
+      -- per output. A second, eager transmit here used to write every new
+      -- image into the cell's single slot while the render wrote the first
+      -- one back, and which plot survived came down to timing (#34).
       vim.schedule(function()
         Render.refresh(nb, vim.fn.bufwinid(buf))
       end)
@@ -1751,10 +1733,9 @@ function M.clear_outputs(buf)
       -- the "✓ 1.6s" badge from it after the clear
       if type(c.metadata) == "table" then c.metadata.execution = nil end
       nb.cell_state[c.id] = nil
-      -- Drop only code-cell image placements; markdown embedded images
+      -- Drop only code-cell output images; markdown embedded images
       -- (keys like "<id>_md_<idx>") stay so the cell still renders them.
-      pcall(Image.clear_for_cell, c.id)
-      nb.image_ids[c.id] = nil
+      for _, key in ipairs(Image.clear_outputs_for_cell(c.id)) do nb.image_ids[key] = nil end
     end
   end
   -- Outputs are REAL buffer lines (Notebook:to_lines emits them under each
@@ -1795,9 +1776,8 @@ function M.clear_cell_output(buf)
   cell.execution_count = nil
   if type(cell.metadata) == "table" then cell.metadata.execution = nil end
   nb.cell_state[cell.id] = nil
-  pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id)
   nb.image_ids = nb.image_ids or {}
-  nb.image_ids[cell.id] = nil
+  for _, key in ipairs(Image.clear_outputs_for_cell(cell.id)) do nb.image_ids[key] = nil end
   -- Same as clear_outputs: the output text lives in the buffer, so the model
   -- edit only shows up once the buffer is rewritten.
   M._populate_buffer(nb)
@@ -1856,7 +1836,8 @@ function M.delete_image(buf)
     -- the .ipynb; if it's there (after undo), the data is restored.
     local pat = "%!%[[^%]]*%]%(jupynvim%-img:" .. idx .. "%)\n?"
     cell.source = (cell.source or ""):gsub(pat, "", 1)
-    pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id)
+    -- markdown images are keyed per image, not by the cell id
+    pcall(require("jupynvim.notebook.image").clear_for_cell, cell.id .. "_md_" .. idx)
     M._populate_buffer(nb)
     Render.refresh(nb, vim.fn.bufwinid(buf))
     vim.bo[buf].modified = true
@@ -1980,15 +1961,16 @@ function M.save_image(buf, path)
   local cell = nb:get_cell(cell_id)
   if not cell then return end
 
-  local b64, ext, mime
+  -- Every image in the cell, each as { b64, mime, label }. A code cell can
+  -- hold several (two plt.show() calls), so more than one asks which.
+  local found = {}
   if cell.cell_type == "markdown" then
-    local imgs = require("jupynvim.notebook.embedded").list_images(cell.id) or {}
-    if imgs[1] then
-      b64 = imgs[1].b64
-      mime = imgs[1].mime or "image/png"
+    for _, im in ipairs(require("jupynvim.notebook.embedded").list_images(cell.id) or {}) do
+      found[#found + 1] = { b64 = im.b64, mime = im.mime or "image/png",
+                            label = ("image %d%s"):format(im.idx, im.alt ~= "" and (": " .. im.alt) or "") }
     end
   end
-  if not b64 then
+  if #found == 0 then
     -- A fixed preference, raster first. pairs() order varies between runs, so
     -- an output carrying both png and svg sometimes picked the svg, which is
     -- XML rather than base64, and the decode failed.
@@ -1997,21 +1979,38 @@ function M.save_image(buf, path)
       if d then
         for _, k in ipairs({ "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" }) do
           if d[k] ~= nil then
-            b64 = type(d[k]) == "table" and table.concat(d[k], "") or d[k]
-            mime = k
+            local v = type(d[k]) == "table" and table.concat(d[k], "") or d[k]
+            if k ~= "image/svg+xml" then v = Image.clean_b64(v) end
+            if v and v ~= "" then
+              -- an output's svg is the XML itself; a data URI's is base64
+              found[#found + 1] = { b64 = v, mime = k, text = k == "image/svg+xml",
+                                    label = ("output image %d (%s)"):format(#found + 1, k) }
+            end
             break
           end
         end
-        if b64 then break end
       end
     end
   end
-  if mime ~= "image/svg+xml" then b64 = Image.clean_b64(b64) end
-  if not b64 or b64 == "" then
+  if #found == 0 then
     vim.notify("jupynvim: no image in this cell", vim.log.levels.WARN)
     return
   end
-  ext = ({ ["image/png"] = "png", ["image/jpeg"] = "jpg", ["image/gif"] = "gif",
+  if #found > 1 and not (path and path ~= "") then
+    vim.ui.select(found, {
+      prompt = "Save which image?",
+      format_item = function(f) return f.label end,
+    }, function(choice)
+      if choice then M._write_image(cell, choice, nil) end
+    end)
+    return
+  end
+  M._write_image(cell, found[1], path)
+end
+
+function M._write_image(cell, img, path)
+  local b64, mime = img.b64, img.mime
+  local ext = ({ ["image/png"] = "png", ["image/jpeg"] = "jpg", ["image/gif"] = "gif",
            ["image/svg+xml"] = "svg", ["image/webp"] = "webp" })[mime] or "png"
 
   if not path or path == "" then
@@ -2022,7 +2021,7 @@ function M.save_image(buf, path)
   path = vim.fn.fnamemodify(path, ":p")
 
   local raw_ok, raw = true, b64
-  if mime ~= "image/svg+xml" then raw_ok, raw = pcall(vim.base64.decode, b64) end
+  if not img.text then raw_ok, raw = pcall(vim.base64.decode, b64) end
   if not raw_ok or not raw then
     vim.notify("jupynvim: failed to decode image", vim.log.levels.ERROR)
     return
