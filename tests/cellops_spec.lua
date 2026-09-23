@@ -260,6 +260,33 @@ do
   os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
 end
 
+-- Undoing a delete brings the cell back under a new id, and older entries
+-- that named the old id must follow it, or the next u skipped them and
+-- undid something older, leaving an extra cell or a scrambled order.
+do
+  local function case(label, steps, n_undo)
+    local b, path = open_fixture()
+    local before = sources(b)
+    steps(b)
+    for _ = 1, n_undo do vim.cmd("normal u"); vim.wait(1500) end
+    chk(label, vim.deep_equal(sources(b), before), vim.inspect(sources(b)))
+    os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
+  end
+  case("b, dd, u, u gives back the original cells", function(b)
+    select_nth(b, 1); vim.cmd("normal b"); vim.wait(1500)
+    select_nth(b, 2); vim.cmd("normal dd"); vim.wait(1500)
+  end, 2)
+  case("a move, dd, u, u gives back the original order", function(b)
+    select_nth(b, 1); J.move_cell(b, 1); vim.wait(1500)
+    select_nth(b, 2); vim.cmd("normal dd"); vim.wait(1500)
+  end, 2)
+  case("dd on the last cell, b on the first, dd, then three u", function(b)
+    select_nth(b, 3); vim.cmd("normal dd"); vim.wait(1500)
+    select_nth(b, 1); vim.cmd("normal b"); vim.wait(1500)
+    select_nth(b, 2); vim.cmd("normal dd"); vim.wait(1500)
+  end, 3)
+end
+
 -- Undo must work no matter which entry point made the change. Recording in
 -- the cell-mode keymaps only covered `a`/`b`/`dd`; <leader>nb and the
 -- :Jupynvim* commands recorded nothing, so u said "nothing to undo".

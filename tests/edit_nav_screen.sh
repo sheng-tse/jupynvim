@@ -36,6 +36,8 @@ vim.o.swapfile = false
 vim.o.cursorline = true
 vim.g.mapleader = " "
 require("jupynvim").setup({ core_path = "$BIN", auto_venv = false })
+-- a user's own mapping to a scroll key, the way scroll plugins map one
+vim.keymap.set("n", "<leader>d", "<C-d>")
 -- what the cursor is on and which mode cell mode is in, one line per call
 function _G.__navrec()
   local CM = require("jupynvim.notebook.cellmode")
@@ -103,6 +105,23 @@ tmux send-keys -t "$S" Enter; sleep 0.4
 tmux send-keys -t "$S" C-j; sleep 0.4
 tmux send-keys -t "$S" " nc"; sleep 1.0; rec
 
+# more scrolls that drag the cursor: the shifted arrows, a mapping to a
+# scroll, and the wheel over the notebook while another window has focus
+tmux send-keys -t "$S" Escape; sleep 0.3
+tmux send-keys -t "$S" "k" "k"; sleep 0.3
+tmux send-keys -t "$S" Enter; sleep 0.4
+tmux send-keys -t "$S" S-Down; sleep 0.3; tmux send-keys -t "$S" S-Down; sleep 0.6; rec
+tmux send-keys -t "$S" " d"; sleep 0.3; tmux send-keys -t "$S" " d"; sleep 0.6; rec
+tmux send-keys -t "$S" ":botright new" Enter; sleep 0.4
+tmux send-keys -t "$S" ":lua vim.fn.win_execute(vim.fn.win_getid(vim.fn.winnr('#')), 'normal! ' .. vim.keycode('<C-d><C-d>'))" Enter; sleep 0.4
+tmux send-keys -t "$S" ":wincmd p" Enter; sleep 0.5; rec
+tmux send-keys -t "$S" ":only" Enter; sleep 0.4
+
+# a macro replays its keys in order: o goes through cell mode's own map,
+# which used to queue it behind the text the macro types next
+tmux send-keys -t "$S" -l ':let @q = "otyped\<Esc>"'; tmux send-keys -t "$S" Enter; sleep 0.3
+tmux send-keys -t "$S" "@q"; sleep 0.6; rec
+
 # a visual selection is not a jump: ggVGd while editing cell 1 clears that
 # cell and leaves the other eight alone
 tmux send-keys -t "$S" Escape; sleep 0.3
@@ -123,6 +142,10 @@ want = [
     ("a click on another cell while editing edits that one", "cell4_line2 edit"),
     ("scrolling while editing keeps the edited cell", r"cell4_line\d edit"),
     ("<leader>nc from an output keeps editing that cell", "cell5_line4 edit"),
+    ("<S-Down> while editing keeps the edited cell", r"cell3_line\d edit"),
+    ("a mapping to <C-d> keeps it too", r"cell3_line\d edit"),
+    ("so does the wheel over it while another window has focus", r"cell3_line\d edit"),
+    ("a macro's o runs before the text it types", "typed edit"),
     ("ggVGd while editing a cell deletes only inside it", "cells=9"),
 ]
 got = open(sys.argv[1]).read().splitlines()

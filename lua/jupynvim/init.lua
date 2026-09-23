@@ -1795,6 +1795,7 @@ function M.delete_cell(buf, no_record)
   local doomed, doomed_idx = nb:get_cell(cur_id)
   local snapshot = doomed and {
     op = "delete",
+    id = doomed.id,
     index = doomed_idx,
     lines = vim.split(doomed.source or "", "\n", { plain = true }),
     cell_type = doomed.cell_type,

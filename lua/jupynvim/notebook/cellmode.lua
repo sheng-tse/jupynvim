@@ -360,7 +360,7 @@ end
 -- Every cell-level mutation is recorded IN ORDER, not just deletes. Recording
 -- deletes alone made `u` mean "re-insert the last deleted cell", so dd then p
 -- then u re-applied the delete's inverse a second time and left a duplicate.
---   { op = "delete", index, lines, cell_type }  -> undo re-inserts it
+--   { op = "delete", id, index, lines, cell_type } -> undo re-inserts it
 --   { op = "insert", id }                       -> undo removes that cell
 --   { op = "move", id, delta }                  -> undo moves it back
 local _undo = {}
@@ -395,8 +395,17 @@ function M.undo_cell(buf, api)
       api.move_cell(buf, -e.delta, true)
     end
   else
-    -- record = false: replaying must not push its own inverse back on
-    M.insert_cell_with(buf, api, e.index, e.lines, e.cell_type, { record = false })
+    -- record = false: replaying must not push its own inverse back on. The
+    -- cell comes back under a new id, so older entries that name it follow.
+    M.insert_cell_with(buf, api, e.index, e.lines, e.cell_type, {
+      record = false,
+      on_cell = function(new_id)
+        if not e.id then return end
+        for _, x in ipairs(_undo[buf] or {}) do
+          if x.id == e.id then x.id = new_id end
+        end
+      end,
+    })
   end
 end
 
@@ -419,6 +428,9 @@ function M.insert_cell_with(buf, api, index, lines, cell_type, opts)
         api.set_cell_content(buf, new_idx, lines, cell_type)
       end)
       select_cell(buf, new_idx)
+      local nb = Notebook.get(buf)
+      local cell = nb and nb.cells[new_idx]
+      if cell and opts and opts.on_cell then opts.on_cell(cell.id) end
     end, opts and opts.record == false)
   end)
 end
@@ -441,15 +453,22 @@ end
 -- to follow. vim.on_key sees the key itself, so the user's own scroll maps
 -- (snacks.scroll, neoscroll) keep working untouched.
 local SCROLL_KEYS = {}
-for _, k in ipairs({ "<ScrollWheelUp>", "<ScrollWheelDown>", "<ScrollWheelLeft>",
-                     "<ScrollWheelRight>", "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>",
-                     "<C-b>", "<PageUp>", "<PageDown>" }) do
+for _, k in ipairs({ "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageUp>",
+                     "<PageDown>", "<kPageUp>", "<kPageDown>", "<S-Up>", "<S-Down>",
+                     "<S-PageUp>", "<S-PageDown>", "<S-kPageUp>", "<S-kPageDown>" }) do
   SCROLL_KEYS[vim.keycode(k)] = true
+end
+for _, dir in ipairs({ "Up", "Down", "Left", "Right" }) do
+  for _, mod in ipairs({ "", "S-", "C-", "M-", "D-", "C-S-", "S-M-", "C-M-", "C-S-M-" }) do
+    SCROLL_KEYS[vim.keycode("<" .. mod .. "ScrollWheel" .. dir .. ">")] = true
+  end
 end
 local last_key_scrolled = false
 vim.on_key(function(key, typed)
-  local k = (typed and typed ~= "") and typed or key
-  if k and k ~= "" then last_key_scrolled = SCROLL_KEYS[k] == true end
+  if (key and key ~= "") or (typed and typed ~= "") then
+    -- typed catches a map ON a scroll key (neoscroll), key a map TO one
+    last_key_scrolled = SCROLL_KEYS[key] == true or SCROLL_KEYS[typed] == true
+  end
 end, vim.api.nvim_create_namespace("jupynvim.cellmode.keys"))
 
 local function selecting()
@@ -483,7 +502,10 @@ local function clamp_to_cell(buf)
   -- not jumps. In visual mode the cursor is the far end of a selection, and
   -- following it let ggVGd select and delete every cell below. A scroll
   -- drags the cursor to the window edge. Both snap back as before.
-  if not in_src and not in_out and not selecting() and not last_key_scrolled then
+  -- a scroll of this window while another had focus leaves a flag behind
+  local dragged = st.dragged
+  st.dragged = nil
+  if not in_src and not in_out and not selecting() and not last_key_scrolled and not dragged then
     local idx, other = M.cell_idx_at(buf, lnum)
     if idx ~= st.edit_idx and other then
       local o_src = lnum - 1 >= other.start and lnum - 1 < other.stop
@@ -602,8 +624,13 @@ function M.attach(buf, api)
       elseif edit_fn then
         edit_fn()
       else
+        -- The key goes to the FRONT of typeahead, with its count and
+        -- register, so a macro or fast typing runs it in order. Appended, it
+        -- ran after whatever keys were already queued.
+        local pre = (vim.v.register ~= '"' and ('"' .. vim.v.register) or "")
+          .. (vim.v.count > 0 and tostring(vim.v.count) or "")
         vim.api.nvim_feedkeys(
-          vim.api.nvim_replace_termcodes(lhs, true, false, true), "n", false)
+          pre .. vim.api.nvim_replace_termcodes(lhs, true, false, true), "ni", false)
       end
     end, desc)
   end
@@ -815,6 +842,23 @@ function M.attach(buf, api)
     end)
   end
   local resize_group = vim.api.nvim_create_augroup("jupynvim_resize_" .. buf, { clear = true })
+  -- The mouse wheel scrolls the window under it, even when another window has
+  -- focus, and drags that window's cursor along. The next CursorMoved there
+  -- comes with the key that brought focus back, not a scroll key, so mark it.
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = resize_group,
+    callback = function()
+      local st = state[buf]
+      if not st or st.mode ~= "edit" then return end
+      local cur = vim.api.nvim_get_current_win()
+      for w in pairs(vim.v.event or {}) do
+        local id = tonumber(w)
+        if id and id ~= cur and vim.api.nvim_win_is_valid(id) and vim.api.nvim_win_get_buf(id) == buf then
+          st.dragged = true
+        end
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd(
     { "WinResized", "VimResized", "WinNew", "WinClosed" },
     { group = resize_group, callback = resize_refresh }

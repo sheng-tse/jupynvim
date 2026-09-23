@@ -344,11 +344,11 @@ A notebook opens in command mode, like VSCode and JupyterLab. `j` and `k`
 select whole cells, `dd`, `yy`, `p`, `a` and `b` act on cells, and `u`
 undoes the last cell you added, pasted, deleted or moved. Enter or `i`
 edits the selected cell with plain vim, and Esc goes back. While editing,
-motions and selections stay inside the cell, and an edit that would join
-two cells or delete the boundary between them is taken back. `]c` and `[c`
-move to the next or previous cell and keep you editing, and a search, a
-diagnostic jump or a click that lands in another cell moves the editing
-there.
+`j`, `k`, `gg`, `G` and the paragraph and sentence motions stay inside the
+cell, and an edit that would join two cells or delete the boundary between
+them is taken back. `]c` and `[c` move to the next or previous cell and
+keep you editing, and a search, a diagnostic jump or a click that lands in
+another cell moves the editing there.
 
 ### Cell execution
 
