@@ -799,10 +799,20 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
       end
       local opts = {
         bufnr = buf,
-        -- Don't reuse a client that may have been started earlier for a .py
-        -- buffer with a different pythonPath. Force a fresh client per
-        -- jupynvim buffer so settings.python.pythonPath actually applies.
-        reuse_client = py_path and function() return false end or cfg.reuse_client,
+        -- Don't reuse a client started for a different interpreter, or its
+        -- settings.python.pythonPath would not apply. One started for this
+        -- interpreter and root is fine to reuse. Refusing every client made
+        -- each reopen of a notebook start another pyright and leave the old
+        -- one running with no buffer.
+        reuse_client = py_path and function(client, conf)
+          if client.name ~= conf.name or client.config.root_dir ~= conf.root_dir then
+            return false
+          end
+          local st = client.settings or client.config.settings or {}
+          local pp = (st.python or {}).pythonPath
+            or ((st.basedpyright or {}).python or {}).pythonPath
+          return pp == py_path
+        end or cfg.reuse_client,
         _root_markers = cfg.root_markers,
       }
       -- Fallback root_dir for servers whose strict root_markers don't match.

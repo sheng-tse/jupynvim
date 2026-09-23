@@ -156,6 +156,26 @@ do
   pcall(vim.cmd, "bwipeout!")
 end
 
+-- ── reopening a python notebook reuses its pyright ─────────────────────
+do
+  local p = write_nb("py-reopen", {
+    kernelspec = { display_name = "P", language = "python", name = "python3" } })
+  local buf = edit(p)
+  local first = vim.lsp.get_clients({ bufnr = buf, name = "pyright" })[1]
+  vim.cmd("bdelete")
+  vim.wait(300)
+  buf = edit(p)
+  vim.cmd("bdelete")
+  vim.wait(300)
+  buf = edit(p)
+  local all = vim.lsp.get_clients({ name = "pyright" })
+  local attached = vim.lsp.get_clients({ bufnr = buf, name = "pyright" })
+  chk("a python notebook gets pyright", first ~= nil and #attached == 1)
+  chk("reopening it twice leaves one pyright, not three", #all == 1,
+      #all .. " pyright clients running")
+  pcall(vim.cmd, "bwipeout!")
+end
+
 -- ── language names ───────────────────────────────────────────────────────
 do
   local lf = J._language_filetype
