@@ -44,12 +44,39 @@ local function fake_server()
   end
 end
 
+-- a notebook-aware server, recording the notebookDocument messages it gets
+local nbmsgs = {}
+local function notebook_server()
+  return function(dispatchers)
+    local closing = false
+    local srv = {}
+    function srv.request(method, _, callback)
+      vim.schedule(function()
+        if method == "initialize" then
+          callback(nil, { capabilities = {
+            notebookDocumentSync = { notebookSelector = { { notebook = "*" } } } } })
+        else callback(nil, vim.NIL) end
+      end)
+      return true, 1
+    end
+    function srv.notify(method)
+      if method:find("^notebookDocument/") then nbmsgs[#nbmsgs + 1] = method end
+      if method == "exit" then closing = true; dispatchers.on_exit(0, 15) end
+      return true
+    end
+    function srv.is_closing() return closing end
+    function srv.terminate() closing = true end
+    return srv
+  end
+end
+vim.lsp.config("tyfake", { cmd = notebook_server(), filetypes = { "python" } })
+
 vim.lsp.config("pyright", { cmd = fake_server(), filetypes = { "python" } })
 -- julials itself gets its cmd rewritten to Mason's julia-lsp wrapper in _attach_lsp,
 -- which is not installed here, so a fake under another name stands in.
 vim.lsp.config("juliafake", { cmd = fake_server(), filetypes = { "julia" } })
 vim.lsp.config("bashls", { cmd = fake_server(), filetypes = { "sh" } })
-vim.lsp.enable({ "juliafake", "pyright", "bashls" })
+vim.lsp.enable({ "juliafake", "pyright", "bashls", "tyfake" })
 
 local J  = require("jupynvim")
 local NB = require("jupynvim.notebook")
@@ -173,6 +200,28 @@ do
   chk("a python notebook gets pyright", first ~= nil and #attached == 1)
   chk("reopening it twice leaves one pyright, not three", #all == 1,
       #all .. " pyright clients running")
+  pcall(vim.cmd, "bwipeout!")
+end
+
+-- ── a notebook-aware server sees the reopened notebook ──────────────────
+do
+  local p = write_nb("ty-reopen", {
+    kernelspec = { display_name = "P", language = "python", name = "python3" } })
+  nbmsgs = {}
+  edit(p)
+  vim.cmd("bdelete")
+  vim.wait(300)
+  edit(p)
+  vim.wait(300)
+  local opens, closes = 0, 0
+  for _, m in ipairs(nbmsgs) do
+    if m == "notebookDocument/didOpen" then opens = opens + 1 end
+    if m == "notebookDocument/didClose" then closes = closes + 1 end
+  end
+  chk("a reopen closes the old notebook document and opens the new one",
+      opens == 2 and closes == 1, vim.inspect(nbmsgs))
+  chk("and the server is reused, not started again",
+      #vim.lsp.get_clients({ name = "tyfake" }) == 1, #vim.lsp.get_clients({ name = "tyfake" }) .. " running")
   pcall(vim.cmd, "bwipeout!")
 end
 

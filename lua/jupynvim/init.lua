@@ -425,6 +425,11 @@ function M.open(path, opts)
       end)
       Notebook.remove(existing_buf)
       pcall(function() require("jupynvim.notebook.image").clear_all() end)
+      -- A notebook-aware server (ty) still holds the old document, and on
+      -- reopen the same client re-attaches, which is taken as already open,
+      -- so it never saw the notebook as read again. Close it so the attach
+      -- that follows sends a fresh didOpen.
+      pcall(function() require("jupynvim.lsp.notebook").on_close(existing_buf) end)
     end
   end
 
@@ -807,6 +812,10 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
         reuse_client = py_path and function(client, conf)
           if client.name ~= conf.name or client.config.root_dir ~= conf.root_dir then
             return false
+          end
+          -- only the servers pythonPath is injected into can disagree on it
+          if not (name == "basedpyright" or name == "pyright" or name == "pylsp" or name == "ruff") then
+            return true
           end
           local st = client.settings or client.config.settings or {}
           local pp = (st.python or {}).pythonPath
