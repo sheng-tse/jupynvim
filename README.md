@@ -70,10 +70,10 @@ https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
   images (its Kitty-graphics support lacks the Unicode placeholders jupynvim
   uses), so plots and gifs won't render there; the rest of the editor works,
   and `image_renderer = "chafa"` gives a static ASCII fallback.
-- Rust toolchain (`cargo`) only on platforms without a prebuilt binary.
-  Mac arm64 and Linux x86_64 download a prebuilt, from the install hook or
-  the first time you open a notebook. Other platforms fall back to building
-  locally.
+- Rust toolchain (`cargo`) only where no prebuilt binary runs. Mac arm64
+  and Linux x86_64 download a prebuilt, from the install hook or the first
+  time you open a notebook, and it is checked to run before it is used.
+  Other platforms fall back to building locally.
 - A Jupyter kernel installed for the language you intend to use. See below.
 - ImageMagick 7 (`magick`) is required for animated GIF playback. Static
   images work without it.
@@ -151,10 +151,13 @@ With [`lazy.nvim`](https://github.com/folke/lazy.nvim):
 That's it. Open any `.ipynb` and the kernel auto-starts based on the
 notebook's `kernelspec` metadata.
 
-With Neovim's built-in `vim.pack`:
+With Neovim 0.12's built-in `vim.pack`, following release tags so the
+plugin and its backend binary always move together:
 
 ```lua
-vim.pack.add({ "https://github.com/sheng-tse/jupynvim" })
+vim.pack.add({
+  { src = "https://github.com/sheng-tse/jupynvim", version = vim.version.range("*") },
+})
 require("jupynvim").setup({})
 ```
 
@@ -175,11 +178,13 @@ vim.api.nvim_create_autocmd("PackChanged", {
 ```
 
 With [`mini.deps`](https://github.com/nvim-mini/mini.nvim), the same call
-goes in its hooks:
+goes in its hooks. Pin `checkout` to a release tag, since the binary is
+matched to the release the plugin came from:
 
 ```lua
 local function build(p) dofile(p.path .. "/lua/jupynvim/install.lua").run({ dir = p.path }) end
-MiniDeps.add({ source = "sheng-tse/jupynvim", hooks = { post_install = build, post_checkout = build } })
+MiniDeps.add({ source = "sheng-tse/jupynvim", checkout = "v0.4.5",
+               hooks = { post_install = build, post_checkout = build } })
 ```
 
 Any other way works too, a manual clone included. Run `:JupynvimInstall`

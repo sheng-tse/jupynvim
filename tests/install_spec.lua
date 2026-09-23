@@ -31,6 +31,28 @@ local function manifest_version(dir)
 end
 local VERSION = manifest_version(REPO)
 
+-- No jupynvim-core from the host's PATH, and a state dir of our own, so the
+-- checks below see only what they set up.
+local BIN = tmp .. "/bin"
+vim.fn.mkdir(BIN, "p")
+vim.env.PATH = BIN .. ":/usr/bin:/bin:/usr/sbin:/sbin"
+local real_stdpath = vim.fn.stdpath
+---@diagnostic disable-next-line: duplicate-set-field
+vim.fn.stdpath = function(what)
+  if what == "state" then return tmp .. "/state" end
+  return real_stdpath(what)
+end
+
+-- A binary that downloads and verifies but cannot run here, the way a build
+-- against a newer glibc fails on an older distro.
+local function broken_binary(path)
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+  local f = io.open(path, "w")
+  f:write("#!/bin/sh\necho \"version 'GLIBC_2.39' not found\" >&2\nexit 1\n")
+  f:close()
+  vim.fn.setfperm(path, "rwxr-xr-x")
+end
+
 local function fake_binary(path, version)
   vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
   local f = io.open(path, "w")
@@ -68,9 +90,11 @@ chk("the release tag comes from the plugin's own version",
 -- ── run(): the download, stubbed ─────────────────────────────────────────
 local target = Install._detect_target()
 local final = PACK .. "/core/target/release/jupynvim-core"
+local downloads, last_out = 0, nil
 local function stub_release(opts)
   Install._curl = function(args)
     local url = args[#args]
+    if not url:find("SHA256SUMS", 1, true) then downloads = downloads + 1 end
     if url:find("SHA256SUMS", 1, true) then
       if opts.sums == false then return "", false end
       local hash = opts.bad_hash and string.rep("0", 64)
@@ -80,6 +104,7 @@ local function stub_release(opts)
     if opts.fail then return "curl: (22) 404", false end
     local out
     for i, a in ipairs(args) do if a == "-o" then out = args[i + 1] end end
+    last_out = out
     vim.fn.system({ "cp", opts.served, out })
     return "", true
   end
@@ -92,15 +117,36 @@ if target then
   stub_release({ served = served })
   local rok, rerr = pcall(Install.run, { path = PACK })
   chk("a verified download is installed", rok and vim.fn.executable(final) == 1, tostring(rerr))
-  chk("no partial download is left behind", vim.fn.filereadable(final .. ".download") == 0)
+  chk("no partial download is left behind", #vim.fn.glob(final .. ".download*", false, true) == 0)
+  chk("each download gets a name of its own, so two installs cannot clobber it",
+      last_out ~= nil and last_out:find(".download." .. vim.fn.getpid(), 1, true) ~= nil, tostring(last_out))
 
   -- a bad release must leave the working binary alone
   local before = io.open(final):read("*a")
   stub_release({ served = served, bad_hash = true })
   pcall(Install.run, { path = PACK }, { no_cargo = true })
   chk("a checksum mismatch leaves the installed binary untouched",
-      io.open(final):read("*a") == before and vim.fn.filereadable(final .. ".download") == 0)
+      io.open(final):read("*a") == before and #vim.fn.glob(final .. ".download*", false, true) == 0)
 
+  -- verifies, but does not run here: never renamed in, and remembered
+  os.remove(final)
+  local glibc = tmp .. "/served-glibc"
+  broken_binary(glibc)
+  stub_release({ served = glibc })
+  downloads = 0
+  local gok, gerr = pcall(Install.run, { path = PACK }, { no_cargo = true })
+  chk("a prebuilt that does not run here is not installed", not gok and vim.fn.filereadable(final) == 0,
+      tostring(gerr))
+  chk("and the error says why", tostring(gerr):find("does not run here", 1, true) ~= nil
+      and tostring(gerr):find("GLIBC", 1, true) ~= nil, tostring(gerr))
+  local first = downloads
+  pcall(Install.run, { path = PACK }, { no_cargo = true })
+  chk("the next first-use install does not fetch it again", downloads == first,
+      (downloads - first) .. " more downloads")
+  pcall(Install.run, { path = PACK }, { no_cargo = true, force = true })
+  chk(":JupynvimInstall tries it again", downloads > first)
+
+  os.remove(tmp .. "/state/jupynvim/prebuilt_failed.json")   -- a real download failure, not a skip
   stub_release({ served = served, fail = true })
   local fok, ferr = pcall(Install.run, { path = PACK }, { no_cargo = true })
   chk("a failed download with no_cargo says how to fix it, without building",
@@ -154,6 +200,35 @@ local dok, dbin = pcall(J._locate_core)
 chk("a cargo build of your own is never downloaded over", runs == 0 and dok and dbin == final)
 vim.fn.delete(PACK .. "/core/target/release/.fingerprint", "rf")
 
+-- a binary on PATH must match too; a stale one is only the fallback
+os.remove(final)
+fake_binary(BIN .. "/jupynvim-core", "0.0.1")
+fresh(true); install_stub(VERSION)
+local pok, pbin = pcall(J._locate_core)
+chk("a stale jupynvim-core on PATH does not shadow the install", runs == 1 and pbin == final,
+    ("runs=%d bin=%s"):format(runs, tostring(pbin)))
+os.remove(final)
+fresh(false); install_stub(VERSION)
+pok, pbin = pcall(J._locate_core)
+chk("with auto_install off it is still used, as the fallback", pok and pbin == "jupynvim-core" and runs == 0,
+    tostring(pbin))
+fake_binary(BIN .. "/jupynvim-core", VERSION)
+fresh(true); install_stub(VERSION)
+pok, pbin = pcall(J._locate_core)
+chk("a matching one on PATH is used as it is", pok and pbin == "jupynvim-core" and runs == 0)
+os.remove(BIN .. "/jupynvim-core")
+
+-- a local binary that is there but does not run is not "not installed"
+broken_binary(final)
+fresh(false); install_stub(VERSION)
+local notes = {}
+local real_notify = vim.notify
+vim.notify = function(m) notes[#notes + 1] = tostring(m) end
+local bok, bbin = pcall(J._locate_core)
+vim.notify = real_notify
+chk("a binary that does not run is reported as such", bok and bbin == final
+    and table.concat(notes, " "):find("does not run here", 1, true) ~= nil, table.concat(notes, " | "))
+
 os.remove(final)
 fresh(false); install_stub(VERSION)
 local nok, nerr = pcall(J._locate_core)
@@ -162,7 +237,7 @@ chk("and the error says what to run", not nok and tostring(nerr):find(":Jupynvim
     tostring(nerr))
 
 -- opening a notebook with no backend reports it instead of throwing
-local notes = {}
+notes = {}
 vim.notify = function(m, lvl) notes[#notes + 1] = { tostring(m), lvl } end
 local nb = tmp .. "/x.ipynb"
 io.open(nb, "w"):write('{"cells":[],"metadata":{},"nbformat":4,"nbformat_minor":5}')

@@ -14,13 +14,10 @@ local Connect = {}
 function Connect.install(M)
 -- ---------- backend helpers ----------
 
--- `--version` of a jupynvim-core binary, e.g. "0.4.5". nil if it will not run.
+-- `--version` of a jupynvim-core binary, e.g. "0.4.5", or nil and why.
 local function binary_version(bin)
-  local ok, res = pcall(function()
-    return vim.system({ bin, "--version" }, { text = true }):wait(3000)
-  end)
-  if not ok or not res or res.code ~= 0 then return nil end
-  return (res.stdout or ""):match("jupynvim%-core%s+(%S+)")
+  local r = require("jupynvim.backend.install")._run_version(bin)
+  return r.version, r.err
 end
 M._binary_version = binary_version
 
@@ -42,42 +39,54 @@ local function locate_core()
   local candidate = root .. "/core/target/release/jupynvim-core"
   local Install = require("jupynvim.backend.install")
   local want = Install.source_version(root)
-  local have = vim.fn.executable(candidate) == 1 and binary_version(candidate) or nil
+  local exists = vim.fn.executable(candidate) == 1
+  local have, err
+  if exists then have, err = binary_version(candidate) end
   if have and (not want or have == want) then return candidate end
-  -- nothing here, but one on PATH: a system package or a manual install
-  if vim.fn.executable(candidate) ~= 1 and vim.fn.executable("jupynvim-core") == 1 then
-    return "jupynvim-core"
-  end
-
-  local why = have and ("is v%s but the plugin is v%s"):format(have, want)
-    or ("is not installed at " .. candidate)
-  -- A cargo build of your own leaves its metadata beside the binary. A
-  -- download over it would throw away your changes, so only say so.
-  if have and vim.fn.isdirectory(root .. "/core/target/release/.fingerprint") == 1 then
-    vim.notify("jupynvim: jupynvim-core " .. why .. ". Rebuild it with cargo build --release.",
-      vim.log.levels.WARN)
+  -- A cargo build of your own leaves its metadata beside the binary. It is
+  -- never downloaded over, whatever it reports; a stale one only gets a hint.
+  if exists and vim.fn.isdirectory(root .. "/core/target/release/.fingerprint") == 1 then
+    if have then
+      vim.notify(("jupynvim: jupynvim-core is v%s but the plugin is v%s. Rebuild it with " ..
+        "cargo build --release."):format(have, tostring(want)), vim.log.levels.WARN)
+    end
     return candidate
   end
+  -- None here, but one on PATH, a system package or a manual install. It has
+  -- to match too, or an update never reaches it and a leftover copy shadows
+  -- the download for good. A stale one is still the fallback.
+  local fallback = exists and candidate or nil
+  local why
+  if not exists and vim.fn.executable("jupynvim-core") == 1 then
+    local pv = binary_version("jupynvim-core")
+    if pv and (not want or pv == want) then return "jupynvim-core" end
+    fallback = "jupynvim-core"
+    why = ("on PATH is v%s but the plugin is v%s"):format(pv or "?", tostring(want))
+  end
+  why = why
+    or have and ("is v%s but the plugin is v%s"):format(have, tostring(want))
+    or exists and ("at " .. candidate .. " does not run here (" .. (err ~= "" and err or "no version") .. ")")
+    or ("is not installed at " .. candidate)
   if M.config.auto_install == false or install_tried then
-    if have then
+    if fallback then
       vim.notify("jupynvim: jupynvim-core " .. why .. ". Run :JupynvimInstall.", vim.log.levels.WARN)
-      return candidate
+      return fallback
     end
     error("jupynvim: jupynvim-core " .. why .. ". Run :JupynvimInstall or set core_path, " ..
       "and see :checkhealth jupynvim.", 0)
   end
   install_tried = true
-  vim.notify("jupynvim: jupynvim-core " .. why .. ", downloading the matching release...",
+  vim.notify("jupynvim: jupynvim-core " .. why .. ", fetching the matching release...",
     vim.log.levels.INFO)
   pcall(vim.cmd, "redraw")
-  local ok, err = pcall(Install.run, root, { no_cargo = true })
+  local ok, ierr = pcall(Install.run, root, { no_cargo = true })
   if ok and vim.fn.executable(candidate) == 1 then return candidate end
-  if have then
-    vim.notify("jupynvim: update failed (" .. tostring(err) .. "), using the old binary",
+  if fallback then
+    vim.notify("jupynvim: " .. tostring(ierr) .. " Using " .. fallback .. " as it is.",
       vim.log.levels.WARN)
-    return candidate
+    return fallback
   end
-  error(tostring(err), 0)
+  error(tostring(ierr), 0)
 end
 M._locate_core = locate_core
 

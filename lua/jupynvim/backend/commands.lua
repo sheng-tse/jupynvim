@@ -307,7 +307,9 @@ function Commands.install(M, Image)
   -- build hook, and to repair a stale binary. The download is renamed into
   -- place, so a running backend keeps its old binary until it restarts.
   vim.api.nvim_create_user_command("JupynvimInstall", function()
-    local ok, err = pcall(require("jupynvim.backend.install").run, M._plugin_root())
+    -- force: try again even a prebuilt that did not run here last time
+    local ok, err = pcall(require("jupynvim.backend.install").run, M._plugin_root(), { force = true })
+    if M._reset_install_tried then M._reset_install_tried() end
     if not ok then
       vim.notify(tostring(err), vim.log.levels.ERROR)
       return
