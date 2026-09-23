@@ -400,6 +400,33 @@ do
   os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
 end
 
+-- A source line that reads exactly like a separator was one: opening and
+-- saving such a notebook split the cell in two and moved every later cell's
+-- source onto the next id.
+do
+  local path = vim.fn.tempname() .. ".ipynb"
+  local src1 = "a = 1\n" .. NB.CELL_SEP .. "\nb = 2\n" .. NB.OUT_SEP .. "  "
+  local f = io.open(path, "w")
+  f:write(vim.json.encode({ cells = {
+    { cell_type = "code", id = "c1", metadata = vim.empty_dict(), source = src1, execution_count = vim.NIL, outputs = {} },
+    { cell_type = "code", id = "c2", metadata = vim.empty_dict(), source = "x = 2", execution_count = vim.NIL, outputs = {} },
+  }, metadata = { kernelspec = { name = "python3", display_name = "P", language = "python" } },
+    nbformat = 4, nbformat_minor = 5 }))
+  f:close()
+  local b = J.open(path)
+  vim.wait(1500, function() return NB.get(b) ~= nil end, 50)
+  vim.api.nvim_set_current_buf(b)
+  vim.cmd("w")
+  local saved = vim.json.decode(table.concat(vim.fn.readfile(path), "\n"))
+  local got = {}
+  for _, c in ipairs(saved.cells) do
+    got[#got + 1] = c.id .. "=" .. (type(c.source) == "table" and table.concat(c.source) or c.source)
+  end
+  chk("a source line that reads like a separator stays in its cell through open and :w",
+      vim.deep_equal(got, { "c1=" .. src1, "c2=x = 2" }), vim.inspect(got))
+  os.remove(path); pcall(vim.api.nvim_buf_delete, b, { force = true })
+end
+
 -- ── 5. notebook keymaps must survive a later buffer-local binder ─────────
 -- We attach during BufReadCmd; plugins that map the same keys buffer-locally
 -- on FileType land afterwards and win. LazyVim's treesitter-textobjects takes

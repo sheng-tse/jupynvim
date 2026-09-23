@@ -20,6 +20,21 @@ M.CELL_SEP = "# %%[jupynvim:cell-sep]"
 M.OUT_SEP = "# %%[jupynvim:out]"
 M.OUT_TRUNC_MARK = "\u{22EF}"   -- midline ellipsis, marks a capped output
 
+-- A source line that is a marker, followed by any number of spaces, goes
+-- into the buffer with one more space and comes back without it. A line
+-- reading exactly like a marker was a boundary: opening and saving a
+-- notebook that had one split its cell in two and moved every later cell's
+-- source onto the next id. A zero-width space showed as <200b>.
+local function marker_ish(l)
+  for _, m in ipairs({ M.CELL_SEP, M.OUT_SEP }) do
+    if #l >= #m and l:byte(1) == 35 and l:sub(1, #m) == m and l:find("^ *$", #m + 1) then
+      return true
+    end
+  end
+  return false
+end
+M._marker_ish = marker_ish
+
 -- Plain-text lines for a cell's outputs (the buffer representation).
 local function _as_str(v)
   if type(v) == "table" then return table.concat(v, "") end
@@ -298,7 +313,7 @@ function Notebook:to_lines()
       table.insert(out, "")
     else
       for line in (src .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(out, line)
+        table.insert(out, marker_ish(line) and (line .. " ") or line)
       end
     end
     local stop = #out
@@ -332,6 +347,8 @@ function Notebook:sync_from_buffer(lines)
     elseif l == M.OUT_SEP then
       in_out = true  -- output region: not part of the source
     elseif not in_out then
+      -- a source line that reads like a marker, escaped by to_lines
+      if #l > #M.OUT_SEP and l:byte(-1) == 32 and marker_ish(l) then l = l:sub(1, -2) end
       table.insert(sources[#sources], l)
     end
   end
