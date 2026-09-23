@@ -371,19 +371,17 @@ function Notebook:sync_from_buffer()
   end
 end
 
--- Find cell id at the given 1-based line number in the current buffer.
+-- The cell that owns 1-based line `lnum`: its source, its output region and
+-- the separator below it, the same rule as CellMode.cell_idx_at. Output rows
+-- used to count as "between cells" and resolve to the NEXT cell, so running,
+-- clearing or saving from a cell's output acted on the cell after it.
+-- Returns id, range, index.
 function Notebook:cell_at_line(lnum)
   local _, ranges = self:to_lines()
-  for _, r in ipairs(ranges) do
-    if (lnum - 1) >= r.start and (lnum - 1) < r.stop then
-      return r.id, r
-    end
+  for i = #ranges, 1, -1 do
+    if lnum - 1 >= ranges[i].start then return ranges[i].id, ranges[i], i end
   end
-  -- between cells (on a separator line) → return next cell
-  for i, r in ipairs(ranges) do
-    if (lnum - 1) < r.start then return r.id, r, i end
-  end
-  if #ranges > 0 then return ranges[#ranges].id, ranges[#ranges] end
+  if ranges[1] then return ranges[1].id, ranges[1], 1 end
   return nil
 end
 
