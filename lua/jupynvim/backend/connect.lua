@@ -80,12 +80,43 @@ local function core_source_mtime()
   return newest
 end
 
+-- Version declared in core/Cargo.toml (the [package] one, which comes first).
+local function core_manifest_version()
+  local f = io.open(M._plugin_root() .. "/core/Cargo.toml", "r")
+  if not f then return nil end
+  for line in f:lines() do
+    local v = line:match('^version%s*=%s*"([^"]+)"')
+    if v then f:close(); return v end
+  end
+  f:close()
+  return nil
+end
+
+-- Version baked into an already-built artifact. main.rs logs
+-- "jupynvim-core starting (v<CARGO_PKG_VERSION>)", so the string is in there.
+local function artifact_version(bin)
+  local f = io.open(bin, "rb")
+  if not f then return nil end
+  local blob = f:read("*a"); f:close()
+  return blob and blob:match("jupynvim%-core starting %(v([0-9][%w%.%-%+]*)%)") or nil
+end
+
 -- Is the linux artifact we would upload older than the source it came from?
 local function linux_core_stale(triple)
   local bin = M._plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
   local bin_t = vim.fn.getftime(bin)
   if bin_t < 0 then return true, "missing" end
   if bin_t < core_source_mtime() then return true, "older than core/" end
+  -- mtime alone lies. A build that ran but did not relink, a copy, an rsync, a
+  -- touch: each leaves a NEWER file still carrying OLDER code, and then this
+  -- reports "fresh" forever and the remote never gets an update. Found on
+  -- 2026-08-28: the musl artifact was newer than Cargo.toml by mtime but held
+  -- v0.4.3 against a v0.4.5 manifest, so PSC had been running v0.4.3 for
+  -- weeks. The artifact records the version it was built from, so ask it.
+  local want, got = core_manifest_version(), artifact_version(bin)
+  if want and got and want ~= got then
+    return true, ("built from v%s but the manifest says v%s"):format(got, want)
+  end
   return false
 end
 M._core_source_mtime = core_source_mtime   -- exposed for tests
@@ -117,6 +148,50 @@ local function cross_build_if_stale(triple)
   return true
 end
 
+-- Persistent record of "alias A already carries binary sha S, on arch X".
+-- Written only once the remote copy is confirmed to hold that sha, and dropped
+-- when a spawn exits 127 (the binary is gone). This is what lets a reconnect
+-- that changes nothing skip the deploy probes altogether: on a loaded cluster
+-- login node a single ssh channel costs tens of seconds, so the cheapest round
+-- trip is the one we never make. Stored next to the ControlMaster sockets.
+local function deploy_record_file()
+  return vim.fn.stdpath("cache") .. "/jupynvim/deployed.json"
+end
+
+local function deploy_records()
+  local f = io.open(deploy_record_file(), "r")
+  if not f then return {} end
+  local raw = f:read("*a"); f:close()
+  local ok, t = pcall(vim.json.decode, raw)
+  return (ok and type(t) == "table") and t or {}
+end
+
+local function deploy_records_write(all)
+  vim.fn.mkdir(vim.fn.stdpath("cache") .. "/jupynvim", "p")
+  local f = io.open(deploy_record_file(), "w")
+  if not f then return end
+  f:write(vim.json.encode(all)); f:close()
+end
+
+function M._deploy_record_get(alias)
+  local r = deploy_records()[alias]
+  if type(r) == "table" and r.arch and r.sha then return r end
+  return nil
+end
+
+function M._deploy_record_set(alias, arch, sha)
+  local all = deploy_records()
+  all[alias] = { arch = arch, sha = sha }
+  deploy_records_write(all)
+end
+
+function M._deploy_record_clear(alias)
+  local all = deploy_records()
+  if all[alias] == nil then return end
+  all[alias] = nil
+  deploy_records_write(all)
+end
+
 -- Ensure the remote alias has the current backend binary at profile.core_path,
 -- uploading the locally cross-built linux binary over the SSH ControlMaster if
 -- the remote copy is missing or stale (sha256 mismatch). PSC blocks scp/sftp,
@@ -127,35 +202,10 @@ local function ensure_remote_binary(alias, profile)
   if profile.transport_cmd then return end  -- custom transport: user owns deployment
   local cp = control_path(alias)
   if not cp or not master_alive(alias, profile) then return end
-  -- Detect the remote architecture so multi-cloud setups work: PSC/most VMs
-  -- are x86_64, AWS Graviton / GCP Tau T2A are aarch64. One RTT, once per
-  -- session (this whole function runs behind the _binary_verified guard).
-  local arch_probe = vim.system(
-    vim.list_extend(ssh_base(cp, profile.host), { "uname -m" }), {}):wait()
-  local arch = ((arch_probe.stdout or ""):match("(%S+)")) or "x86_64"
-  local triple = ARCH_TRIPLE[arch]
-  if not triple then
-    vim.notify("jupynvim: unsupported remote arch '" .. arch .. "' on " .. alias ..
-               " - deploy jupynvim-core manually (profile.core_path)", vim.log.levels.WARN)
-    return
-  end
-  -- Line the artifact up with the source before comparing hashes, unless the
-  -- profile pins its own binary (then it is the user's to manage).
-  if not (profile and profile.local_core) then cross_build_if_stale(triple) end
-  local local_bin = locate_local_linux_core(profile, triple)
-  if vim.fn.filereadable(local_bin) ~= 1 then
-    vim.notify("jupynvim: no local linux binary at " .. local_bin ..
-               "\n  run :JupynvimCrossBuild (one-time: brew install zig; " ..
-               "cargo install cargo-zigbuild; rustup target add " .. triple .. ")",
-               vim.log.levels.WARN)
-    return
-  end
   -- Same default as ad-hoc connects: a fixed home path, NOT a bare name
   -- (non-interactive ssh exec doesn't source .profile, so ~/.local/bin is
   -- not on PATH and a bare name fails with exit 127).
   local core_path = profile.core_path or "~/.local/bin/jupynvim-core"
-  local local_sha = (vim.fn.system({ "shasum", "-a", "256", local_bin }) or ""):match("^(%x+)")
-  if not local_sha then return end
   -- Make a remote-shell-expandable, quoted path: "~/.x" -> "$HOME/.x", wrapped
   -- in double quotes so $HOME expands AND spaces survive. (shellescape uses
   -- single quotes, which would keep ~ literal — the marker never persisted and
@@ -177,8 +227,67 @@ local function ensure_remote_binary(alias, profile)
     local res = vim.system(c, input and { stdin = input } or {}):wait()
     return res.stdout or "", res.code or -1
   end
-  local remote_sha = (ssh({ "cat " .. marker_q .. " 2>/dev/null" })):gsub("%s+", "")
-  if remote_sha == local_sha then return end  -- already current
+
+  -- Everything below is on the UI thread, and on a loaded cluster login node a
+  -- single ssh channel costs 20-50s (measured on PSC: `hostname` over a live
+  -- ControlMaster took 21s/45s/47s back to back). So spend as few round trips
+  -- as possible. Two savings, in order:
+  --
+  --   1. If the artifact we would upload is byte-identical to what we last
+  --      confirmed on this alias, there is nothing to deploy and no reason to
+  --      ask the remote about it. Zero round trips. The record is persisted,
+  --      so this holds across nvim restarts (which is exactly the deploy loop
+  --      in .claude/commands.md: restart nvim, reconnect).
+  --   2. Otherwise fold the arch probe and the marker read into ONE channel
+  --      instead of two.
+  --
+  -- Correctness rests on the record only ever being written after the remote
+  -- copy is confirmed to hold that sha, and being dropped when a spawn fails
+  -- with 127 because the binary is missing. spawn_client's on_exit does that.
+  local record = M._deploy_record_get(alias) or {}
+
+  -- Resolve the local artifact for a known arch, keeping it in step with the
+  -- source first. Returns nil when we cannot produce one.
+  local function local_artifact(triple)
+    if not (profile and profile.local_core) then cross_build_if_stale(triple) end
+    local bin = locate_local_linux_core(profile, triple)
+    if vim.fn.filereadable(bin) ~= 1 then
+      vim.notify("jupynvim: no local linux binary at " .. bin ..
+                 "\n  run :JupynvimCrossBuild (one-time: brew install zig; " ..
+                 "cargo install cargo-zigbuild; rustup target add " .. triple .. ")",
+                 vim.log.levels.WARN)
+      return nil
+    end
+    return bin, (vim.fn.system({ "shasum", "-a", "256", bin }) or ""):match("^(%x+)")
+  end
+
+  -- (1) Zero-round-trip path. A host's architecture does not change, so a
+  -- remembered one is safe to reuse; if it were ever wrong the sha would not
+  -- match and we would fall through to the probe below anyway.
+  local arch, remote_sha
+  if record.arch and record.sha and ARCH_TRIPLE[record.arch] then
+    local bin, sha = local_artifact(ARCH_TRIPLE[record.arch])
+    if bin and sha and sha == record.sha then return end  -- already deployed
+    arch = record.arch
+  end
+
+  -- (2) One channel for both probes rather than two.
+  local probe = ssh({ 'uname -m; cat ' .. marker_q .. ' 2>/dev/null' })
+  local lines = vim.split(probe or "", "\n", { plain = true })
+  arch = (lines[1] or ""):match("(%S+)") or arch or "x86_64"
+  remote_sha = (lines[2] or ""):match("(%x+)") or ""
+  local triple = ARCH_TRIPLE[arch]
+  if not triple then
+    vim.notify("jupynvim: unsupported remote arch '" .. arch .. "' on " .. alias ..
+               " - deploy jupynvim-core manually (profile.core_path)", vim.log.levels.WARN)
+    return
+  end
+  local local_bin, local_sha = local_artifact(triple)
+  if not local_bin or not local_sha then return end
+  if remote_sha == local_sha then                  -- already current
+    M._deploy_record_set(alias, arch, local_sha)
+    return
+  end
 
   vim.notify("jupynvim: uploading backend to " .. alias .. " ...", vim.log.levels.INFO)
   -- Stream the binary to a temp path, chmod, atomically move into place, then
@@ -195,6 +304,7 @@ local function ensure_remote_binary(alias, profile)
     return
   end
   ssh({ "printf %s " .. vim.fn.shellescape(local_sha) .. " > " .. marker_q })
+  M._deploy_record_set(alias, arch, local_sha)
   vim.notify("jupynvim: backend updated on " .. alias .. " (" .. local_sha:sub(1, 12) .. ")",
              vim.log.levels.INFO)
 end
@@ -217,6 +327,14 @@ local function spawn_client(cmd_vec, alias)
     on_exit = function(code)
       M.clients[alias] = nil
       if alias == "local" then M.client = nil end
+      -- 127 is the remote shell's "command not found": the binary we believed
+      -- was deployed is gone (someone cleaned ~/.local/bin, a scratch purge,
+      -- a different home). Drop the record so the next spawn re-probes and
+      -- re-uploads instead of trusting a stale "already deployed".
+      if code == 127 and alias ~= "local" then
+        pcall(M._deploy_record_clear, alias)
+        if M._binary_verified then M._binary_verified[alias] = nil end
+      end
       vim.schedule(function()
         vim.notify(string.format("jupynvim-core (%s) exited (code=%s)", alias, tostring(code)),
                    vim.log.levels.WARN)

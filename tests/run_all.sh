@@ -9,6 +9,8 @@
 #      render/UI specs) + remote_pick_open_spec.lua + remote_open_layout_spec.lua
 #      (window placement when opening a file from the remote explorer/picker)
 #      + dispatch_keys_spec.lua (global keys are session-only, issue #24)
+#      + deploy_probe_spec.lua (ssh round trips spent verifying the
+#      remote backend binary; each one costs 20-50s on a loaded cluster)
 #   5. frame_layout.sh (real rendered screen via tmux: frame alignment across
 #      terminal-split / floating-window layout changes)
 #      remote_hl_screen.sh (real rendered screen via tmux: dashboard/explorer
@@ -111,7 +113,7 @@ echo "$hl_out" | tail -1
 echo "$hl_out" | grep -q "ALL REMOTE-HL CHECKS PASSED"
 section "remote-hl spec" "$?"
 # These signal failure with `cquit 1`, so the exit code is the verdict.
-for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec; do
+for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec deploy_probe_spec; do
   out=$(nvim --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'qa!' 2>&1)
   rc=$?
   echo "$out" | tail -1
