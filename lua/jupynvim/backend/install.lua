@@ -75,7 +75,8 @@ local function detect_target() return detect_targets()[1] end
 
 -- A prebuilt that downloaded and verified but would not run here, remembered
 -- per tag and target so the install on first use does not fetch it again in
--- every session. :JupynvimInstall tries again regardless.
+-- every session. Build hooks and :JupynvimInstall try again regardless, and
+-- one that then runs clears its entry.
 local function failed_file() return vim.fn.stdpath("state") .. "/jupynvim/prebuilt_failed.json" end
 local function failed_load()
   local f = io.open(failed_file(), "r")
@@ -104,6 +105,31 @@ local function detect_tag(plugin_dir)
   return nil
 end
 
+-- A cargo build leaves its metadata beside the binary, and one of the user's
+-- own is never downloaded over. The build below, made because no prebuilt
+-- ran here, is not theirs: it carries a stamp of the binary it installed,
+-- which a later build of their own no longer matches. Without it, the
+-- installer's own fallback turned the plugin into a build nothing updated.
+local function stamp_of(bin)
+  local st = vim.uv.fs_stat(bin)
+  return st and ("%d:%d:%d"):format(st.size, st.mtime.sec, st.mtime.nsec) or nil
+end
+local function stamp_path(plugin_dir) return plugin_dir .. "/core/target/release/.jupynvim-installed" end
+local function stamp_install(plugin_dir)
+  local rel = plugin_dir .. "/core/target/release"
+  if vim.fn.isdirectory(rel .. "/.fingerprint") ~= 1 then return end
+  local f = io.open(stamp_path(plugin_dir), "w")
+  if f then f:write(stamp_of(rel .. "/jupynvim-core") or "", "\n"); f:close() end
+end
+function M.is_dev_build(plugin_dir)
+  local rel = plugin_dir .. "/core/target/release"
+  if vim.fn.isdirectory(rel .. "/.fingerprint") ~= 1 then return false end
+  local f = io.open(stamp_path(plugin_dir), "r")
+  if not f then return true end
+  local s = f:read("*l"); f:close()
+  return s ~= stamp_of(rel .. "/jupynvim-core")
+end
+
 local function build_from_source(plugin_dir, opts, why)
   if opts.no_cargo then
     error(("jupynvim: could not install the prebuilt jupynvim-core (%s). " ..
@@ -121,6 +147,7 @@ local function build_from_source(plugin_dir, opts, why)
   if vim.v.shell_error ~= 0 then
     error(("jupynvim: cargo build failed: %s"):format(out))
   end
+  stamp_install(plugin_dir)
 end
 
 -- sha256 of a file via shasum (macOS + most Linux) or sha256sum. nil if neither.
@@ -201,24 +228,32 @@ function M.run(plugin, opts)
   local want = M.source_version(plugin_dir)
   local why = {}
   for _, target in ipairs(targets) do
-    local bad = not opts.force and M.known_bad(tag, target)
-    if bad then
-      why[#why + 1] = target .. ": " .. bad
-    else
-      local ok, reason = M._fetch(tag, target, final, want)
+    -- only the install on first use skips one that did not run before
+    local reason = opts.no_cargo and not opts.force and M.known_bad(tag, target)
+    local next_one
+    if not reason then
+      local ok
+      ok, reason, next_one = M._fetch(tag, target, final, want)
       if ok then
+        stamp_install(plugin_dir)
         vim.notify(("jupynvim: prebuilt %s installed"):format(target), vim.log.levels.INFO)
         return true
       end
-      why[#why + 1] = target .. ": " .. reason
     end
+    why[#why + 1] = target .. ": " .. reason
+    -- Only a release that does not publish this asset moves on to the next
+    -- one. After a network error the next download would wait out the same
+    -- timeouts, and the glibc asset is a copy of the musl one from the
+    -- release that publishes both, so one that did not run will not either.
+    if not next_one then break end
   end
   build_from_source(plugin_dir, opts, table.concat(why, "; "))
   return false
 end
 
 -- Download one release asset, check it, and rename it into place. Returns
--- true, or false and why. The file lands beside the binary under a name of
+-- true, or false, why, and whether the release just does not publish it.
+-- The file lands beside the binary under a name of
 -- its own and is renamed in only once it has verified AND run here. Writing
 -- the final path directly left a partial binary behind when a download
 -- failed, truncated the one a running backend was executing, and two nvims
@@ -235,7 +270,11 @@ function M._fetch(tag, target, final, want)
   })
   if not fetched then
     vim.fn.delete(dest)
-    return false, "download failed (" .. vim.trim(out or "") .. ")"
+    -- curl 8 over HTTP/2 exits 56 on a 404, not 22, so go by what it says.
+    -- Its retries repeat the same line; the last one is enough.
+    out = vim.trim(out or "")
+    return false, "download failed (" .. (out:match("[^\n]*$") or "") .. ")",
+      out:find("returned error: 404%f[%D]") ~= nil
   end
 
   -- Integrity check. The download came over TLS, but TLS only protects transit,
@@ -269,9 +308,12 @@ function M._fetch(tag, target, final, want)
     vim.fn.delete(dest)
     local reason = ran.version and ("it is v" .. ran.version .. ", not v" .. tostring(want))
       or ("it does not run here: " .. (ran.err ~= "" and ran.err or "no output"))
-    local t = failed_load()
-    t[tag .. "|" .. target] = reason
-    failed_save(t)
+    -- a first run that was slow, or killed, says nothing about the binary
+    if not ran.transient then
+      local t = failed_load()
+      t[tag .. "|" .. target] = reason
+      failed_save(t)
+    end
     return false, reason
   end
   local rok, rerr = os.rename(dest, final)
@@ -279,15 +321,25 @@ function M._fetch(tag, target, final, want)
     vim.fn.delete(dest)
     return false, "could not replace " .. final .. ": " .. tostring(rerr)
   end
+  local t = failed_load()
+  if t[tag .. "|" .. target] then
+    t[tag .. "|" .. target] = nil
+    failed_save(t)
+  end
   return true
 end
 
 -- `bin --version`, as { version = "0.4.5" } or { err = first line of stderr }.
+-- `transient` is set when the process was killed, by the wait giving up after
+-- 5s or by something else, which says nothing about the binary. Antivirus
+-- scanning a new file or a loaded network filesystem can make a first run
+-- that slow.
 function M._run_version(bin)
   local ok, res = pcall(function()
     return vim.system({ bin, "--version" }, { text = true }):wait(5000)
   end)
-  if not ok or not res then return { err = tostring(res) } end
+  if not ok then return { err = tostring(res) } end
+  if not res or res.signal == 9 then return { err = "no answer within 5s", transient = true } end
   local v = res.code == 0 and (res.stdout or ""):match("jupynvim%-core%s+(%S+)") or nil
   return { version = v, err = vim.trim(((res.stderr or ""):match("[^\n]+")) or "") }
 end

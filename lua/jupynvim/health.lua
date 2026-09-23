@@ -12,7 +12,7 @@ function M.check()
   local want = Install.source_version(root)
   local cfg_path = J.config and J.config.core_path
   local local_bin = root .. "/core/target/release/jupynvim-core"
-  local dev_build = vim.fn.isdirectory(root .. "/core/target/release/.fingerprint") == 1
+  local dev_build = Install.is_dev_build(root)
   -- the binary locate_core would use, in its order
   local bin = cfg_path
     or (vim.fn.executable(local_bin) == 1 and local_bin)
@@ -40,14 +40,14 @@ function M.check()
   h.start("jupynvim: installing the prebuilt")
   local targets = Install._detect_targets()
   if #targets > 0 then
-    h.ok("prebuilt published for " .. table.concat(targets, ", "))
+    h.ok("prebuilt targets for this platform, tried in order: " .. table.concat(targets, ", "))
     local tag = want and ("v" .. want)
     for _, t in ipairs(targets) do
       local bad = tag and Install.known_bad(tag, t)
-      if bad then h.warn(("the %s %s prebuilt did not run here: %s"):format(tag, t, bad)) end
+      if bad then h.warn(("the %s %s prebuilt was refused: %s"):format(tag, t, bad)) end
     end
   else
-    h.warn("no prebuilt is published for this platform",
+    h.warn("no prebuilt is made for this platform",
       { "Install a Rust toolchain; :JupynvimInstall builds with cargo" })
   end
   if vim.fn.executable("curl") == 1 then h.ok("curl found") else h.error("curl not found") end
