@@ -804,6 +804,7 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
           cfg.cmd = { "julia-lsp", vim.fn.expand(cfg.julia_env_path) }
         end
       end
+      local python_server = name == "basedpyright" or name == "pyright" or name == "pylsp" or name == "ruff"
       local opts = {
         bufnr = buf,
         -- Don't reuse a client started for a different interpreter, or its
@@ -811,14 +812,18 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
         -- interpreter and root is fine to reuse. Refusing every client made
         -- each reopen of a notebook start another pyright and leave the old
         -- one running with no buffer.
-        reuse_client = py_path and function(client, conf)
+        reuse_client = (py_path or python_server) and function(client, conf)
           if client:is_stopped() or client.name ~= conf.name
              or client.config.root_dir ~= conf.root_dir then
             return false
           end
-          if not (name == "basedpyright" or name == "pyright" or name == "pylsp" or name == "ruff") then
-            return true
-          end
+          if not python_server then return true end
+          -- It must sync in full, as force_full_sync set it up above: the
+          -- cleaned text in jupynvim.lsp only reaches the server that way.
+          -- One vim.lsp.enable started for a .py file syncs incrementally,
+          -- and taking it over sent the notebook's raw markdown and output
+          -- lines to the server.
+          if (client.flags or {}).allow_incremental_sync ~= false then return false end
           -- A Python server is pointed at ONE notebook's kernel for every
           -- buffer it serves (_sync_lsp_python_path), so one another notebook
           -- is using is not shared: switching that notebook's kernel would

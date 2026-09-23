@@ -71,7 +71,10 @@ local function notebook_server()
 end
 vim.lsp.config("tyfake", { cmd = notebook_server(), filetypes = { "python" } })
 
-vim.lsp.config("pyright", { cmd = fake_server(), filetypes = { "python" } })
+-- pyrightconfig.json is one of pyright's real root markers. Only the project
+-- that has one gets a root this way; every other dir falls back as before.
+vim.lsp.config("pyright", { cmd = fake_server(), filetypes = { "python" },
+                            root_markers = { "pyrightconfig.json" } })
 -- julials itself gets its cmd rewritten to Mason's julia-lsp wrapper in _attach_lsp,
 -- which is not installed here, so a fake under another name stands in.
 vim.lsp.config("juliafake", { cmd = fake_server(), filetypes = { "julia" } })
@@ -193,8 +196,8 @@ do
   local f = io.open(VPY, "w"); f:write("#!/bin/sh\nexit 0\n"); f:close()
   vim.fn.setfperm(VPY, "rwxr-xr-x")
 end
-local function py_nb(name)
-  local p = PROJ .. "/" .. name .. ".ipynb"
+local function py_nb(name, dir)
+  local p = (dir or PROJ) .. "/" .. name .. ".ipynb"
   local f = io.open(p, "w")
   f:write(vim.json.encode({ cells = { { cell_type = "code", id = "c1", metadata = vim.empty_dict(),
     source = "x = 1", execution_count = vim.NIL, outputs = {} } }, nbformat = 4, nbformat_minor = 5,
@@ -249,6 +252,65 @@ do
       ("a=%s b=%s"):format(tostring(python_path(ca)), tostring(python_path(cb))))
   pcall(vim.api.nvim_buf_delete, a, { force = true })
   pcall(vim.api.nvim_buf_delete, b, { force = true })
+end
+
+do
+  -- A .py file in the project got a pyright from vim.lsp.enable, which syncs
+  -- incrementally, and :bdelete left it running with no buffer. Taking it
+  -- over sent the notebook's raw markdown and output lines to the server
+  -- instead of the cleaned text that only Full sync carries.
+  local proj = tmp .. "/pyfile"
+  vim.fn.mkdir(proj .. "/.venv/bin", "p")
+  local py = proj .. "/.venv/bin/python"
+  local f = io.open(py, "w"); f:write("#!/bin/sh\nexit 0\n"); f:close()
+  vim.fn.setfperm(py, "rwxr-xr-x")
+  f = io.open(proj .. "/pyrightconfig.json", "w"); f:write("{}\n"); f:close()
+  local pyf = proj .. "/mod.py"
+  f = io.open(pyf, "w"); f:write("x = 1\n"); f:close()
+  vim.cmd("edit " .. vim.fn.fnameescape(pyf))
+  vim.bo.filetype = "python"   -- -u NONE detects no filetypes
+  vim.wait(2000, function() return pyright_of(0) ~= nil end, 20)
+  local plain = pyright_of(0)
+  vim.cmd("bdelete")
+  vim.wait(300)
+  chk("a .py file's pyright is left idle for the project (precondition)",
+      plain and not plain:is_stopped() and next(plain.attached_buffers) == nil
+      and vim.fn.resolve(plain.config.root_dir or "") == vim.fn.resolve(proj),
+      tostring(plain and plain.config.root_dir))
+  local buf = edit(py_nb("after-py", proj))
+  local c = pyright_of(buf)
+  chk("a notebook does not take over a .py file's idle pyright",
+      c and plain and c.id ~= plain.id and c.flags.allow_incremental_sync == false,
+      ("notebook %s, .py %s, allow_incremental_sync %s"):format(tostring(c and c.id),
+        tostring(plain and plain.id), tostring(c and c.flags.allow_incremental_sync)))
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+
+  -- nor one whose interpreter nothing could find: no .venv, no such kernel
+  local proj2 = tmp .. "/pyfile2"
+  vim.fn.mkdir(proj2, "p")
+  f = io.open(proj2 .. "/pyrightconfig.json", "w"); f:write("{}\n"); f:close()
+  pyf = proj2 .. "/mod.py"
+  f = io.open(pyf, "w"); f:write("x = 1\n"); f:close()
+  vim.cmd("edit " .. vim.fn.fnameescape(pyf))
+  vim.bo.filetype = "python"
+  vim.wait(2000, function() return pyright_of(0) ~= nil end, 20)
+  plain = pyright_of(0)
+  vim.cmd("bdelete")
+  vim.wait(300)
+  local p = proj2 .. "/no-interp.ipynb"
+  f = io.open(p, "w")
+  f:write(vim.json.encode({ cells = { { cell_type = "code", id = "c1", metadata = vim.empty_dict(),
+    source = "x = 1", execution_count = vim.NIL, outputs = {} } }, nbformat = 4, nbformat_minor = 5,
+    metadata = { kernelspec = { display_name = "N", language = "python", name = "jn-no-such-kernel" } } }))
+  f:close()
+  buf = edit(p)
+  c = pyright_of(buf)
+  chk("nor does one with no interpreter found",
+      NB.get(buf) and NB.get(buf).kernel_python_path == nil
+      and c and plain and c.id ~= plain.id and c.flags.allow_incremental_sync == false,
+      ("py_path %s, notebook %s, .py %s"):format(tostring(NB.get(buf) and NB.get(buf).kernel_python_path),
+        tostring(c and c.id), tostring(plain and plain.id)))
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
 end
 
 -- ── a notebook-aware server sees the reopened notebook ──────────────────
