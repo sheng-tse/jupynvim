@@ -3,6 +3,7 @@ name = "jupynvim-core"
 version = "0.4.6-beta.1"
 edition = "2021"
 description = "Native backend for jupynvim — Jupyter notebooks in Neovim with VSCode-style UX"
+license = "MIT"
 
 [[bin]]
 name = "jupynvim-core"
