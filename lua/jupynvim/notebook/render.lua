@@ -512,7 +512,9 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   end
 
   -- Schedule image placements for image outputs
-  if cell.cell_type == "code" and image.supported() then
+  local chafa_available = (require("jupynvim").config or {}).image_renderer == "chafa"
+    and vim.fn.executable("chafa") == 1
+  if cell.cell_type == "code" and (image.supported() or chafa_available) then
     M.place_images(nb, cell, range, win, gut)
   end
 end

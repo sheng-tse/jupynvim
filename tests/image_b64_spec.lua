@@ -253,6 +253,24 @@ else
   io.write("  skip chafa fallback: no chafa\n")
 end
 
+-- Chafa renders code-cell images in terminals without Kitty graphics support,
+-- but only when it is the configured renderer.
+if vim.fn.executable("chafa") == 1 then
+  vim.fn.executable = real_exec
+  vim.env.TERM = "xterm-256color"
+  J.setup({ log_level = "warn", image_renderer = "chafa" })
+  local buf = open(write_nb({ image_cell("c1", "image/png", PNG) }))
+  local p = placement(C1, 8000)
+  chk("configured chafa renders code-cell images outside Kitty", p and p.renderer == "chafa")
+  local lines = Image.ascii_lines_for(C1)
+  chk("non-Kitty Chafa output contains rendered lines", lines and #lines > 0)
+  close(buf)
+  J.setup({ log_level = "warn", image_renderer = "placeholder" })
+  vim.env.TERM = "xterm-kitty"
+else
+  io.write("  skip non-Kitty Chafa render: no chafa\n")
+end
+
 vim.fn.system = real_system
 vim.fn.delete(tmp, "rf")
 
