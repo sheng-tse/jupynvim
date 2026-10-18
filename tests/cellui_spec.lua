@@ -259,11 +259,14 @@ nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 6 })
 nb:mark_queued("c3")
 assert(nb.cell_state["c3"].exec_state == "busy", "mark_queued must leave a running cell running")
 nb:apply_cell_event("c3", { kind = "status", state = "idle" })
--- a kernel stop/restart releases everything still queued
-nb:mark_queued("c2"); nb:mark_queued("c3")
-assert(nb:unqueue_all() and nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c3"].exec_state == "idle",
-  "unqueue_all must release every queued cell")
-assert(not nb:unqueue_all(), "unqueue_all reports nothing to release")
+-- a kernel stop/restart releases everything still queued and finishes the
+-- running cell as failed, since its idle will never come
+nb:apply_cell_event("c2", { kind = "execute_input", execution_count = 7 })
+nb:mark_queued("c3")
+assert(nb:release_pending() and nb.cell_state["c3"].exec_state == "idle", "release_pending must release every queued cell")
+assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed and nb.cell_state["c2"].duration_ns,
+  "release_pending must finish the running cell as failed with its stopwatch stopped")
+assert(not nb:release_pending(), "release_pending reports nothing to release")
 print("F4. queued cell: grey [*], calm frame, released on abort/restart ok")
 
 -- F5. Run all queues EVERY code cell at once, before the first one has even
@@ -283,27 +286,33 @@ assert(#calls == 1 and calls[1].method == "update_cell_source" and calls[1].para
   "cells go to the kernel one at a time, first one first: " .. vim.inspect(calls))
 calls[1].cb(nil)
 assert(#calls == 2 and calls[2].method == "execute" and calls[2].params.cell_id == "c2", "execute follows the source push")
-calls[2].cb(nil)   -- submitted (the backend answers on submission, not completion)
-assert(#calls == 3 and calls[3].params.cell_id == "c3", "the next cell is submitted once the previous is accepted")
-assert(nb.cell_state["c2"].exec_state == "queued" and nb.cell_state["c3"].exec_state == "queued",
-  "cells stay queued until the kernel's execute_input arrives")
-calls[3].cb(nil)
-calls[4].cb("kernel not started")
-assert(#calls == 4, "a failed submission must stop the run")
-assert(nb.cell_state["c3"].exec_state == "idle", "the cell that failed to submit is released")
+calls[2].cb("kernel not started")
+assert(#calls == 2, "a failed submission must stop the run: c3 must not be submitted")
+assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c3"].exec_state == "idle",
+  "the failed cell and every cell after it are released")
 assert(#notes == 1 and notes[1]:find("kernel not started", 1, true), "the failure is reported once: " .. vim.inspect(notes))
+-- a run that is accepted keeps every cell queued until the kernel's execute_input
+calls, notes = {}, {}
+J.run_all(buf)
+calls[1].cb(nil); calls[2].cb(nil)   -- c2 accepted (the backend answers on submission, not completion)
+assert(#calls == 3 and calls[3].params.cell_id == "c3", "the next cell is submitted once the previous is accepted")
+calls[3].cb(nil); calls[4].cb(nil)
+assert(#calls == 4 and nb.cell_state["c2"].exec_state == "queued" and nb.cell_state["c3"].exec_state == "queued",
+  "cells stay queued until the kernel's execute_input arrives")
+assert(#notes == 0, "an accepted run reports nothing")
+nb:release_pending()
 -- run_below from cell 2 queues c2 and c3; run_above from cell 3 queues c2 only
 calls = {}
 vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[2].start + 1, 0 })
 J.run_below(buf)
 assert(#calls == 1 and calls[1].params.cell_id == "c2" and nb.cell_state["c3"].exec_state == "queued", "run_below queues the rest")
-nb:unqueue_all()
+nb:release_pending()
 calls = {}
 vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[3].start + 1, 0 })
 J.run_above(buf)
 assert(#calls == 1 and calls[1].params.cell_id == "c2" and nb.cell_state["c2"].exec_state == "queued"
   and nb.cell_state["c3"].exec_state == "idle", "run_above queues only the cells above")
-nb:unqueue_all()
+nb:release_pending()
 J._nb_client, vim.notify = real_client, real_notify
 print("F5. run all/below/above queue up front, stop + release on failure ok")
 

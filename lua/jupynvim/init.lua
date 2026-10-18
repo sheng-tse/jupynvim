@@ -2026,12 +2026,17 @@ end
 function M._submit_cells(nb, cells)
   if #cells == 0 then return end
   local buf = nb.buf
+  -- resolve the client BEFORE marking anything: a remote backend that has
+  -- to be respawned can raise here, and nothing would release the cells
+  local cl = M._nb_client(nb)
   for _, c in ipairs(cells) do nb:mark_queued(c.id) end
   Render.refresh(nb, vim.fn.bufwinid(buf))
-  local cl = M._nb_client(nb)
   local i = 1
   local function fail(err)
     for j = i, #cells do nb:unqueue(cells[j].id) end
+    -- the notebook was closed while the run was still being submitted:
+    -- "no session" is expected, not news
+    if Notebook.get(buf) ~= nb then return end
     Render.refresh(nb, vim.fn.bufwinid(buf))
     M._notify_exec_error(nb, err)
   end
@@ -2436,13 +2441,15 @@ function M.stop_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb.kernel_started = false
-  M._release_queued(nb)
+  M._release_pending(nb)
   M._ensure_client():call("stop_kernel", { session_id = nb.session_id }, function() end)
 end
 
--- Queued executions die with the kernel; drop their waiting badges.
-function M._release_queued(nb)
-  if nb:unqueue_all() then Render.refresh(nb, vim.fn.bufwinid(nb.buf)) end
+-- Executions die with the kernel: queued cells drop their waiting badge,
+-- and a cell that was running is finished as failed (its stopwatch stops at
+-- the kill), since the kernel that would have sent its idle is gone.
+function M._release_pending(nb)
+  if nb:release_pending() then Render.refresh(nb, vim.fn.bufwinid(nb.buf)) end
 end
 
 function M.interrupt_kernel(buf)
@@ -2538,9 +2545,11 @@ end
 function M.restart_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
+  -- the backend stops the old kernel before starting the new one, so the
+  -- pending executions are gone whether or not the start succeeds
+  M._release_pending(nb)
   M._ensure_client():call("restart_kernel", { session_id = nb.session_id }, function(err, res)
     if err then vim.notify("restart: " .. tostring(err), vim.log.levels.ERROR); return end
-    M._release_queued(nb)
     vim.notify("jupynvim: kernel restarted", vim.log.levels.INFO)
   end)
 end

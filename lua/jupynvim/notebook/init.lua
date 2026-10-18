@@ -563,12 +563,19 @@ function Notebook:unqueue(cell_id)
   return false
 end
 
--- Release every queued cell; returns true when any was. Used when the kernel
--- goes away (stop, restart) and the queued executions die with it.
-function Notebook:unqueue_all()
+-- The kernel is going away (stop, restart): release every queued cell and
+-- finish the running one as failed, stopwatch stopped now, since nothing
+-- will send its idle any more. Returns true when any cell changed.
+function Notebook:release_pending()
   local any = false
   for _, c in ipairs(self.cells) do
     if self:unqueue(c.id) then any = true end
+    local st = self.cell_state[c.id]
+    if st and st.exec_state == "busy" then
+      if st.started_ns and not st.duration_ns then st.duration_ns = vim.uv.hrtime() - st.started_ns end
+      st.exec_state, st.failed = "idle", true
+      any = true
+    end
   end
   return any
 end
@@ -651,8 +658,9 @@ function Notebook:apply_cell_event(cell_id, ev)
     -- nothing to mutate. In particular a queued cell is NOT released here:
     -- the reply rides the shell channel and can land after the iopub idle
     -- that already finished the cell, i.e. after the cell was queued again
-    -- for its next run. A queued cell the kernel aborts gets busy/idle
-    -- statuses on iopub, and those release it.
+    -- for its next run. Should a kernel abort a queued request (this
+    -- backend sends stop_on_error=false, so ipykernel does not), the
+    -- busy/idle statuses it publishes on iopub release the cell.
   elseif kind == "clear_output" then
     if not ev.wait then c.outputs = {} end
   end
