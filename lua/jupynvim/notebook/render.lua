@@ -29,6 +29,7 @@ local HL_BORDER     = "JupynvimBorder"
 local HL_BORDER_SEL = "JupynvimBorderSel"
 local HL_HEADER     = "JupynvimCellHeader"
 local HL_BUSY       = "JupynvimBusy"
+local HL_QUEUED     = "JupynvimQueued"
 local HL_OUTPUT     = "JupynvimOutput"
 local HL_ERROR      = "JupynvimError"
 local HL_STREAM     = "JupynvimStream"
@@ -281,7 +282,9 @@ end
 M._build_image_virt_lines = build_image_virt_lines
 
 -- VSCode's execution bar: "[1] ✓ 0.1s" under the input box. Live elapsed
--- time with a spinner glyph while running; ✗ on error.
+-- time with a spinner glyph while running; ✗ on error. A cell queued behind
+-- another (Run all, run below) shows JupyterLab's "[*]" with the running
+-- dot greyed out, so the one cell in the busy color is the one running.
 local function fmt_duration(ns)
   local s = ns / 1e9
   if s < 10 then return string.format("%.1fs", s) end
@@ -297,6 +300,9 @@ local function exec_status_chunks(cell, st)
   if st.exec_state == "busy" then
     local el = st.started_ns and (vim.uv.hrtime() - st.started_ns) or 0
     return { { " [*] ", HL_BUSY }, { "● " .. fmt_duration(el), HL_BUSY } }
+  end
+  if st.exec_state == "queued" then
+    return { { " [*] ", HL_HEADER }, { "●", HL_QUEUED } }
   end
   local badge = " [" .. (ec or " ") .. "] "
   if st.failed then
@@ -745,6 +751,7 @@ function M.setup_highlights()
   hl(0, HL_BORDER_SEL, { default = true, link = "DiagnosticInfo" })   --unused
   hl(0, HL_HEADER,     { default = true, link = "Comment" })
   hl(0, HL_BUSY,       { default = true, link = "DiagnosticWarn" })
+  hl(0, HL_QUEUED,     { default = true, link = "Comment" })   -- waiting behind another cell
   hl(0, HL_OUTPUT,     { default = true, link = "NonText" })
   hl(0, HL_ERROR,      { default = true, link = "DiagnosticError" })
   hl(0, HL_STREAM,     { default = true, link = "Normal" })           --unused

@@ -1986,27 +1986,68 @@ function M.run_cell(buf, opts)
       if opts.advance then vim.schedule(function() M._advance_after_run(buf) end) end
       return
     end
+    nb:mark_queued(cell.id)
+    Render.refresh(nb, vim.fn.bufwinid(buf))
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
-      -- "kernel not started" alone is unactionable. While a start is in
-      -- flight (first use may be pip-installing ipykernel into the env),
-      -- say so calmly; otherwise append the actual start failure.
-      if err2 and tostring(err2):find("kernel not started") then
-        if nb.kernel_starting then
-          vim.notify("jupynvim: kernel is still starting (first use of an env may install ipykernel; can take a minute). Run the cell again once \"kernel started\" appears.",
-            vim.log.levels.WARN)
-          return
-        elseif nb.kernel_error then
-          err2 = tostring(err2) .. "\n  last start_kernel error: " .. nb.kernel_error
-        end
-      end
       if err2 then
-        vim.notify("execute: " .. tostring(err2), vim.log.levels.ERROR)
+        nb:unqueue(cell.id)
+        Render.refresh(nb, vim.fn.bufwinid(buf))
+        M._notify_exec_error(nb, err2)
       end
     end)
     if opts.advance then
       vim.schedule(function() M._advance_after_run(buf) end)
     end
   end)
+end
+
+-- "kernel not started" alone is unactionable. While a start is in flight
+-- (first use may be pip-installing ipykernel into the env), say so calmly;
+-- otherwise append the actual start failure.
+function M._notify_exec_error(nb, err)
+  if tostring(err):find("kernel not started") then
+    if nb.kernel_starting then
+      vim.notify("jupynvim: kernel is still starting (first use of an env may install ipykernel; can take a minute). Run the cell again once \"kernel started\" appears.",
+        vim.log.levels.WARN)
+      return
+    elseif nb.kernel_error then
+      err = tostring(err) .. "\n  last start_kernel error: " .. nb.kernel_error
+    end
+  end
+  vim.notify("execute: " .. tostring(err), vim.log.levels.ERROR)
+end
+
+-- Run several cells the way JupyterLab does: every cell is marked queued
+-- ("[*]") up front, then they go to the kernel in order. The backend's
+-- execute answers on submission, not completion, so within a moment they
+-- are all at the kernel, which runs them one at a time; the queued badge is
+-- what shows the cells still waiting behind the running one. A failed
+-- submission stops the run and releases the cells that never made it.
+function M._submit_cells(nb, cells)
+  if #cells == 0 then return end
+  local buf = nb.buf
+  for _, c in ipairs(cells) do nb:mark_queued(c.id) end
+  Render.refresh(nb, vim.fn.bufwinid(buf))
+  local cl = M._nb_client(nb)
+  local i = 1
+  local function fail(err)
+    for j = i, #cells do nb:unqueue(cells[j].id) end
+    Render.refresh(nb, vim.fn.bufwinid(buf))
+    M._notify_exec_error(nb, err)
+  end
+  local function step()
+    if i > #cells then return end
+    local c = cells[i]
+    cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function(err)
+      if err then return fail(err) end
+      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function(err2)
+        if err2 then return fail(err2) end
+        i = i + 1
+        step()
+      end)
+    end)
+  end
+  step()
 end
 
 -- Run-and-advance the way VSCode and JupyterLab do it. An existing next cell
@@ -2037,23 +2078,11 @@ function M.run_all(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   M._sync_model(nb)
-  -- Sequence cells: each one's execute fires only after the previous update + execute have completed
-  local cl = M._nb_client(nb)
   local code_cells = {}
   for _, c in ipairs(nb.cells) do
     if c.cell_type == "code" then table.insert(code_cells, c) end
   end
-  local i = 1
-  local function step()
-    if i > #code_cells then return end
-    local c = code_cells[i]; i = i + 1
-    cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
-        step()
-      end)
-    end)
-  end
-  step()
+  M._submit_cells(nb, code_cells)
 end
 
 function M.run_above(buf)
@@ -2062,22 +2091,12 @@ function M.run_above(buf)
   M._sync_model(nb)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
-  local cl = M._nb_client(nb)
-  local co
-  co = coroutine.wrap(function()
-    for _, c in ipairs(nb.cells) do
-      if c.id == cur_id then break end
-      if c.cell_type == "code" then
-        cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-          cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
-            co()
-          end)
-        end)
-        coroutine.yield()
-      end
-    end
-  end)
-  co()
+  local cells = {}
+  for _, c in ipairs(nb.cells) do
+    if c.id == cur_id then break end
+    if c.cell_type == "code" then table.insert(cells, c) end
+  end
+  M._submit_cells(nb, cells)
 end
 
 function M.run_below(buf)
@@ -2087,22 +2106,12 @@ function M.run_below(buf)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   local seen = false
-  local cl = M._nb_client(nb)
-  local co
-  co = coroutine.wrap(function()
-    for _, c in ipairs(nb.cells) do
-      if c.id == cur_id then seen = true end
-      if seen and c.cell_type == "code" then
-        cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-          cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
-            co()
-          end)
-        end)
-        coroutine.yield()
-      end
-    end
-  end)
-  co()
+  local cells = {}
+  for _, c in ipairs(nb.cells) do
+    if c.id == cur_id then seen = true end
+    if seen and c.cell_type == "code" then table.insert(cells, c) end
+  end
+  M._submit_cells(nb, cells)
 end
 
 -- Cell adds, deletes and moves change the cells only when the backend
@@ -2427,7 +2436,13 @@ function M.stop_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb.kernel_started = false
+  M._release_queued(nb)
   M._ensure_client():call("stop_kernel", { session_id = nb.session_id }, function() end)
+end
+
+-- Queued executions die with the kernel; drop their waiting badges.
+function M._release_queued(nb)
+  if nb:unqueue_all() then Render.refresh(nb, vim.fn.bufwinid(nb.buf)) end
 end
 
 function M.interrupt_kernel(buf)
@@ -2525,6 +2540,7 @@ function M.restart_kernel(buf)
   if not nb then return end
   M._ensure_client():call("restart_kernel", { session_id = nb.session_id }, function(err, res)
     if err then vim.notify("restart: " .. tostring(err), vim.log.levels.ERROR); return end
+    M._release_queued(nb)
     vim.notify("jupynvim: kernel restarted", vim.log.levels.INFO)
   end)
 end

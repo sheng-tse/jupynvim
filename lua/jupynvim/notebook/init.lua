@@ -543,6 +543,36 @@ function Notebook:get_cell(cell_id)
   end
 end
 
+-- Execution states follow JupyterLab's cell model: idle -> queued
+-- (JupyterLab: "scheduled") -> busy (JupyterLab: "running") -> idle. A run
+-- marks its cells queued the moment they are submitted, so the cells still
+-- waiting behind a long one read as waiting instead of keeping their old
+-- "[n] ✓ 0.1s" badge. The badge's other fields (duration, failed) stay, so a
+-- queued cell the kernel never runs (interrupt, restart) gets its old badge
+-- back when it is unqueued. A cell already running is left alone.
+function Notebook:mark_queued(cell_id)
+  local st = self.cell_state[cell_id] or {}
+  if st.exec_state == "busy" then return end
+  st.exec_state = "queued"
+  self.cell_state[cell_id] = st
+end
+
+function Notebook:unqueue(cell_id)
+  local st = self.cell_state[cell_id]
+  if st and st.exec_state == "queued" then st.exec_state = "idle"; return true end
+  return false
+end
+
+-- Release every queued cell; returns true when any was. Used when the kernel
+-- goes away (stop, restart) and the queued executions die with it.
+function Notebook:unqueue_all()
+  local any = false
+  for _, c in ipairs(self.cells) do
+    if self:unqueue(c.id) then any = true end
+  end
+  return any
+end
+
 -- Returns the ids of the cells whose outputs changed, when that is not just
 -- `cell_id` (a display update can reach into any cell).
 function Notebook:apply_cell_event(cell_id, ev)
@@ -618,7 +648,11 @@ function Notebook:apply_cell_event(cell_id, ev)
     st.exec_state = ev.state
     self.cell_state[cell_id] = st
   elseif kind == "execute_reply" then
-    -- nothing to mutate
+    -- nothing to mutate. In particular a queued cell is NOT released here:
+    -- the reply rides the shell channel and can land after the iopub idle
+    -- that already finished the cell, i.e. after the cell was queued again
+    -- for its next run. A queued cell the kernel aborts gets busy/idle
+    -- statuses on iopub, and those release it.
   elseif kind == "clear_output" then
     if not ev.wait then c.outputs = {} end
   end

@@ -65,7 +65,9 @@ https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
   Linux backend is cross-built and uploaded on connect.
 - Per-cell execution timing. Each run shows an elapsed-time badge in the
   cell's footer border, persisted in the notebook so it survives save and
-  reopen. Clearing the output clears it.
+  reopen. Clearing the output clears it. Run all, run above and run below
+  mark every cell they submit `[*]` the JupyterLab way, with a greyed dot
+  while a cell waits behind the running one.
 - One Rust binary, one Lua plugin. No `pynvim`, no `jupyter_client`, no
   `image.nvim`, no Node-based notebook server.
 

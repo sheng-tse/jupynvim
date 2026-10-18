@@ -217,6 +217,96 @@ local sc3i = CellMode._statuscol_for(buf, r3.start + 1, 0)
 assert(sc3i:find("JupynvimBorder", 1, true), "left edge returns to JupynvimBorder when idle: " .. sc3i)
 print("F3. running cell paints the whole frame busy ok")
 
+-- F4. a cell WAITING behind another (Run all, run below) is queued the
+-- JupyterLab way: "[*]" like a running cell, but with the dot greyed out and
+-- the frame left calm, so the one busy-colored cell is the one running.
+nb:mark_queued("c3")
+assert(nb.cell_state["c3"].exec_state == "queued", "c3 should be queued")
+local qs, qhl = "", {}
+for _, c in ipairs(Render._exec_status_chunks(nb.cells[3], nb.cell_state["c3"])) do
+  qs = qs .. c[1]; qhl[#qhl + 1] = c[2]
+end
+assert(qs:find("[*]", 1, true) and qs:find("●", 1, true), "queued bar should show [*] + dot: " .. qs)
+assert(vim.tbl_contains(qhl, "JupynvimQueued") and not vim.tbl_contains(qhl, "JupynvimBusy"),
+  "queued dot must be grey, not the busy color: " .. vim.inspect(qhl))
+assert(not qs:find("%d", 1), "queued bar must not show an elapsed time: " .. qs)
+local scq = CellMode._statuscol_for(buf, r3.start + 1, 0)
+assert(scq:find("JupynvimBorder", 1, true), "frame stays calm while only queued: " .. scq)
+-- the kernel reaches it: queued -> busy -> done, as before
+nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 5 })
+assert(nb.cell_state["c3"].exec_state == "busy", "execute_input must take a queued cell to busy")
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+assert(nb.cell_state["c3"].exec_state == "idle" and nb.cell_state["c3"].duration_ns, "queued cell must finish normally")
+-- the previous run's execute_reply rides the shell channel and can land
+-- AFTER the cell is queued again (seen live: Run all right after a run);
+-- it must not release the freshly queued cell
+local before = ""
+for _, c in ipairs(Render._exec_status_chunks(nb.cells[3], nb.cell_state["c3"])) do before = before .. c[1] end
+nb:mark_queued("c3")
+nb:apply_cell_event("c3", { kind = "execute_reply", status = "ok", execution_count = 5 })
+assert(nb.cell_state["c3"].exec_state == "queued", "a late execute_reply must not release a queued cell")
+-- a queued cell the kernel aborts gets busy/idle statuses but never an
+-- execute_input; the cell's previous badge comes back untouched
+nb:apply_cell_event("c3", { kind = "status", state = "busy" })
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+nb:apply_cell_event("c3", { kind = "execute_reply", status = "aborted" })
+local after = ""
+for _, c in ipairs(Render._exec_status_chunks(nb.cells[3], nb.cell_state["c3"])) do after = after .. c[1] end
+assert(nb.cell_state["c3"].exec_state == "idle" and after == before,
+  "aborted queued cell must get its old badge back: " .. before .. " vs " .. after)
+-- a running cell is not demoted to queued by a second run request
+nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 6 })
+nb:mark_queued("c3")
+assert(nb.cell_state["c3"].exec_state == "busy", "mark_queued must leave a running cell running")
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+-- a kernel stop/restart releases everything still queued
+nb:mark_queued("c2"); nb:mark_queued("c3")
+assert(nb:unqueue_all() and nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c3"].exec_state == "idle",
+  "unqueue_all must release every queued cell")
+assert(not nb:unqueue_all(), "unqueue_all reports nothing to release")
+print("F4. queued cell: grey [*], calm frame, released on abort/restart ok")
+
+-- F5. Run all queues EVERY code cell at once, before the first one has even
+-- been submitted, then feeds them to the kernel in order; a failed
+-- submission stops the run and releases the cells that never made it.
+local calls = {}
+local fake = { call = function(_, method, params, cb) calls[#calls + 1] = { method = method, params = params, cb = cb } end }
+local real_client, real_notify = J._nb_client, vim.notify
+local notes = {}
+J._nb_client = function() return fake end
+vim.notify = function(msg) notes[#notes + 1] = msg end
+J.run_all(buf)
+assert(nb.cell_state["c2"].exec_state == "queued" and nb.cell_state["c3"].exec_state == "queued",
+  "run_all must queue every code cell up front")
+assert(not nb.cell_state["c1"], "run_all must not queue a markdown cell")
+assert(#calls == 1 and calls[1].method == "update_cell_source" and calls[1].params.cell_id == "c2",
+  "cells go to the kernel one at a time, first one first: " .. vim.inspect(calls))
+calls[1].cb(nil)
+assert(#calls == 2 and calls[2].method == "execute" and calls[2].params.cell_id == "c2", "execute follows the source push")
+calls[2].cb(nil)   -- submitted (the backend answers on submission, not completion)
+assert(#calls == 3 and calls[3].params.cell_id == "c3", "the next cell is submitted once the previous is accepted")
+assert(nb.cell_state["c2"].exec_state == "queued" and nb.cell_state["c3"].exec_state == "queued",
+  "cells stay queued until the kernel's execute_input arrives")
+calls[3].cb(nil)
+calls[4].cb("kernel not started")
+assert(#calls == 4, "a failed submission must stop the run")
+assert(nb.cell_state["c3"].exec_state == "idle", "the cell that failed to submit is released")
+assert(#notes == 1 and notes[1]:find("kernel not started", 1, true), "the failure is reported once: " .. vim.inspect(notes))
+-- run_below from cell 2 queues c2 and c3; run_above from cell 3 queues c2 only
+calls = {}
+vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[2].start + 1, 0 })
+J.run_below(buf)
+assert(#calls == 1 and calls[1].params.cell_id == "c2" and nb.cell_state["c3"].exec_state == "queued", "run_below queues the rest")
+nb:unqueue_all()
+calls = {}
+vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[3].start + 1, 0 })
+J.run_above(buf)
+assert(#calls == 1 and calls[1].params.cell_id == "c2" and nb.cell_state["c2"].exec_state == "queued"
+  and nb.cell_state["c3"].exec_state == "idle", "run_above queues only the cells above")
+nb:unqueue_all()
+J._nb_client, vim.notify = real_client, real_notify
+print("F5. run all/below/above queue up front, stop + release on failure ok")
+
 -- F2. duration survives save + reopen: restored from jupyter-standard
 --     timing metadata (metadata.execution stamps)
 local ns2 = Notebook.saved_duration_ns({ execution = {
