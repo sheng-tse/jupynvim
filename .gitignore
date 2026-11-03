@@ -25,6 +25,8 @@ kernel-*.json
 # Test scratch
 tests/.tmp/
 
-# examples/ is a personal playground for users; keep it untracked so people
-# can drop their own .ipynb files in there without polluting the repo.
-examples/
+# The top-level examples/ is a personal playground for users; keep it
+# untracked so people can drop their own .ipynb files in there without
+# polluting the repo. Only that one: the sources of the fake libraries the
+# native tests load (core/native/examples/) are tracked.
+/examples/

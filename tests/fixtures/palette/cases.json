@@ -1,0 +1,34 @@
+{
+ "user": {
+  "hl": "user_hl.json",
+  "colors_name": "tokyonight-storm",
+  "background": "dark",
+  "terminal_canvas": "#222436",
+  "expected": "user_tokens.json"
+ },
+ "user_live": {
+  "hl": "user_live_hl.json",
+  "colors_name": "tokyonight-storm",
+  "background": "dark",
+  "terminal_canvas": "#222436",
+  "expected": "user_tokens.json",
+  "expected_differences": {
+   "inline_code_fg": "#90baff",
+   "inline_code_bg": "#414868"
+  }
+ },
+ "mocha": {
+  "hl": "mocha_hl.json",
+  "colors_name": "catppuccin-mocha",
+  "background": "dark",
+  "terminal_canvas": null,
+  "expected": "mocha_tokens.json"
+ },
+ "latte": {
+  "hl": "latte_hl.json",
+  "colors_name": "catppuccin-latte",
+  "background": "light",
+  "terminal_canvas": null,
+  "expected": "latte_tokens.json"
+ }
+}

@@ -125,7 +125,7 @@ io.write(("  status: state=%s version=%s abi=%s path=%s workers=%s load_ms=%.3f 
   tonumber(st.load_ms) or -1, tostring(st.reason), tostring(st.fix)))
 chk("A3 state is ok", st.state == "ok", st.state)
 chk("A3 version equals core/Cargo.toml (v" .. tostring(VERSION) .. ")", st.version == VERSION, st.version)
-chk("A3 ABI is 1.0", st.abi == "1.0", st.abi)
+chk("A3 ABI is 1.1", st.abi == "1.1", st.abi)
 chk("A3 path is the build next to jupynvim-core", st.path == LIB, st.path)
 chk("A3 and it came from the plugin's own place (source plugin)", st.source == "plugin", tostring(st.source))
 chk("A3 1 to 4 worker threads", type(st.workers) == "number" and st.workers >= 1 and st.workers <= 4,
@@ -163,10 +163,10 @@ for name, val in (block or ""):gmatch("JNV_([%w_]+)%s*=%s*(%d+)") do
   chk(("A5 JNV_%s = %d in ffi.C and in native.lua"):format(name, val),
       okc and cval == val and lua == val, ("ffi %s, lua %s"):format(tostring(cval), tostring(lua)))
 end
-chk("A5 the header declares all 21 constants", consts == 21, consts)
+chk("A5 the header declares all 24 constants", consts == 24, consts)
 local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
 chk("A5 native.lua has no constant the header lacks",
-    count(N.KIND) == 7 and count(N.STATUS) == 8 and count(N.PRIO) == 3)
+    count(N.KIND) == 10 and count(N.STATUS) == 8 and count(N.PRIO) == 3)
 local lib = N.lib()
 chk("A6 lib() gives the loaded library", lib ~= nil and lib == S.lib)
 local kinds_ok = true
@@ -174,7 +174,13 @@ for k = 1, 7 do if lib.jnv_kind_supported(k) ~= 1 then kinds_ok = false end end
 chk("A6 jnv_kind_supported is 1 for kinds 1 to 7", kinds_ok)
 chk("A6 jnv_kind_supported is 0 for 0, 8 and 65535",
     lib.jnv_kind_supported(0) == 0 and lib.jnv_kind_supported(8) == 0 and lib.jnv_kind_supported(65535) == 0)
-chk("A6 has_abi(0) is true, has_abi(1) is false", N.has_abi(0) == true and N.has_abi(1) == false)
+chk("A6 jnv_kind_supported is 1 for the palette kinds 2048 to 2050",
+    lib.jnv_kind_supported(2048) == 1 and lib.jnv_kind_supported(2049) == 1 and lib.jnv_kind_supported(2050) == 1
+    and N.KIND.PALETTE == 2048 and N.KIND.PALETTE_SCHEMA == 2049 and N.KIND.PALETTE_READABLE == 2050)
+chk("A6 and 0 for 2047 and 2051",
+    lib.jnv_kind_supported(2047) == 0 and lib.jnv_kind_supported(2051) == 0)
+chk("A6 has_abi(0) is true, has_abi(1) is true, has_abi(2) is false",
+    N.has_abi(0) == true and N.has_abi(1) == true and N.has_abi(2) == false)
 local src = table.concat(vim.fn.readfile(REPO .. "/lua/jupynvim/native.lua"), "\n"):lower()
 chk("A7 native.lua never mentions mpack or msgpack", not has(src, "mpack") and not has(src, "msgpack"))
 -- the largest worker count native.lua asks for is the largest the library takes
@@ -737,7 +743,7 @@ do
     local t0 = now()
     for _ = 1, 1e7 do acc = acc + lib.jnv_abi_version() end
     local mean = (now() - t0) / 1e7
-    return mean < 20 and acc == 1e7 * 65536, ("mean %s ns"):format(fmt(mean, 2))
+    return mean < 20 and acc == 1e7 * (N.ABI_MAJOR * 65536 + N.ABI_MINOR), ("mean %s ns"):format(fmt(mean, 2))
   end)
 
   -- D4: jnv_call takes the document by pointer: no work proportional to size.
@@ -1199,19 +1205,19 @@ section("F. the checks on the fake libraries (in this process)")
 vim.env.JNV_FAKE = "ok"
 local pr = N._probe(FAKE)
 chk("F8 control: the fake in ok mode passes _probe with the plugin version", pr.ok == true
-    and pr.version == VERSION and pr.abi == "1.0", vim.inspect(pr))
+    and pr.version == VERSION and pr.abi == "1.1", vim.inspect(pr))
 local flib, fstate, freason = N._open_lib(FAKE, { want = VERSION })
 chk("F8 control: and _open_lib with the version check", flib ~= nil and fstate == "ok", vim.inspect({ fstate, freason }))
 local preal = N._probe(LIB)
-chk("F8 _probe of the real library", preal.ok == true and preal.version == VERSION and preal.abi == "1.0", vim.inspect(preal))
+chk("F8 _probe of the real library", preal.ok == true and preal.version == VERSION and preal.abi == "1.1", vim.inspect(preal))
 vim.env.JNV_FAKE = "abi_major"
 flib, fstate, freason = N._open_lib(FAKE, { want = VERSION })
-chk("F9 ABI major 2: mismatch, ABI 2.0", flib == nil and fstate == "mismatch" and has(freason, "has ABI 2.0, this plugin needs 1.0 or a later 1.x"),
+chk("F9 ABI major 2: mismatch, ABI 2.0", flib == nil and fstate == "mismatch" and has(freason, "has ABI 2.0, this plugin needs 1.1 or a later 1.x"),
     vim.inspect({ fstate, freason }))
 vim.env.JNV_FAKE = "ok"
-flib, fstate, freason = N._open_lib(FAKE, { want = VERSION, need_minor = 1 })
-chk("F10 a plugin that needs ABI 1.1: mismatch naming 1.0 and 1.1", flib == nil and fstate == "mismatch"
-    and has(freason, "ABI 1.0") and has(freason, "needs 1.1"), vim.inspect({ fstate, freason }))
+flib, fstate, freason = N._open_lib(FAKE, { want = VERSION, need_minor = 2 })
+chk("F10 a plugin that needs ABI 1.2: mismatch naming 1.1 and 1.2", flib == nil and fstate == "mismatch"
+    and has(freason, "ABI 1.1") and has(freason, "needs 1.2"), vim.inspect({ fstate, freason }))
 vim.env.JNV_FAKE = "version"
 flib, fstate, freason = N._open_lib(FAKE, { want = VERSION })
 chk("F11 another version: mismatch naming both", flib == nil and fstate == "mismatch"
@@ -1282,14 +1288,14 @@ local function clean(part) return not has(part, "WARNING") and not has(part, "ER
 
 -- H1 the library loads: an OK line with its version, ABI, path and workers
 local hj, htext, hlib, hinst = health({})
-local hl = hj and line_with(hlib, "libjupynvim v" .. VERSION .. " (ABI 1.0)")
+local hl = hj and line_with(hlib, "libjupynvim v" .. VERSION .. " (ABI 1.1)")
 local nw = hj and tonumber(hj.status.workers)
 chk("H1 the report has the library's section, after the backend's and before the installer's", hj ~= nil
     and (htext:find(BACKEND_HEAD, 1, true) or math.huge) < (htext:find(LIB_HEAD, 1, true) or -1)
     and htext:find(LIB_HEAD, 1, true) < (htext:find(INSTALL_HEAD, 1, true) or -1), htext)
-chk("H1 with the library: OK libjupynvim v" .. VERSION .. " (ABI 1.0) at the library, its worker threads",
+chk("H1 with the library: OK libjupynvim v" .. VERSION .. " (ABI 1.1) at the library, its worker threads",
     level(hl) == "ok" and nw ~= nil and nw >= 1 and nw <= 4
-    and has(hl, ("libjupynvim v%s (ABI 1.0) at %s, %d worker thread%s"):format(VERSION, LIB, nw or -1, nw == 1 and "" or "s")),
+    and has(hl, ("libjupynvim v%s (ABI 1.1) at %s, %d worker thread%s"):format(VERSION, LIB, nw or -1, nw == 1 and "" or "s")),
     hl or hlib)
 chk("H1 nothing in the library's section warns", hj ~= nil and clean(hlib), hlib)
 chk("H1 setup({}) loads nothing; the default native config is enabled with workers = 0", hj ~= nil

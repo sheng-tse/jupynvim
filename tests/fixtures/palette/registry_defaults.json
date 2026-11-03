@@ -1,0 +1,525 @@
+{
+ "_about": "css(get_color(id, no theme colors, type)) for every id of the VS Code color registry port, as VS Code 1.139.1 resolves its defaults; null where VS Code has none",
+ "values": [
+  {
+   "id": "foreground",
+   "type": "dark",
+   "css": "#cccccc"
+  },
+  {
+   "id": "foreground",
+   "type": "light",
+   "css": "#616161"
+  },
+  {
+   "id": "foreground",
+   "type": "hcDark",
+   "css": "#ffffff"
+  },
+  {
+   "id": "foreground",
+   "type": "hcLight",
+   "css": "#292929"
+  },
+  {
+   "id": "descriptionForeground",
+   "type": "dark",
+   "css": "rgba(204, 204, 204, 0.7)"
+  },
+  {
+   "id": "descriptionForeground",
+   "type": "light",
+   "css": "#717171"
+  },
+  {
+   "id": "descriptionForeground",
+   "type": "hcDark",
+   "css": "rgba(255, 255, 255, 0.7)"
+  },
+  {
+   "id": "descriptionForeground",
+   "type": "hcLight",
+   "css": "rgba(41, 41, 41, 0.7)"
+  },
+  {
+   "id": "focusBorder",
+   "type": "dark",
+   "css": "#007fd4"
+  },
+  {
+   "id": "focusBorder",
+   "type": "light",
+   "css": "#0090f1"
+  },
+  {
+   "id": "focusBorder",
+   "type": "hcDark",
+   "css": "#f38518"
+  },
+  {
+   "id": "focusBorder",
+   "type": "hcLight",
+   "css": "#006bbd"
+  },
+  {
+   "id": "contrastBorder",
+   "type": "dark",
+   "css": null
+  },
+  {
+   "id": "contrastBorder",
+   "type": "light",
+   "css": null
+  },
+  {
+   "id": "contrastBorder",
+   "type": "hcDark",
+   "css": "#6fc3df"
+  },
+  {
+   "id": "contrastBorder",
+   "type": "hcLight",
+   "css": "#0f4a85"
+  },
+  {
+   "id": "textLink.foreground",
+   "type": "dark",
+   "css": "#3794ff"
+  },
+  {
+   "id": "textLink.foreground",
+   "type": "light",
+   "css": "#006ab1"
+  },
+  {
+   "id": "textLink.foreground",
+   "type": "hcDark",
+   "css": "#21a6ff"
+  },
+  {
+   "id": "textLink.foreground",
+   "type": "hcLight",
+   "css": "#0f4a85"
+  },
+  {
+   "id": "textLink.activeForeground",
+   "type": "dark",
+   "css": "#3794ff"
+  },
+  {
+   "id": "textLink.activeForeground",
+   "type": "light",
+   "css": "#006ab1"
+  },
+  {
+   "id": "textLink.activeForeground",
+   "type": "hcDark",
+   "css": "#21a6ff"
+  },
+  {
+   "id": "textLink.activeForeground",
+   "type": "hcLight",
+   "css": "#0f4a85"
+  },
+  {
+   "id": "textSeparator.foreground",
+   "type": "dark",
+   "css": "rgba(255, 255, 255, 0.18)"
+  },
+  {
+   "id": "textSeparator.foreground",
+   "type": "light",
+   "css": "rgba(0, 0, 0, 0.18)"
+  },
+  {
+   "id": "textSeparator.foreground",
+   "type": "hcDark",
+   "css": "#000000"
+  },
+  {
+   "id": "textSeparator.foreground",
+   "type": "hcLight",
+   "css": "#292929"
+  },
+  {
+   "id": "textPreformat.foreground",
+   "type": "dark",
+   "css": "#d7ba7d"
+  },
+  {
+   "id": "textPreformat.foreground",
+   "type": "light",
+   "css": "#a31515"
+  },
+  {
+   "id": "textPreformat.foreground",
+   "type": "hcDark",
+   "css": "#ffffff"
+  },
+  {
+   "id": "textPreformat.foreground",
+   "type": "hcLight",
+   "css": "#ffffff"
+  },
+  {
+   "id": "textPreformat.background",
+   "type": "dark",
+   "css": "rgba(255, 255, 255, 0.1)"
+  },
+  {
+   "id": "textPreformat.background",
+   "type": "light",
+   "css": "rgba(0, 0, 0, 0.1)"
+  },
+  {
+   "id": "textPreformat.background",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "textPreformat.background",
+   "type": "hcLight",
+   "css": "#09345f"
+  },
+  {
+   "id": "textPreformat.border",
+   "type": "dark",
+   "css": null
+  },
+  {
+   "id": "textPreformat.border",
+   "type": "light",
+   "css": null
+  },
+  {
+   "id": "textPreformat.border",
+   "type": "hcDark",
+   "css": "#6fc3df"
+  },
+  {
+   "id": "textPreformat.border",
+   "type": "hcLight",
+   "css": null
+  },
+  {
+   "id": "textBlockQuote.background",
+   "type": "dark",
+   "css": "#222222"
+  },
+  {
+   "id": "textBlockQuote.background",
+   "type": "light",
+   "css": "#f2f2f2"
+  },
+  {
+   "id": "textBlockQuote.background",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "textBlockQuote.background",
+   "type": "hcLight",
+   "css": "#f2f2f2"
+  },
+  {
+   "id": "textBlockQuote.border",
+   "type": "dark",
+   "css": "rgba(0, 122, 204, 0.5)"
+  },
+  {
+   "id": "textBlockQuote.border",
+   "type": "light",
+   "css": "rgba(0, 122, 204, 0.5)"
+  },
+  {
+   "id": "textBlockQuote.border",
+   "type": "hcDark",
+   "css": "#ffffff"
+  },
+  {
+   "id": "textBlockQuote.border",
+   "type": "hcLight",
+   "css": "#292929"
+  },
+  {
+   "id": "textCodeBlock.background",
+   "type": "dark",
+   "css": "rgba(10, 10, 10, 0.4)"
+  },
+  {
+   "id": "textCodeBlock.background",
+   "type": "light",
+   "css": "rgba(220, 220, 220, 0.4)"
+  },
+  {
+   "id": "textCodeBlock.background",
+   "type": "hcDark",
+   "css": "#000000"
+  },
+  {
+   "id": "textCodeBlock.background",
+   "type": "hcLight",
+   "css": "#f2f2f2"
+  },
+  {
+   "id": "editor.background",
+   "type": "dark",
+   "css": "#1e1e1e"
+  },
+  {
+   "id": "editor.background",
+   "type": "light",
+   "css": "#ffffff"
+  },
+  {
+   "id": "editor.background",
+   "type": "hcDark",
+   "css": "#000000"
+  },
+  {
+   "id": "editor.background",
+   "type": "hcLight",
+   "css": "#ffffff"
+  },
+  {
+   "id": "editor.foreground",
+   "type": "dark",
+   "css": "#bbbbbb"
+  },
+  {
+   "id": "editor.foreground",
+   "type": "light",
+   "css": "#333333"
+  },
+  {
+   "id": "editor.foreground",
+   "type": "hcDark",
+   "css": "#ffffff"
+  },
+  {
+   "id": "editor.foreground",
+   "type": "hcLight",
+   "css": "#292929"
+  },
+  {
+   "id": "widget.border",
+   "type": "dark",
+   "css": null
+  },
+  {
+   "id": "widget.border",
+   "type": "light",
+   "css": null
+  },
+  {
+   "id": "widget.border",
+   "type": "hcDark",
+   "css": "#6fc3df"
+  },
+  {
+   "id": "widget.border",
+   "type": "hcLight",
+   "css": "#0f4a85"
+  },
+  {
+   "id": "editorPane.background",
+   "type": "dark",
+   "css": "#1e1e1e"
+  },
+  {
+   "id": "editorPane.background",
+   "type": "light",
+   "css": "#ffffff"
+  },
+  {
+   "id": "editorPane.background",
+   "type": "hcDark",
+   "css": "#000000"
+  },
+  {
+   "id": "editorPane.background",
+   "type": "hcLight",
+   "css": "#ffffff"
+  },
+  {
+   "id": "sideBar.background",
+   "type": "dark",
+   "css": "#252526"
+  },
+  {
+   "id": "sideBar.background",
+   "type": "light",
+   "css": "#f3f3f3"
+  },
+  {
+   "id": "sideBar.background",
+   "type": "hcDark",
+   "css": "#000000"
+  },
+  {
+   "id": "sideBar.background",
+   "type": "hcLight",
+   "css": "#ffffff"
+  },
+  {
+   "id": "panel.border",
+   "type": "dark",
+   "css": "rgba(128, 128, 128, 0.35)"
+  },
+  {
+   "id": "panel.border",
+   "type": "light",
+   "css": "rgba(128, 128, 128, 0.35)"
+  },
+  {
+   "id": "panel.border",
+   "type": "hcDark",
+   "css": "#6fc3df"
+  },
+  {
+   "id": "panel.border",
+   "type": "hcLight",
+   "css": "#0f4a85"
+  },
+  {
+   "id": "list.inactiveSelectionBackground",
+   "type": "dark",
+   "css": "#37373d"
+  },
+  {
+   "id": "list.inactiveSelectionBackground",
+   "type": "light",
+   "css": "#e4e6f1"
+  },
+  {
+   "id": "list.inactiveSelectionBackground",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "list.inactiveSelectionBackground",
+   "type": "hcLight",
+   "css": "rgba(15, 74, 133, 0.1)"
+  },
+  {
+   "id": "notebook.editorBackground",
+   "type": "dark",
+   "css": "#1e1e1e"
+  },
+  {
+   "id": "notebook.editorBackground",
+   "type": "light",
+   "css": "#ffffff"
+  },
+  {
+   "id": "notebook.editorBackground",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "notebook.editorBackground",
+   "type": "hcLight",
+   "css": null
+  },
+  {
+   "id": "notebook.cellEditorBackground",
+   "type": "dark",
+   "css": "#252526"
+  },
+  {
+   "id": "notebook.cellEditorBackground",
+   "type": "light",
+   "css": "#f3f3f3"
+  },
+  {
+   "id": "notebook.cellEditorBackground",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "notebook.cellEditorBackground",
+   "type": "hcLight",
+   "css": null
+  },
+  {
+   "id": "notebook.selectedCellBackground",
+   "type": "dark",
+   "css": "#37373d"
+  },
+  {
+   "id": "notebook.selectedCellBackground",
+   "type": "light",
+   "css": "#e4e6f1"
+  },
+  {
+   "id": "notebook.selectedCellBackground",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "notebook.selectedCellBackground",
+   "type": "hcLight",
+   "css": null
+  },
+  {
+   "id": "notebook.focusedCellBorder",
+   "type": "dark",
+   "css": "#007fd4"
+  },
+  {
+   "id": "notebook.focusedCellBorder",
+   "type": "light",
+   "css": "#0090f1"
+  },
+  {
+   "id": "notebook.focusedCellBorder",
+   "type": "hcDark",
+   "css": "#f38518"
+  },
+  {
+   "id": "notebook.focusedCellBorder",
+   "type": "hcLight",
+   "css": "#006bbd"
+  },
+  {
+   "id": "notebook.cellBorderColor",
+   "type": "dark",
+   "css": "#37373d"
+  },
+  {
+   "id": "notebook.cellBorderColor",
+   "type": "light",
+   "css": "#e4e6f1"
+  },
+  {
+   "id": "notebook.cellBorderColor",
+   "type": "hcDark",
+   "css": "#6fc3df"
+  },
+  {
+   "id": "notebook.cellBorderColor",
+   "type": "hcLight",
+   "css": "#0f4a85"
+  },
+  {
+   "id": "notebook.symbolHighlightBackground",
+   "type": "dark",
+   "css": "rgba(255, 255, 255, 0.04)"
+  },
+  {
+   "id": "notebook.symbolHighlightBackground",
+   "type": "light",
+   "css": "rgba(253, 255, 0, 0.2)"
+  },
+  {
+   "id": "notebook.symbolHighlightBackground",
+   "type": "hcDark",
+   "css": null
+  },
+  {
+   "id": "notebook.symbolHighlightBackground",
+   "type": "hcLight",
+   "css": null
+  }
+ ]
+}

@@ -5,12 +5,17 @@
 //! counter (`jnv_live_buffers`) only moves for the test that reads it.
 
 use std::ffi::{c_char, CStr};
+use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use jupynvim::abi::*;
 use jupynvim::*;
+
+#[path = "support/minijson.rs"]
+mod minijson;
+use minijson::J;
 
 static LOCK: Mutex<()> = Mutex::new(());
 
@@ -114,9 +119,9 @@ fn poll_n(ctx: *mut JnvCtx, n: usize) -> Vec<JnvDone> {
 }
 
 #[test]
-fn abi_version_is_one_zero() {
+fn abi_version_is_one_one() {
     let _l = start();
-    assert_eq!(jnv_abi_version(), 0x0001_0000);
+    assert_eq!(jnv_abi_version(), 0x0001_0001);
     assert_eq!(jnv_abi_version() >> 16, ABI_MAJOR);
     assert_eq!(jnv_abi_version() & 0xffff, ABI_MINOR);
 }
@@ -169,6 +174,18 @@ fn kind_supported_answers_for_every_diagnostic_kind() {
         assert_eq!(jnv_kind_supported(k), 1, "kind {k}");
     }
     for k in [0, 8, 0x00ff, 0x0100, 0x0700, u32::MAX] {
+        assert_eq!(jnv_kind_supported(k), 0, "kind {k}");
+    }
+}
+
+#[test]
+fn kind_supported_answers_for_the_palette_kinds() {
+    let _l = start();
+    for k in [KIND_PALETTE, KIND_PALETTE_SCHEMA, KIND_PALETTE_READABLE] {
+        assert_eq!(jnv_kind_supported(k), 1, "kind {k}");
+    }
+    assert_eq!((KIND_PALETTE, KIND_PALETTE_SCHEMA, KIND_PALETTE_READABLE), (0x0800, 0x0801, 0x0802));
+    for k in [0x07ff, 0x0803, 0x0900, 0x0801 + 0x10000] {
         assert_eq!(jnv_kind_supported(k), 0, "kind {k}");
     }
 }
@@ -336,7 +353,7 @@ fn poll_with_null_out_or_cap_zero_moves_nothing() {
 fn call_of_an_unknown_kind_is_ekind_with_a_message() {
     let _l = start();
     let ctx = open(1);
-    for kind in [0u32, 8, 0x0100, u32::MAX] {
+    for kind in [0u32, 8, 0x0100, 0x0803, u32::MAX] {
         let (st, out) = call(ctx, kind, b"x");
         assert_eq!(st, EKIND, "kind {kind}");
         let msg = unsafe { take_text(out) };
@@ -590,5 +607,174 @@ fn ten_thousand_echo_round_trips_leave_no_buffer() {
         unsafe { jnv_buf_free(d.result) };
     }
     assert_eq!(jnv_live_buffers(), base);
+    unsafe { jnv_close(ctx) };
+}
+
+// ---- the palette kinds (0x0800 to 0x0802) ----
+
+fn palette_fixture(name: &str) -> J {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/palette").join(name);
+    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("reading {}: {e}", p.display()));
+    minijson::parse(&s).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// The group names of a schema result (the lines between `groups N` and
+/// `tokens M`), the token names after it and the known ports after those
+/// (the lines after `ports P`, verbatim: `<key> <source> <label>`).
+fn schema_names(schema: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let lines: Vec<&str> = schema.lines().collect();
+    assert_eq!(lines[0], "JNP 1");
+    let ng: usize = lines[1].strip_prefix("groups ").expect("groups line").parse().expect("a count");
+    let groups: Vec<String> = lines[2..2 + ng].iter().map(|s| s.to_string()).collect();
+    let nt: usize = lines[2 + ng].strip_prefix("tokens ").expect("tokens line").parse().expect("a count");
+    let tokens: Vec<String> = lines[3 + ng..3 + ng + nt].iter().map(|s| s.to_string()).collect();
+    let np: usize = lines
+        .get(3 + ng + nt)
+        .and_then(|l| l.strip_prefix("ports "))
+        .expect("ports line")
+        .parse()
+        .expect("a count");
+    let ports: Vec<String> = lines[4 + ng + nt..4 + ng + nt + np].iter().map(|s| s.to_string()).collect();
+    assert_eq!(lines.len(), 4 + ng + nt + np, "nothing after the ports");
+    (groups, tokens, ports)
+}
+
+/// The derive input of the approved user case, written the way the Lua side
+/// writes it: tokyonight storm, dark, the terminal answering `#222436`, the
+/// groups of the schema that `user_hl.json` has.
+fn user_input_text(groups: &[String], set: bool) -> String {
+    let dump = palette_fixture("user_hl.json");
+    let mut s = String::from("JNP 1\nkind dark\nname tokyonight-storm\nterm #222436\n");
+    if set {
+        s.push_str("set\n");
+    }
+    for g in groups {
+        let Some(v) = dump.get(g) else { continue };
+        let c = |attr: &str| v.get(attr).and_then(J::as_str).unwrap_or("-").to_string();
+        let (fg, bg) = (c("fg"), c("bg"));
+        if fg != "-" || bg != "-" {
+            s.push_str(&format!("g {g} {fg} {bg}\n"));
+        }
+    }
+    s
+}
+
+#[test]
+fn call_palette_kinds() {
+    let _l = start();
+    let ctx = open(1);
+
+    // 2049: the schema, whatever the input.
+    let (st, out) = call(ctx, KIND_PALETTE_SCHEMA, b"ignored");
+    assert_eq!(st, OK);
+    let schema = unsafe { take_text(out) };
+    assert!(schema.starts_with("JNP 1\ngroups 37\nNormal\n"), "{schema}");
+    let (groups, tokens, ports) = schema_names(&schema);
+    assert_eq!((groups.len(), tokens.len()), (37, 35));
+    assert_eq!(tokens[0], "canvas");
+    assert_eq!(tokens[34], "quote_bar");
+    assert_eq!(ports.len(), 19);
+    assert_eq!(ports[0], "tokyonight-storm enkia.tokyo-night-1.1.2 Tokyo Night Storm");
+    let (st, out) = call(ctx, KIND_PALETTE_SCHEMA, b"");
+    assert_eq!(st, OK);
+    assert_eq!(unsafe { take_text(out) }, schema, "the same schema for any input");
+
+    // 2048: the user fixture derives the approved tokens, without `set`.
+    let text = user_input_text(&groups, false);
+    let (st, out) = call(ctx, KIND_PALETTE, text.as_bytes());
+    assert_eq!(st, OK);
+    let res = unsafe { take_text(out) };
+    assert!(res.starts_with("JNP 1\ntheme "), "{res}");
+    assert!(res.lines().any(|l| l.starts_with("t text #c0caf5 ")), "{res}");
+    assert!(res.lines().any(|l| l == "kind dark"));
+    assert!(res.lines().any(|l| l == "canvas_source terminal"));
+    assert!(res.lines().any(|l| l == "port tokyonight-storm"));
+    let expected = palette_fixture("user_tokens.json");
+    let tlines: Vec<&str> = res.lines().filter(|l| l.starts_with("t ")).collect();
+    assert_eq!(tlines.len(), 35);
+    for (line, name) in tlines.iter().zip(&tokens) {
+        let want = expected.get(name).and_then(J::as_str).unwrap_or_else(|| panic!("no expected {name}"));
+        let mut it = line.splitn(5, ' ');
+        assert_eq!((it.next(), it.next(), it.next()), (Some("t"), Some(name.as_str()), Some(want)), "{line}");
+        let source = it.next().unwrap_or("");
+        assert!(["override", "group", "port", "formula", "derived"].contains(&source), "{line}");
+    }
+
+    // The same input again gives the same bytes (nothing in it moves).
+    let (st, out) = call(ctx, KIND_PALETTE, text.as_bytes());
+    assert_eq!(st, OK);
+    assert_eq!(unsafe { take_text(out) }, res);
+
+    // Malformed input: JNV_ERR with the line.
+    for (bad, line) in [
+        ("JNP 1\nkind dark\ng Normal red -\n", 3),
+        ("kind dark\n", 1),
+        ("JNP 1\nkind dusk\n", 2),
+        ("JNP 1\nkind dark\no nope #ffffff\n", 3),
+    ] {
+        let (st, out) = call(ctx, KIND_PALETTE, bad.as_bytes());
+        assert_eq!(st, ERR, "{bad:?}");
+        let msg = unsafe { take_text(out) };
+        assert!(msg.contains("palette input line"), "{msg}");
+        assert!(msg.starts_with(&format!("palette input line {line}: ")), "{bad:?}: {msg}");
+    }
+    let (st, out) = call(ctx, KIND_PALETTE, b"");
+    assert_eq!(st, ERR);
+    assert!(unsafe { take_text(out) }.contains("palette input line"));
+
+    // 2050: a readable color is a 7-character line; one that already reads is kept.
+    let (st, out) = call(ctx, KIND_PALETTE_READABLE, b"#7aa2f7 #ffff00");
+    assert_eq!(st, OK);
+    let c = unsafe { take_text(out) };
+    assert_eq!(c.len(), 8, "{c:?}");
+    assert!(c.ends_with('\n'));
+    let c = c.trim_end();
+    assert_eq!(c.len(), 7, "{c:?}");
+    assert!(c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit()), "{c:?}");
+    let (st, out) = call(ctx, KIND_PALETTE_READABLE, b"#c0caf5 #222436");
+    assert_eq!(st, OK);
+    assert_eq!(unsafe { take_text(out) }, "#c0caf5\n");
+    let (st, out) = call(ctx, KIND_PALETTE_READABLE, b"#c0caf5");
+    assert_eq!(st, ERR);
+    assert!(unsafe { take_text(out) }.starts_with("palette readable: "));
+
+    // The same kinds through submit and poll.
+    let job = submit(ctx, KIND_PALETTE_SCHEMA, FLAG_COPY | PRIO_VISIBLE, b"");
+    let done = poll_n(ctx, 1);
+    assert_eq!((done[0].job, done[0].kind, done[0].status), (job, KIND_PALETTE_SCHEMA, OK));
+    assert_eq!(unsafe { take_text(done[0].result) }, schema);
+    unsafe { jnv_close(ctx) };
+}
+
+#[test]
+fn a_palette_derived_with_set_becomes_the_one_readable_uses() {
+    let _l = start();
+    let ctx = open(1);
+    let (st, out) = call(ctx, KIND_PALETTE_SCHEMA, b"");
+    assert_eq!(st, OK);
+    let (groups, _, _) = schema_names(&unsafe { take_text(out) });
+
+    // No palette was set in this process: white or black.
+    let (st, out) = call(ctx, KIND_PALETTE_READABLE, b"#1c1f31 #222436");
+    assert_eq!(st, OK);
+    assert_eq!(unsafe { take_text(out) }, "#ffffff\n");
+
+    // Without `set` nothing changes.
+    let (st, out) = call(ctx, KIND_PALETTE, user_input_text(&groups, false).as_bytes());
+    assert_eq!(st, OK);
+    unsafe { jnv_buf_free(out) };
+    let (_, out) = call(ctx, KIND_PALETTE_READABLE, b"#1c1f31 #222436");
+    assert_eq!(unsafe { take_text(out) }, "#ffffff\n");
+
+    // With `set` the library keeps it: the light text and the dark canvas of the user's palette.
+    let (st, out) = call(ctx, KIND_PALETTE, user_input_text(&groups, true).as_bytes());
+    assert_eq!(st, OK);
+    unsafe { jnv_buf_free(out) };
+    let (_, out) = call(ctx, KIND_PALETTE_READABLE, b"#1c1f31 #222436");
+    assert_eq!(unsafe { take_text(out) }, "#c0caf5\n");
+    let (_, out) = call(ctx, KIND_PALETTE_READABLE, b"#7aa2f7 #ffff00");
+    assert_eq!(unsafe { take_text(out) }, "#222436\n");
+    let (_, out) = call(ctx, KIND_PALETTE_READABLE, b"#808080 #ffffff 3.0");
+    assert_eq!(unsafe { take_text(out) }, "#808080\n");
     unsafe { jnv_close(ctx) };
 }

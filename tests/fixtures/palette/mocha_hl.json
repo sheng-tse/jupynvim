@@ -1,0 +1,294 @@
+{
+ "_background": "dark",
+ "_colors_name": "catppuccin-mocha",
+ "groups": {
+  "@boolean": {
+   "fg": "#fab387"
+  },
+  "@comment": {
+   "fg": "#9399b2",
+   "italic": true
+  },
+  "@constant": {
+   "fg": "#fab387"
+  },
+  "@constant.builtin": {
+   "fg": "#fab387"
+  },
+  "@function": {
+   "fg": "#89b4fa"
+  },
+  "@function.builtin": {
+   "fg": "#fab387"
+  },
+  "@function.call": {
+   "fg": "#89b4fa"
+  },
+  "@function.macro": {
+   "fg": "#f5c2e7"
+  },
+  "@keyword": {
+   "fg": "#cba6f7"
+  },
+  "@keyword.conditional": {
+   "fg": "#cba6f7",
+   "italic": true
+  },
+  "@keyword.function": {
+   "fg": "#cba6f7"
+  },
+  "@keyword.repeat": {
+   "fg": "#cba6f7"
+  },
+  "@keyword.return": {
+   "fg": "#cba6f7"
+  },
+  "@markup.heading": {
+   "fg": "#89b4fa"
+  },
+  "@markup.heading.1": {
+   "fg": "#89b4fa"
+  },
+  "@markup.heading.1.markdown": {
+   "fg": "#f38ba8"
+  },
+  "@markup.heading.2": {
+   "fg": "#89b4fa"
+  },
+  "@markup.heading.2.markdown": {
+   "fg": "#fab387"
+  },
+  "@markup.heading.3": {
+   "fg": "#89b4fa"
+  },
+  "@markup.heading.4": {
+   "fg": "#89b4fa"
+  },
+  "@markup.heading.5": {
+   "fg": "#89b4fa"
+  },
+  "@markup.heading.6": {
+   "fg": "#89b4fa"
+  },
+  "@markup.italic": {
+   "fg": "#f38ba8",
+   "italic": true
+  },
+  "@markup.link": {
+   "fg": "#b4befe"
+  },
+  "@markup.link.label": {
+   "fg": "#b4befe"
+  },
+  "@markup.link.url": {
+   "fg": "#89b4fa",
+   "italic": true,
+   "underline": true
+  },
+  "@markup.list": {
+   "fg": "#94e2d5"
+  },
+  "@markup.list.checked": {
+   "fg": "#a6e3a1"
+  },
+  "@markup.list.unchecked": {
+   "fg": "#7f849c"
+  },
+  "@markup.math": {
+   "fg": "#89b4fa"
+  },
+  "@markup.quote": {
+   "fg": "#f5c2e7"
+  },
+  "@markup.raw": {
+   "fg": "#a6e3a1"
+  },
+  "@markup.raw.block": {
+   "fg": "#a6e3a1"
+  },
+  "@markup.raw.markdown_inline": {
+   "fg": "#a6e3a1"
+  },
+  "@markup.strong": {
+   "bold": true,
+   "fg": "#f38ba8"
+  },
+  "@module": {
+   "fg": "#f9e2af",
+   "italic": true
+  },
+  "@module.builtin": {
+   "fg": "#f5c2e7"
+  },
+  "@number": {
+   "fg": "#fab387"
+  },
+  "@operator": {
+   "fg": "#89dceb"
+  },
+  "@property": {
+   "fg": "#b4befe"
+  },
+  "@punctuation.bracket": {
+   "fg": "#9399b2"
+  },
+  "@punctuation.delimiter": {
+   "fg": "#9399b2"
+  },
+  "@punctuation.special": {
+   "fg": "#f5c2e7"
+  },
+  "@string": {
+   "fg": "#a6e3a1"
+  },
+  "@string.escape": {
+   "fg": "#f5c2e7"
+  },
+  "@type": {
+   "fg": "#f9e2af"
+  },
+  "@type.builtin": {
+   "fg": "#cba6f7"
+  },
+  "@variable": {
+   "fg": "#cdd6f4"
+  },
+  "@variable.builtin": {
+   "fg": "#f38ba8"
+  },
+  "@variable.member": {
+   "fg": "#b4befe"
+  },
+  "@variable.parameter": {
+   "fg": "#eba0ac"
+  },
+  "ColorColumn": {
+   "bg": "#313244"
+  },
+  "Comment": {
+   "fg": "#9399b2",
+   "italic": true
+  },
+  "Constant": {
+   "fg": "#fab387"
+  },
+  "CursorLine": {
+   "bg": "#2a2b3c"
+  },
+  "DiagnosticError": {
+   "fg": "#f38ba8",
+   "italic": true
+  },
+  "DiagnosticHint": {
+   "fg": "#94e2d5",
+   "italic": true
+  },
+  "DiagnosticInfo": {
+   "fg": "#89dceb",
+   "italic": true
+  },
+  "DiagnosticOk": {
+   "fg": "#a6e3a1",
+   "italic": true
+  },
+  "DiagnosticWarn": {
+   "fg": "#f9e2af",
+   "italic": true
+  },
+  "Directory": {
+   "fg": "#89b4fa"
+  },
+  "FloatBorder": {
+   "bg": "#181825",
+   "fg": "#89b4fa"
+  },
+  "Function": {
+   "fg": "#89b4fa"
+  },
+  "Identifier": {
+   "fg": "#f2cdcd"
+  },
+  "Keyword": {
+   "fg": "#cba6f7"
+  },
+  "LineNr": {
+   "fg": "#45475a"
+  },
+  "NonText": {
+   "fg": "#6c7086"
+  },
+  "Normal": {
+   "bg": "#1e1e2e",
+   "fg": "#cdd6f4"
+  },
+  "NormalFloat": {
+   "bg": "#181825",
+   "fg": "#cdd6f4"
+  },
+  "Pmenu": {
+   "bg": "#181825",
+   "fg": "#9399b2"
+  },
+  "PmenuSel": {
+   "bg": "#313244",
+   "bold": true
+  },
+  "RenderMarkdownBullet": {
+   "fg": "#89dceb"
+  },
+  "RenderMarkdownCode": {
+   "bg": "#181825"
+  },
+  "RenderMarkdownCodeInline": {
+   "bg": "#313244"
+  },
+  "RenderMarkdownH1Bg": {
+   "bg": "#32283a"
+  },
+  "RenderMarkdownH2Bg": {
+   "bg": "#332c36"
+  },
+  "RenderMarkdownTableHead": {
+   "fg": "#89b4fa"
+  },
+  "RenderMarkdownTableRow": {
+   "fg": "#b4befe"
+  },
+  "Special": {
+   "fg": "#f5c2e7"
+  },
+  "Statement": {
+   "fg": "#cba6f7"
+  },
+  "StatusLine": {
+   "bg": "#181825",
+   "fg": "#cdd6f4"
+  },
+  "String": {
+   "fg": "#a6e3a1"
+  },
+  "Title": {
+   "bold": true,
+   "fg": "#89b4fa"
+  },
+  "Type": {
+   "fg": "#f9e2af"
+  },
+  "Underlined": {
+   "underline": true
+  },
+  "Visual": {
+   "bg": "#45475a",
+   "bold": true
+  },
+  "WinSeparator": {
+   "fg": "#11111b"
+  },
+  "markdownCode": {
+   "fg": "#f2cdcd"
+  },
+  "markdownCodeBlock": {
+   "fg": "#f2cdcd"
+  }
+ }
+}

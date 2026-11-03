@@ -21,7 +21,8 @@
  *
  * Job kinds by range: 0x0001-0x00ff diagnostics (below); later features
  * take 0x0100 painter, 0x0200 markdown, 0x0300 tables, 0x0400 widgets,
- * 0x0500 images, 0x0600 output text, 0x0700 RPC framing.
+ * 0x0500 images, 0x0600 output text, 0x0700 RPC framing, 0x0800 palette
+ * (JNV_KIND_PALETTE and the two after it, ABI 1.1; text in, text out).
  */
 #ifndef JUPYNVIM_H
 #define JUPYNVIM_H
@@ -43,6 +44,7 @@ enum {
   JNV_KIND_NOP = 1, JNV_KIND_ECHO = 2, JNV_KIND_BYTESUM = 3, JNV_KIND_PTR = 4,
   JNV_KIND_SLEEP = 5, JNV_KIND_PANIC = 6, JNV_KIND_FILL = 7
 };
+enum { JNV_KIND_PALETTE = 2048, JNV_KIND_PALETTE_SCHEMA = 2049, JNV_KIND_PALETTE_READABLE = 2050 };
 enum { JNV_SIZEOF_BUF = 1, JNV_SIZEOF_DONE = 2 };
 uint32_t jnv_abi_version(void);
 const char *jnv_version(void);

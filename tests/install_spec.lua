@@ -776,7 +776,7 @@ if target and HOST_LT then
     local p = Install._probe_lib(REAL_LIB, PACK)
     local ms = (vim.uv.hrtime() - t0) / 1e6
     chk(("the probe loads the real library in a Neovim of its own, in under 2 s (%.0f ms)"):format(ms),
-        p.version == VERSION and p.abi == "1.0" and not p.err and ms < 2000, vim.inspect(p))
+        p.version == VERSION and p.abi == "1.1" and not p.err and ms < 2000, vim.inspect(p))
     local g = Install._probe_lib(garbage, PACK)
     chk("and says why a file does not load", g.version == nil and type(g.err) == "string" and g.err ~= ""
         and not g.transient, vim.inspect(g))

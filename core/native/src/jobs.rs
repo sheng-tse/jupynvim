@@ -2,15 +2,18 @@
 //!
 //! Kinds 0x0001 to 0x00ff are diagnostics, always built: the release check
 //! and the tests use them to prove the boundary, the worker pool and the
-//! wake path. Later features add their kinds in their own ranges (see the
-//! header) and extend [`supported`] and [`run`].
+//! wake path. 0x0800 to 0x0802 are the palette's (see `palette`). Later
+//! features add their kinds in their own ranges (see the header) and extend
+//! [`supported`] and [`run`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::abi::{
-    KIND_BYTESUM, KIND_ECHO, KIND_FILL, KIND_NOP, KIND_PANIC, KIND_PTR, KIND_SLEEP,
+    KIND_BYTESUM, KIND_ECHO, KIND_FILL, KIND_NOP, KIND_PALETTE, KIND_PALETTE_READABLE,
+    KIND_PALETTE_SCHEMA, KIND_PANIC, KIND_PTR, KIND_SLEEP,
 };
+use crate::palette;
 
 /// The most bytes a FILL job makes (1 GiB).
 pub const FILL_MAX: u64 = 1 << 30;
@@ -33,7 +36,7 @@ pub enum JobErr {
 
 /// Whether this library runs `kind`.
 pub fn supported(kind: u32) -> bool {
-    (KIND_NOP..=KIND_FILL).contains(&kind)
+    (KIND_NOP..=KIND_FILL).contains(&kind) || (KIND_PALETTE..=KIND_PALETTE_READABLE).contains(&kind)
 }
 
 /// Run `kind` on `input`. `Ok(None)` is success without a result. Callers
@@ -50,6 +53,9 @@ pub fn run(kind: u32, input: &[u8], cx: &JobCx) -> Result<Option<Vec<u8>>, JobEr
         KIND_SLEEP => sleep(input, cx),
         KIND_PANIC => panic!("jnv test panic: {}", String::from_utf8_lossy(input)),
         KIND_FILL => fill(input),
+        KIND_PALETTE => palette::run_derive(input).map(Some).map_err(JobErr::Err),
+        KIND_PALETTE_SCHEMA => Ok(Some(palette::run_schema())),
+        KIND_PALETTE_READABLE => palette::run_readable(input).map(Some).map_err(JobErr::Err),
         _ => Err(JobErr::Err(format!("unknown kind {kind}"))),
     }
 }
@@ -141,8 +147,41 @@ mod tests {
         }
         assert!(!supported(8));
         assert!(!supported(0x100));
+        assert!(!supported(0x700));
         assert!(!supported(u32::MAX));
         assert_eq!(KIND_FILL, 7);
+        // The palette kinds, 0x0800 to 0x0802.
+        assert_eq!((KIND_PALETTE, KIND_PALETTE_SCHEMA, KIND_PALETTE_READABLE), (2048, 2049, 2050));
+        for k in 2048..=2050 {
+            assert!(supported(k), "{k}");
+        }
+        assert!(!supported(2047));
+        assert!(!supported(2051));
+        assert!(!supported(0x0800 + 3));
+    }
+
+    #[test]
+    fn palette_kinds_run_the_palette_functions() {
+        let out = run_free(KIND_PALETTE, b"JNP 1\nkind dark\n").unwrap().unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.starts_with("JNP 1\ntheme "), "{text}");
+        assert!(text.contains("\nt canvas #1e1e1e "), "{text}");
+        let schema = run_free(KIND_PALETTE_SCHEMA, b"ignored").unwrap().unwrap();
+        assert_eq!(schema, crate::palette::wire::schema().into_bytes());
+        let c = run_free(KIND_PALETTE_READABLE, b"#000000 #ffffff").unwrap().unwrap();
+        assert_eq!(c, b"#000000\n");
+    }
+
+    #[test]
+    fn palette_kinds_report_bad_input_as_job_errors() {
+        match run_free(KIND_PALETTE, b"JNP 1\nkind dark\nx y\n") {
+            Err(JobErr::Err(m)) => assert!(m.starts_with("palette input line 3: "), "{m}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
+        match run_free(KIND_PALETTE_READABLE, b"red blue") {
+            Err(JobErr::Err(m)) => assert!(m.starts_with("palette readable: "), "{m}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -274,7 +313,7 @@ mod tests {
 
     #[test]
     fn unknown_kind_is_an_error() {
-        for k in [0u32, 8, 0x100, u32::MAX] {
+        for k in [0u32, 8, 0x100, 2047, 2051, u32::MAX] {
             assert_eq!(
                 run_free(k, b"x"),
                 Err(JobErr::Err(format!("unknown kind {k}")))

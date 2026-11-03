@@ -46,6 +46,63 @@ function M._library(h, J, Install)
   end
 end
 
+-- The palette (lua/jupynvim/palette.lua): the tokens derived from the
+-- colorscheme in use, with what is known right now, and the canvas the terminal
+-- must tell. Its own section, after the library's. It derives synchronously
+-- from the highlight groups and the terminal's last answer, makes no
+-- notice, loads nothing that is not loaded, and changes nothing the editor
+-- draws.
+function M._palette(h)
+  h.start("jupynvim: palette")
+  local WITHOUT = "palette: needs libjupynvim; without it everything keeps today's colors"
+  -- only a library that is up: the loader's own open of it was reported above
+  local okn, N = pcall(require, "jupynvim.native")
+  local state = okn and N.status().state or nil
+  if state ~= "ok" then
+    if state == "unloaded" then
+      -- the library section above says the same: it is not an absent library
+      h.info("palette: libjupynvim is still being opened for the first time; run :checkhealth jupynvim again")
+    else
+      h.info(WITHOUT)
+    end
+    return
+  end
+  local okp, P = pcall(require, "jupynvim.palette")
+  if not okp then
+    h.warn("palette: the module failed to load: " .. tostring(P))
+    return
+  end
+  local r, err = P._derive_now_for_health()
+  if not r then
+    -- the library is up: it is the derivation that failed
+    h.info("palette: could not be derived (" .. tostring(err) .. "); everything keeps today's colors")
+    return
+  end
+  local info, tokens = r.info, r.tokens
+  local name = info.colors_name or "no colorscheme"
+  h.ok(("palette: %d tokens from %s (background %s), theme %s"):format(#P.TOKENS, name, tostring(info.kind),
+    tostring(info.theme_id)))
+  local canvas = tokens.canvas
+  if info.canvas_source == "Normal.bg" then
+    h.ok(("canvas %s from Normal.bg"):format(canvas))
+  elseif info.canvas_source == "terminal" then
+    h.ok(("canvas %s from the terminal (OSC 11)"):format(canvas))
+  elseif info.canvas_source == "override" then
+    h.info(("canvas %s set in setup()"):format(canvas))
+  else
+    h.warn(("canvas %s is a guess: %s"):format(canvas, tostring(r.guess)),
+      { "Set palette = { canvas = \"#rrggbb\" } in setup() to your terminal's background" })
+  end
+  if info.port then
+    h.info(("known VS Code port: %s (%s)"):format(info.port_label, info.port_source))
+  else
+    h.info(("no known VS Code port for %s: Neovim groups and VS Code's formulas"):format(
+      info.colors_name or "an unnamed colorscheme"))
+  end
+  if #r.overrides > 0 then h.info("overrides: " .. table.concat(r.overrides, ", ")) end
+  for _, what in ipairs(r.ignored) do h.warn("palette: ignored " .. what) end
+end
+
 function M.check()
   local h = vim.health
   local J = require("jupynvim")
@@ -83,6 +140,7 @@ function M.check()
   h.info("auto_install: " .. tostring(not (J.config and J.config.auto_install == false)))
 
   M._library(h, J, Install)
+  M._palette(h)
 
   h.start("jupynvim: installing the prebuilt")
   local tag = want and ("v" .. want)
