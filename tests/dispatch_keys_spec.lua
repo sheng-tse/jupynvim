@@ -158,7 +158,7 @@ chk("cwd is independent of where the tree is rooted",
 -- leave the working directory alone, otherwise going up one level and pressing
 -- <leader>e no longer brings you back to where :JupynvimRemoteCd put you.
 pcall(function()
-  require("jupynvim.remote.explorer").set_root("faketest", "/tmp/elsewhere")
+  require("jupynvim.remote.explorer").set_root("faketest", "/srv/elsewhere")
 end)
 chk("browsing the tree does NOT move the working dir",
     J._session_cwd["faketest"] == CD, tostring(J._session_cwd["faketest"]))

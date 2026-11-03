@@ -185,7 +185,7 @@ case_14() {
 # :s | w saves before TextChanged fires
 case_15() {
   start
-  k Enter; k ":%s/jupynvim:out/res/ | w" Enter; sleep 1.5
+  k Enter; k ":%s/jupynvim:out/res/ | w" Enter; nv_sync
   check ":s over an output marker then :w in one line saves the cells intact" \
     "$INTACT and cells['c1'] == base['c1']"
   k Escape

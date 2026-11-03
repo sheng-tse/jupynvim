@@ -22,6 +22,7 @@ require("jupynvim").setup({ core_path = "$BIN", auto_venv = false })
 function _G.__rec(s)
   local f = io.open("$WORK/rec", "a"); f:write(tostring(s) .. "\n"); f:close()
 end
+function _G.__sync(n) local f = io.open("$WORK/sync.tmp", "w"); f:write(tostring(n)); f:close(); os.rename("$WORK/sync.tmp", "$WORK/sync") end
 LUA
 
 # The report's plot, a 1000-line print, and a cell to edit.
@@ -49,7 +50,7 @@ PY
 
 launch_views() {
   rm -f "$WORK/rec"
-  tmux kill-session -t "$S" 2>/dev/null
+  stop_session
   tmux new-session -d -s "$S" -x 200 -y 50
   tmux set-option -t "$S" status off
   tmux send-keys -t "$S" "cd $WORK && XDG_STATE_HOME=$WORK/state nvim -u $WORK/init.lua nb.ipynb" Enter
@@ -59,9 +60,9 @@ launch_views() {
   done
   sleep 0.5
 }
-start_views() { make_views; rm -rf "$WORK/state"; launch_views; }
+start_views() { stop_session; make_views; rm -rf "$WORK/state"; launch_views; }
 
-rec() { rm -f "$WORK/rec"; k ":lua __rec($1)" Enter; cat "$WORK/rec" 2>/dev/null; }
+rec() { rm -f "$WORK/rec"; k ":lua __rec($1)" Enter; nv_sync; cat "$WORK/rec" 2>/dev/null; }
 modified() { rec "vim.bo.modified"; }
 # Press keys with the message history cleared first, then ask whether they
 # said a line. The kernel starts on open and its message can come after.
@@ -103,7 +104,7 @@ case_1() {
   press Space n O
   holds "<leader>nO with no output says there is nothing to hide" 'said "jupynvim: nothing to hide"'
   k ":q" Enter
-  sleep 1
+  jnv_wait_nvim_exit 10 || true
   holds ":q after all of it quits, with nothing to save" '! screen | grep -q "E37" && ! tmux capture-pane -t "$S" -p | grep -q "plot_it()"'
 }
 
@@ -116,7 +117,8 @@ case_2() {
   k k
   press Space n o
   save
-  k ":qa!" Enter; sleep 1.5
+  k ":qa!" Enter
+  jnv_wait_nvim_exit 15 || { echo "FAIL nvim did not quit within 15s of :qa!"; FAILS=$((FAILS + 1)); }
   launch_views
   holds "reopened, the long print is still expanded" '[ "$(rec "vim.api.nvim_buf_line_count(0)")" -ge 1000 ]'
   k G; k Enter; k u; k Escape; k Escape
@@ -131,7 +133,8 @@ case_3() {
   k g g
   press Space n O
   save
-  k ":qa!" Enter; sleep 1.5
+  k ":qa!" Enter
+  jnv_wait_nvim_exit 15 || { echo "FAIL nvim did not quit within 15s of :qa!"; FAILS=$((FAILS + 1)); }
   launch_views
   holds "reopened, the plot is still hidden" 'screen | grep -q "⋯ output hidden (1 image)"'
   k G; k Enter; k u; k Escape; k Escape

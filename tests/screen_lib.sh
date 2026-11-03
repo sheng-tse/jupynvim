@@ -7,13 +7,23 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/core/target/release/jupynvim-core"
 [ -x "$BIN" ] || { echo "SKIP $(basename "$0"): build core first ($BIN)"; exit 0; }
-command -v tmux >/dev/null || { echo "SKIP $(basename "$0"): no tmux"; exit 0; }
+source "$ROOT/tests/lib/tmux.sh"
 
-WORK="$(mktemp -d -t jupynvim_screen.XXXXXX)"
+# Under the run's TMPDIR (macOS mktemp ignores TMPDIR for -t or no template)
+WORK="$(mktemp -d "$TMPDIR/jupynvim_screen.XXXXXX")"
 S="jupy_screen_$$"
-cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
-trap cleanup EXIT
+# the server first, so no nvim is left to write into WORK as it goes
+cleanup() { jnv_tmux_stop; rm -rf "$WORK"; }
+jnv_on_exit cleanup
 FAILS=0
+# fail_later MSG: a FAIL line on stderr, counted by finish through a file, so
+# a check that runs inside $(...) or a pipeline (a subshell) still counts
+fail_later() { echo "FAIL $1" >&2; printf '%s\n' "$1" >> "$WORK/fails"; }
+# stop_session: jnv_stop_session for $S; a process that had to be stopped
+# (a LEAK line) fails the test
+stop_session() {
+  jnv_stop_session "$S" || fail_later "session $S did not stop cleanly (LEAK above)"
+}
 
 cat > "$WORK/init.lua" <<LUA
 vim.opt.runtimepath:prepend("$ROOT")
@@ -27,6 +37,7 @@ vim.keymap.set("n", "<A-k>", "<cmd>execute 'move .-' . (v:count1 + 1)<cr>==")
 function _G.__rec(s)
   local f = io.open("$WORK/rec", "a"); f:write(tostring(s) .. "\n"); f:close()
 end
+function _G.__sync(n) local f = io.open("$WORK/sync.tmp", "w"); f:write(tostring(n)); f:close(); os.rename("$WORK/sync.tmp", "$WORK/sync") end
 LUA
 
 # Five code cells: 1 has an output, 4 prints, 5 holds separator TEXT inside a
@@ -69,7 +80,7 @@ PY
 # nvim on nb.ipynb as it is on disk, with the undo history an earlier :w left
 launch() {
   rm -f "$WORK/rec"
-  tmux kill-session -t "$S" 2>/dev/null
+  stop_session
   tmux new-session -d -s "$S" -x 200 -y 50
   tmux set-option -t "$S" status off
   tmux send-keys -t "$S" "cd $WORK && XDG_STATE_HOME=$WORK/state nvim -u $WORK/init.lua nb.ipynb" Enter
@@ -79,15 +90,39 @@ launch() {
   done
   sleep 0.5
 }
-# a fresh notebook with no undo history
-start() { make_nb "${1:-}"; rm -rf "$WORK/state"; launch; }
-# quit without saving and open it again
-reopen() { k Escape; k Escape; k ":qa!" Enter; sleep 1.5; launch; }
+# a fresh notebook with no undo history; the last case's nvim is gone
+# before its state dir is removed
+start() { stop_session; make_nb "${1:-}"; rm -rf "$WORK/state"; launch; }
+# quit without saving and open it again, once that nvim has ended
+reopen() {
+  k Escape; k Escape; k ":qa!" Enter
+  jnv_wait_nvim_exit 15 || { echo "FAIL nvim did not quit within 15s of :qa!"; FAILS=$((FAILS + 1)); }
+  launch
+}
 
 k() { tmux send-keys -t "$S" "$@"; sleep 0.4; }
 type_text() { tmux send-keys -t "$S" -l "$1"; sleep 0.4; }
-save() { k Escape; k Escape; k ":w" Enter; sleep 1.5; }
+save() { k Escape; k Escape; k ":w" Enter; nv_sync; }
 screen() { tmux capture-pane -t "$S" -p; }
+
+# nv_sync: a barrier. It types :lua __sync(N) and waits until nvim wrote N
+# to $WORK/sync, so every key sent before it has been taken, and a command
+# that finishes its work inside itself (:w, __rec) has finished it. Normal
+# mode only. It proves earlier input ran, not that work nvim deferred with
+# vim.schedule finished. N is new on every call, from a subshell such as
+# $(rec ...) too: the last N is kept in $WORK/sync_n. A timeout goes through
+# fail_later, so it counts from a subshell too.
+_JNV_SYNC=0
+nv_sync() {
+  [ -f "$WORK/sync_n" ] && read -r _JNV_SYNC < "$WORK/sync_n"
+  _JNV_SYNC=$((_JNV_SYNC + 1))
+  printf '%s\n' "$_JNV_SYNC" > "$WORK/sync_n"
+  tmux send-keys -t "$S" ":lua __sync($_JNV_SYNC)" Enter
+  jnv_wait_file_eq "$WORK/sync" "$_JNV_SYNC" 20 || {
+    fail_later "nvim did not take a command within 20s"
+    return 1
+  }
+}
 
 # lines of output a run of cell 4 printed, hi4 outside quotes or a tick
 ran() { screen | grep -cE "(^|[^'])hi4([^']|$)|tick [0-9]"; }
@@ -105,6 +140,7 @@ run_wait() {
 warned() { warned_about "stops at the last cell change"; }
 warned_about() {
   k ":lua __rec(vim.fn.execute('messages'))" Enter
+  nv_sync
   grep -q "$1" "$WORK/rec" 2>/dev/null
 }
 
@@ -139,7 +175,14 @@ run_cases() {
     if [ ${#want[@]} -eq 0 ] || [[ " ${want[*]} " == *" ${c#case_} "* ]]; then "$c"; fi
   done
 }
+# finish TITLE: the verdict. The server is stopped first, so a process that
+# outlives it (a LEAK line) fails the test too; the exit hook's stop then
+# finds nothing left. The failures fail_later recorded are added.
 finish() {
+  local late=0
+  jnv_tmux_stop || fail_later "the tmux server did not stop cleanly (see above)"
+  [ -s "$WORK/fails" ] && late="$(grep -c '' "$WORK/fails")"
+  FAILS=$((FAILS + late))
   echo
   if [ "$FAILS" -eq 0 ]; then echo "$1: ALL OK"; else echo "$1: $FAILS FAILED"; fi
   exit $((FAILS > 0))

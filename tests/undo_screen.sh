@@ -302,6 +302,7 @@ case_18() {
   for _ in $(seq 1 30); do sleep 0.5; screen | grep -q "tick 9" && break; done
   sleep 0.8
   k ":lua __rec(vim.fn.undotree().seq_last - vim.g.jn_before)" Enter
+  nv_sync
   local steps; steps=$(tail -1 "$WORK/rec" 2>/dev/null)
   holds "ten outputs of one run take one undo step (took ${steps:-?})" "[ '${steps:-99}' -le 1 ]"
   k k; k Enter; k u; k Escape

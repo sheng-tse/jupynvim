@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Backend integration tests — drive jupynvim-core directly via length-prefixed
+Backend integration tests: drive jupynvim-core directly via length-prefixed
 msgpack-rpc on stdin/stdout. Verifies wire protocol, kernel lifecycle,
 notebook ops, output streaming, save round-trip.
 """
@@ -28,7 +28,7 @@ def report(name, ok, detail=""):
     FAIL += int(not ok)
     RESULTS.append((name, ok, detail))
     sym = "[PASS]" if ok else "[FAIL]"
-    print(f"  {sym} {name}{(' — ' + detail) if detail and not ok else ''}")
+    print(f"  {sym} {name}{(' -- ' + detail) if detail and not ok else ''}")
 
 
 class Client:
@@ -106,6 +106,15 @@ class Client:
             self.p.kill()
 
 
+def tmp_nb():
+    # A new, already created file in $TMPDIR: mkstemp picks the name and
+    # creates the file in one step, so no other process can take the name in
+    # between (tempfile.mktemp only picks a name).
+    fd, p = tempfile.mkstemp(suffix=".ipynb")
+    os.close(fd)
+    return p
+
+
 def make_test_nb():
     return {
         "cells": [
@@ -136,7 +145,7 @@ def t_list_kernels():
 
 def t_open_close():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     err, res = cl.call("open", {"path": nb_path})
     ok = err is None and res and "session_id" in res and len(res["snapshot"]["cells"]) == 4
@@ -150,7 +159,7 @@ def t_open_close():
 
 def t_kernel_lifecycle():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -171,7 +180,7 @@ def t_kernel_lifecycle():
 
 def t_run_cell_streams():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -191,7 +200,7 @@ def t_run_cell_streams():
 
 def t_run_cell_expression():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -210,7 +219,7 @@ def t_run_cell_expression():
 
 def t_run_cell_error():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -227,7 +236,7 @@ def t_run_cell_error():
 
 def t_save_roundtrip():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -247,7 +256,7 @@ def t_save_roundtrip():
 
 def t_image_output():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     nb = make_test_nb()
     nb["cells"].append({
         "cell_type": "code", "id": "c4", "metadata": {},
@@ -276,7 +285,7 @@ def t_image_output():
 
 def t_insert_delete_move():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -304,7 +313,7 @@ def t_insert_delete_move():
 
 def t_silent_execute():
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]
@@ -368,7 +377,7 @@ def _kernel_cleanup_case(name, terminate):
     kernel survives and this fails.
     """
     cl = Client()
-    nb_path = tempfile.mktemp(suffix=".ipynb")
+    nb_path = tmp_nb()
     json.dump(make_test_nb(), open(nb_path, "w"))
     _, res = cl.call("open", {"path": nb_path})
     sid = res["session_id"]

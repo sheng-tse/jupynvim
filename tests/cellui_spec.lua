@@ -1,6 +1,8 @@
 -- Headless verification of the VSCode-style cell UI.
 local here = debug.getinfo(1, "S").source:sub(2)
 vim.opt.runtimepath:prepend(vim.fn.fnamemodify(here, ":p:h:h"))
+-- Notebook paths go in a fresh dir of this nvim, never a fixed temp path.
+local TMPD = vim.fn.tempname(); vim.fn.mkdir(TMPD, "p")
 
 local J = require("jupynvim")
 J.setup({})
@@ -16,7 +18,7 @@ local snapshot = { cells = {
     outputs = { { output_type = "stream", name = "stdout", text = string.rep("x\n", 40) } } },
   { id = "c3", cell_type = "code", source = "1+1", outputs = {} },
 } }
-local nb = Notebook.create(buf, "/tmp/t.ipynb", "sess", snapshot)
+local nb = Notebook.create(buf, TMPD .. "/t.ipynb", "sess", snapshot)
 J._populate_buffer(nb)
 CellMode.attach(buf, J)
 local win = vim.api.nvim_get_current_win()
@@ -226,7 +228,7 @@ local ns2 = Notebook.saved_duration_ns({ execution = {
 assert(ns2 and math.abs(ns2 - 0.3e9) < 0.05e9,
   "saved duration parse wrong: " .. tostring(ns2))
 local buf2 = vim.api.nvim_create_buf(true, false)
-local nb2 = Notebook.create(buf2, "/tmp/t2.ipynb", "s2", { cells = {
+local nb2 = Notebook.create(buf2, TMPD .. "/t2.ipynb", "s2", { cells = {
   { id = "z1", cell_type = "code", source = "1", execution_count = 4,
     outputs = {},
     metadata = { execution = {
@@ -328,7 +330,7 @@ print("I. statuscolumn-only selection bar ok")
 -- J. a source ending in "\n" must NOT create a phantom trailing empty
 --    line (it showed a stray gutter number above the next cell)
 local pbuf = vim.api.nvim_create_buf(true, false)
-local pnb = Notebook.create(pbuf, "/tmp/p.ipynb", "ps", { cells = {
+local pnb = Notebook.create(pbuf, TMPD .. "/p.ipynb", "ps", { cells = {
   { id = "p1", cell_type = "code", source = "a = 1\nb = 2\n", outputs = {} },
 } })
 local plines = (pnb:to_lines())
@@ -367,7 +369,7 @@ print("K. output text derives from Normal (brightened on dark) ok")
 --    off in each cell (VSCode-style anchor).
 local lbuf = vim.api.nvim_create_buf(true, false)
 vim.api.nvim_set_current_buf(lbuf)
-local lnb = Notebook.create(lbuf, "/tmp/l.ipynb", "ls", { cells = {
+local lnb = Notebook.create(lbuf, TMPD .. "/l.ipynb", "ls", { cells = {
   { id = "x1", cell_type = "code", source = "a = 1\nb = 2\nc = 3", outputs = {} },
   { id = "x2", cell_type = "code", source = "d = 4\ne = 5", outputs = {} },
 } })
@@ -399,7 +401,7 @@ print("L. inactive cell remembers highlighted line ok")
 --    equal the window width after open AND after close, with no leftover.
 local mbuf = vim.api.nvim_create_buf(true, false)
 vim.api.nvim_set_current_buf(mbuf)
-local mnb = Notebook.create(mbuf, "/tmp/m.ipynb", "ms", { cells = {
+local mnb = Notebook.create(mbuf, TMPD .. "/m.ipynb", "ms", { cells = {
   { id = "m1", cell_type = "code", source = "x = 1", execution_count = 1, outputs = {} },
 } })
 J._populate_buffer(mnb)
@@ -439,7 +441,7 @@ print("M. frames track window width across open/close ok")
 if pcall(vim.treesitter.get_string_parser, "x=1", "python") then
   local tbuf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_set_current_buf(tbuf)
-  local tnb = Notebook.create(tbuf, "/tmp/ts_heal_spec.ipynb", "ts", { cells = {
+  local tnb = Notebook.create(tbuf, TMPD .. "/ts_heal_spec.ipynb", "ts", { cells = {
     { id = "m1", cell_type = "markdown", source = "# Heading\ntext" },
     { id = "c1", cell_type = "code", source = "import numpy as np\nx = np.arange(5)", execution_count = 1, outputs = {} },
     { id = "c2", cell_type = "code", source = "print(x)", outputs = {} },
@@ -484,7 +486,7 @@ end
 do
   local pbuf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_set_current_buf(pbuf)
-  local pnb = Notebook.create(pbuf, "/tmp/p.ipynb", "ps", { cells = {
+  local pnb = Notebook.create(pbuf, TMPD .. "/p.ipynb", "ps", { cells = {
     { id = "p1", cell_type = "code", source = "x = 1", execution_count = 1, outputs = {} },
   } })
   J._populate_buffer(pnb)
@@ -516,7 +518,7 @@ do
   vim.api.nvim_set_current_buf(rbuf)
   local rwin = vim.api.nvim_get_current_win()
   vim.wo[rwin].cursorline = true  -- the user's setting
-  local rnb = Notebook.create(rbuf, "/tmp/r.ipynb", "rs", { cells = {
+  local rnb = Notebook.create(rbuf, TMPD .. "/r.ipynb", "rs", { cells = {
     { id = "r1", cell_type = "code", source = "x=1\ny=2\nz=3", outputs = {} },
   } })
   J._populate_buffer(rnb)
@@ -538,9 +540,9 @@ end
 --    off. Cell ids aren't stable across reopen (they're regenerated, not written
 --    to disk), so this keys by cell index validated by a first-line fingerprint.
 do
-  vim.env.JUPYNVIM_CURSOR_STORE = "/tmp/jup_cursor_store_" .. vim.fn.getpid() .. ".json"
+  vim.env.JUPYNVIM_CURSOR_STORE = TMPD .. "/cursor_store.json"
   local qbuf = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_buf_set_name(qbuf, "/tmp/jup_persist_spec.ipynb")
+  vim.api.nvim_buf_set_name(qbuf, TMPD .. "/jup_persist_spec.ipynb")
   vim.api.nvim_set_current_buf(qbuf)
   local qnb = Notebook.create(qbuf, vim.api.nvim_buf_get_name(qbuf), "qs", { cells = {
     { id = "q1", cell_type = "markdown", source = "# Q" },

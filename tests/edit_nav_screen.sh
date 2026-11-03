@@ -9,12 +9,14 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/core/target/release/jupynvim-core"
 [ -x "$BIN" ] || { echo "SKIP edit_nav_screen: build core first ($BIN)"; exit 0; }
-command -v tmux >/dev/null || { echo "SKIP edit_nav_screen: no tmux"; exit 0; }
+source "$(dirname "$0")/lib/tmux.sh"
 
-WORK="$(mktemp -d -t jupynvim_nav.XXXXXX)"
+# in the run's temp dir (macOS mktemp ignores TMPDIR for -t or no template)
+WORK="$(mktemp -d "$TMPDIR/jupynvim_nav.XXXXXX")"
 S="jupy_nav_$$"
-cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
-trap cleanup EXIT
+# the server first, so no nvim is left to write into WORK as it goes
+cleanup() { jnv_tmux_stop; rm -rf "$WORK"; }
+jnv_on_exit cleanup
 
 python3 - "$WORK/nav.ipynb" <<'PY'
 import json, sys
@@ -54,7 +56,7 @@ function _G.__navcount()
 end
 LUA
 
-tmux kill-session -t "$S" 2>/dev/null
+jnv_stop_session "$S"
 tmux new-session -d -s "$S" -x 140 -y 30
 tmux set-option -t "$S" status off
 tmux send-keys -t "$S" "cd $WORK && XDG_STATE_HOME=$WORK/state XDG_CACHE_HOME=$WORK/cache nvim -u $WORK/init.lua nav.ipynb" Enter
@@ -67,7 +69,22 @@ done
 [ "$rendered" -eq 1 ] || { echo "FAIL: notebook never rendered"; exit 1; }
 sleep 0.5
 
-rec() { tmux send-keys -t "$S" ":lua __navrec()" Enter; sleep 0.4; }
+# Failures the shell finds (a record that never came, a stop that left a
+# process behind), added to the verdict below.
+NAVFAILS=0
+# wait_rec: until nvim wrote the next line of rec (the Nth); a timeout fails
+# the test
+_NAVN=0
+wait_rec() {
+  _NAVN=$((_NAVN + 1))
+  jnv_wait_lines "$WORK/rec" "$_NAVN" 15 && return 0
+  echo "FAIL nvim did not write record $_NAVN within 15s"; NAVFAILS=$((NAVFAILS + 1))
+}
+# record a line, and wait until nvim wrote it
+rec() {
+  tmux send-keys -t "$S" ":lua __navrec()" Enter
+  wait_rec; sleep 0.2
+}
 # a mouse click on the first place text $1 shows on screen
 click() {
   local pos
@@ -183,9 +200,14 @@ tmux send-keys -t "$S" "gg"; sleep 0.3
 tmux send-keys -t "$S" Enter; sleep 0.4
 tmux send-keys -t "$S" "gg" "V" "G"; sleep 0.4
 tmux send-keys -t "$S" "d"; sleep 0.6
-tmux send-keys -t "$S" ":lua __navcount()" Enter; sleep 0.4
+tmux send-keys -t "$S" ":lua __navcount()" Enter
+wait_rec
 
-python3 - "$WORK/rec" <<'PY'
+# nvim and the server stop before the verdict: a process that outlives its
+# stop (a LEAK line) fails the test, and the exit hook then finds nothing left
+jnv_tmux_stop || { echo "FAIL nvim or the tmux server did not stop cleanly (see above)"; NAVFAILS=$((NAVFAILS + 1)); }
+
+python3 - "$WORK/rec" "$NAVFAILS" <<'PY'
 import re, sys
 want = [
     ("]c from cell 1 while editing", "cell2_line1 edit"),
@@ -208,7 +230,7 @@ want = [
     ("ggVGd while editing a cell deletes only inside it", "cells=9"),
 ]
 got = open(sys.argv[1]).read().splitlines()
-fail = 0
+fail = int(sys.argv[2])  # what the shell found
 for i, (label, exp) in enumerate(want):
     g = got[i] if i < len(got) else "<nothing recorded>"
     ok = re.fullmatch(exp, g) is not None

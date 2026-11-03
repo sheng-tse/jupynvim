@@ -9,13 +9,16 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/core/target/release/jupynvim-core"
 [ -x "$BIN" ] || { echo "SKIP frame_layout: build core first ($BIN)"; exit 0; }
-command -v tmux >/dev/null || { echo "SKIP frame_layout: no tmux"; exit 0; }
+source "$(dirname "$0")/lib/tmux.sh"
 
-# The init file and the screen captures live in a directory of this run's
-# own, so two runs cannot overwrite each other's captures. nvim's state dir is
-# isolated too, where a cursor saved by an earlier run could move the view
-# this test measures. The cache dir is not; see the launch line below.
-WORK="$(mktemp -d -t jupynvim_frame.XXXXXX)"
+# The init file and the screen captures live in a directory of this test's
+# own, so two runs cannot overwrite each other's captures. It is made in the
+# run's temp dir with an explicit template (macOS mktemp ignores TMPDIR for
+# -t), so the run dir holds it. nvim's state dir is this test's own too,
+# where a saved cursor could move the view this test measures. Everything
+# else (temp, cache, data, the Jupyter dirs) is the run's own
+# (tests/lib/test_env.sh), and tmux is a private server (tests/lib/tmux.sh).
+WORK="$(mktemp -d "$TMPDIR/jupynvim_frame.XXXXXX")"
 INIT="$WORK/init.lua"
 
 # The notebook is generated rather than read from examples/, which is not in
@@ -65,14 +68,15 @@ LUA
 
 S="jupy_frame_$$"
 CAP() { tmux capture-pane -t "$S" -p; }
-tmux kill-session -t "$S" 2>/dev/null
+jnv_stop_session "$S"
 tmux new-session -d -s "$S" -x 160 -y 45
 tmux set-option -t "$S" status off
-cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
-trap cleanup EXIT
-# Only the state dir is isolated: that is where a saved cursor could move the
-# view. The cache is left alone, because the :terminal below inherits it and
-# a user's shell setup rebuilt from an empty cache on every run.
+# the server first, so no nvim is left to write into WORK as it goes
+cleanup() { jnv_tmux_stop; rm -rf "$WORK"; }
+jnv_on_exit cleanup
+# The state dir is this test's own: that is where a saved cursor could move
+# the view. The rest is the run's (tests/lib/test_env.sh), which the
+# :terminal below inherits too; it runs /bin/sh, never the user's shell.
 tmux send-keys -t "$S" "cd $ROOT && XDG_STATE_HOME=$WORK/state nvim -u $INIT $WORK/frame.ipynb" Enter
 
 # poll until the notebook actually renders (a box corner appears), up to ~20s
@@ -107,9 +111,13 @@ tmux send-keys -t "$S" ":lua vim.api.nvim_win_close(_G.__fw,true)" Enter; sleep 
 tmux send-keys -t "$S" "k" "j"; sleep 0.6
 CAP > "$WORK/fl_after_float.txt"
 
-tmux kill-session -t "$S" 2>/dev/null
+# nvim and the server stop before the verdict: a process that outlives its
+# stop (a LEAK line) fails the test, and the exit hook then finds nothing left
+leak=0
+jnv_stop_session "$S" || leak=1
+jnv_tmux_stop || leak=1
 
-WORK="$WORK" python3 - <<'PY'
+WORK="$WORK" LEAK="$leak" python3 - <<'PY'
 import os, sys
 W = os.environ["WORK"]
 def cols(path):
@@ -121,6 +129,8 @@ def cols(path):
     return hdr.index("╭"), src.index("│")
 
 fail = 0
+if os.environ.get("LEAK") == "1":
+    print("FAIL nvim or its terminal multiplexer did not stop cleanly (see above)"); fail += 1
 for name, path in [("baseline", f"{W}/fl_baseline.txt"),
                    ("after-terminal", f"{W}/fl_after_term.txt"),
                    ("after-float", f"{W}/fl_after_float.txt")]:

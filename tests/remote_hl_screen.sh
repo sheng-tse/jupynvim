@@ -12,9 +12,10 @@
 # Neither renderer needs SSH: M.build and _render take synthetic state.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-command -v tmux >/dev/null || { echo "SKIP remote_hl_screen: no tmux"; exit 0; }
+source "$(dirname "$0")/lib/tmux.sh"
 
-WORK="$(mktemp -d -t jupynvim_hl.XXXXXX)"
+# in the run's temp dir (macOS mktemp ignores TMPDIR for -t or no template)
+WORK="$(mktemp -d "$TMPDIR/jupynvim_hl.XXXXXX")"
 INIT="$WORK/init.lua"
 cat > "$INIT" <<LUA
 vim.opt.runtimepath:prepend("$ROOT")
@@ -26,14 +27,16 @@ LUA
 
 S="jupy_hl_$$"
 CAP_RAW() { tmux capture-pane -t "$S" -p -e; }   # -e keeps SGR escapes
-cleanup() { tmux kill-session -t "$S" 2>/dev/null; rm -rf "$WORK"; }
-trap cleanup EXIT
+# the server first, so no nvim is left to write into WORK as it goes
+cleanup() { jnv_tmux_stop; rm -rf "$WORK"; }
+jnv_on_exit cleanup
 
-tmux kill-session -t "$S" 2>/dev/null
+jnv_stop_session "$S"
 tmux new-session -d -s "$S" -x 120 -y 40
 tmux set-option -t "$S" status off
 tmux send-keys -t "$S" "cd $ROOT && XDG_STATE_HOME=$WORK/state XDG_CACHE_HOME=$WORK/cache nvim -u $INIT" Enter
-sleep 2
+jnv_wait_nvim_up 20 || { echo "FAIL: nvim did not start within 20s"; exit 1; }
+sleep 0.5
 
 fails=0
 note() { echo "$1"; }
@@ -73,9 +76,19 @@ fi
 
 # ── explorer ─────────────────────────────────────────────────────────────
 tmux send-keys -t "$S" ":lua local RE=require('jupynvim.remote.explorer'); local b=vim.api.nvim_create_buf(false,true); vim.api.nvim_win_set_buf(0,b); RE._render({alias='a',root='/home/me/proj',buf=b,expanded={},kids={['/home/me/proj']={loaded=true,items={{name='src',path='/home/me/proj/src',kind='dir'},{name='main.py',path='/home/me/proj/main.py',kind='file'}}}}})" Enter
-sleep 1.5
 
-if CAP_RAW | grep -qa "main.py"; then
+# Polled, as the dashboard above is: one read after a fixed wait can come
+# before nvim has drawn the explorer when the machine is busy. The command
+# typed above names main.py too and stays on screen (wrapped over several
+# rows) while nvim runs it, so only the explorer's own row counts: the file
+# name ends it (capture-pane drops trailing blanks), where the command goes
+# on with ',kind=...'.
+explored=0
+for _ in $(seq 1 60); do
+  if tmux capture-pane -t "$S" -p | grep -qa 'main\.py$'; then explored=1; break; fi
+  sleep 0.25
+done
+if [ "$explored" -eq 1 ]; then
   note "ok explorer rendered"
   # The basename is a to-end-of-line highlight linking to Title. Color cannot
   # discriminate here: in the default colorscheme Title's fg equals the normal
@@ -98,6 +111,10 @@ else
   bad "explorer never rendered"
   CAP_RAW | sed -n '1,6p'
 fi
+
+# nvim and the server stop before the verdict: a process that outlives its
+# stop (a LEAK line) fails the test, and the exit hook then finds nothing left
+jnv_tmux_stop || bad "nvim or the tmux server did not stop cleanly (see above)"
 
 echo
 if [ "$fails" -eq 0 ]; then

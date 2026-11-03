@@ -10,8 +10,8 @@ local PASS, FAIL = 0, 0
 local FAILURES = {}
 
 local function report(name, ok, detail)
-  if ok then PASS = PASS + 1 else FAIL = FAIL + 1; table.insert(FAILURES, name .. (detail and (" — " .. detail) or "")) end
-  io.write(string.format("  [%s] %s%s\n", ok and "PASS" or "FAIL", name, (not ok and detail) and (" — " .. detail) or ""))
+  if ok then PASS = PASS + 1 else FAIL = FAIL + 1; table.insert(FAILURES, name .. (detail and (" -- " .. detail) or "")) end
+  io.write(string.format("  [%s] %s%s\n", ok and "PASS" or "FAIL", name, (not ok and detail) and (" -- " .. detail) or ""))
   io.flush()
 end
 
@@ -44,6 +44,25 @@ end
 local function wait_until(pred, timeout_ms)
   local ok = vim.wait(timeout_ms or 5000, pred, 50)
   return ok
+end
+
+-- The kernel's start reply has arrived (what run_cell needs), up to 30 s.
+-- A start that failed (nb.kernel_error) ends the wait at once: false.
+local function wait_kernel(buf, ms)
+  wait_until(function()
+    local nb = NB.get(buf)
+    return nb ~= nil and (nb.kernel_started == true or nb.kernel_error ~= nil)
+  end, ms or 30000)
+  local nb = NB.get(buf)
+  return nb ~= nil and nb.kernel_started == true
+end
+-- Every listed cell has at least one output, up to 30 s.
+local function wait_outputs(buf, ids, ms)
+  return wait_until(function()
+    local nb = NB.get(buf); if not nb then return false end
+    for _, id in ipairs(ids) do local c = nb:get_cell(id); if not c or #c.outputs == 0 then return false end end
+    return true
+  end, ms or 30000)
 end
 
 -- ============================================================
@@ -103,7 +122,7 @@ test_pcall("Notebook.get(0) resolves to the current buffer", function()
   os.remove(p)
 end)
 
--- T3: Idempotency — opening the same path twice doesn't double the buffer
+-- T3: Idempotency: opening the same path twice doesn't double the buffer
 test_pcall("re-open doesn't duplicate buffer content", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
@@ -140,7 +159,7 @@ test_pcall("run_cell on c1 captures stdout in cell.outputs", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
   local buf = J.open(p)
-  vim.wait(4000)  -- let kernel start
+  wait_kernel(buf)  -- let kernel start
   -- Move cursor to c1's first source line. Layout: line 1 markdown, line 2 sep, line 3 first c1 line.
   vim.api.nvim_set_current_buf(buf)
   vim.api.nvim_win_set_cursor(0, { 3, 0 })
@@ -169,9 +188,9 @@ test_pcall("save+reopen preserves outputs", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
   local buf = J.open(p)
-  vim.wait(4000)
+  wait_kernel(buf)
   J.run_all(buf)
-  vim.wait(6000)
+  wait_outputs(buf, { "c1", "c2" })
   J._save(NB.get(buf))
   vim.wait(500)
   -- Tear down the buffer and reopen
@@ -267,7 +286,7 @@ test_pcall("cell_at_line maps line to cell id", function()
   os.remove(p)
 end)
 
--- T11.5: Move cell up / down (the user's "mk" — leader+nk)
+-- T11.5: Move cell up / down (the user's "mk": leader+nk)
 test_pcall("move_cell up reorders cells", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
@@ -320,17 +339,17 @@ test_pcall("kitty placeholder builder produces non-empty virt_lines", function()
          "rows=" .. #rows .. " cols[1]=" .. #rows[1])
 end)
 
--- T11.62: User's exact workflow — open, run, save, :e same path again, no dup
+-- T11.62: User's exact workflow: open, run, save, :e same path again, no dup
 test_pcall("repeated :e on same path doesn't accumulate cells", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
   local buf = J.open(p)
-  vim.wait(2000)
+  wait_kernel(buf)
   J.run_all(buf)
-  vim.wait(5000)
+  wait_outputs(buf, { "c1", "c2" })
   J._save(NB.get(buf))
   vim.wait(500)
-  -- Simulate :e on the same file (without :e!) — idempotent-noop. Outputs are
+  -- Simulate :e on the same file (without :e!): idempotent-noop. Outputs are
   -- real buffer lines now, so the absolute count depends on output; the
   -- invariant is that repeated opens do NOT accumulate (stable count) and the
   -- cell count stays at 3.
@@ -351,9 +370,9 @@ test_pcall("repeated :e! on same path stays at expected cell count", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
   local buf = J.open(p)
-  vim.wait(2000)
+  wait_kernel(buf)
   J.run_all(buf)
-  vim.wait(5000)
+  wait_outputs(buf, { "c1", "c2" })
   J._save(NB.get(buf))
   vim.wait(500)
   -- Force reload: first one settles the baseline, the rest must not accumulate.
@@ -374,10 +393,10 @@ test_pcall("save+reopen does not duplicate cells", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
   local buf = J.open(p)
-  vim.wait(2000)
+  wait_kernel(buf)
   -- Run all cells (gives them outputs + execution counts)
   J.run_all(buf)
-  vim.wait(5000)
+  wait_outputs(buf, { "c1", "c2" })
   -- Save
   J._save(NB.get(buf))
   vim.wait(800)
@@ -391,7 +410,7 @@ test_pcall("save+reopen does not duplicate cells", function()
   report("save+reopen does not duplicate cells",
          #nb2.cells == 3,
          "got " .. #nb2.cells .. " cells")
-  -- Save again and reopen — should still be 3
+  -- Save again and reopen: should still be 3
   J._save(nb2)
   vim.wait(500)
   vim.api.nvim_buf_delete(buf2, { force = true })
@@ -473,23 +492,21 @@ test_pcall("set_cell_type to markdown clears outputs", function()
   local p = vim.fn.tempname() .. ".ipynb"
   fresh_nb(p)
   local buf = J.open(p)
-  vim.wait(4000)
+  local started = wait_kernel(buf)
   -- Run c1 first to give it outputs
   vim.api.nvim_set_current_buf(buf)
   vim.api.nvim_win_set_cursor(0, { 3, 0 })
   J.run_cell(buf, { advance = false })
-  wait_until(function()
-    local nb = NB.get(buf)
-    local c = nb:get_cell("c1")
-    return c and #c.outputs > 0
-  end, 6000)
+  -- The case only means something once c1 has an output to clear.
+  local had = started and wait_outputs(buf, { "c1" })
   -- Convert to markdown
   J.set_cell_type(buf, "markdown")
   vim.wait(500)
   local c = NB.get(buf):get_cell("c1")
   report("set_cell_type to markdown clears outputs",
-         c.cell_type == "markdown" and #c.outputs == 0,
-         "type=" .. c.cell_type .. " outs=" .. #c.outputs)
+         had and c.cell_type == "markdown" and #c.outputs == 0,
+         "kernel_started=" .. tostring(started) .. " had_output=" .. tostring(had)
+           .. " type=" .. c.cell_type .. " outs=" .. #c.outputs)
   os.remove(p)
 end)
 
@@ -551,7 +568,7 @@ if FAIL > 0 then
 end
 
 -- Write result to env-controlled status file
-local status_file = vim.env.JUPYNVIM_TEST_STATUS_FILE or "/tmp/jupynvim_lua_e2e.status"
+local status_file = vim.env.JUPYNVIM_TEST_STATUS_FILE or (vim.fn.tempname() .. ".status")
 local s = io.open(status_file, "w")
 if s then
   s:write(FAIL == 0 and "PASS\n" or "FAIL\n")
