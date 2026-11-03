@@ -58,6 +58,10 @@
 #      then Pixi's default env, python.exe at its root on Windows, #47)
 #      + backend_startup_spec.lua (a second notebook opening while the first
 #      one's backend is being attached joins it: one spawn, local and remote, #44)
+#      + release_version_spec.lua (pre-release versions such as v0.5.0-beta.1
+#      through every reader of a version: the installer and its downloads,
+#      the binary and library checks, :checkhealth, the deploy check, the
+#      kernel language server and the release workflow's tag check)
 #      + native_spec.lua (the in-process library libjupynvim from Lua: its
 #      discovery and checks, jobs, the pump, the budgets of what each may cost
 #      the UI thread, shutdown and the path without it)
@@ -369,7 +373,7 @@ for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec dep
             keymap_override_spec image_b64_spec reopen_lsp_spec edit_nav_spec \
             multi_image_spec install_spec output_cache_spec stale_output_e2e output_view_spec \
             html_table_spec \
-            config_comment_spec pixi_env_spec \
+            config_comment_spec pixi_env_spec release_version_spec \
             native_spec widget_spec widget_e2e palette_spec routing_spec \
             stream_writer_spec stream_palette_spec; do
   out=$(nv --headless -u NONE -c "luafile $ROOT/tests/$spec.lua" -c 'cquit 3' 2>&1)
