@@ -339,6 +339,62 @@ test_pcall("kitty placeholder builder produces non-empty virt_lines", function()
          "rows=" .. #rows .. " cols[1]=" .. #rows[1])
 end)
 
+-- The placeholder builders write the kitty protocol's 297 row and column diacritics in
+-- order (the list in Ghostty's src/terminal/kitty/graphics_unicode.zig): the cell in
+-- column c carries the c-th one, so every column of an image up to 297 cells wide resolves.
+-- Two functions build them: build_virt_lines, and placeholder_virt_lines, which is the one the
+-- notebook draws with (render.lua); both are checked, the second for a wide and for a tall image.
+test_pcall("kitty placeholder builder uses all 297 kitty diacritics", function()
+  local img = require("jupynvim.notebook.image")
+  local row = img.build_virt_lines(7, 1, 297)[1]
+  local col, seen, distinct, shape = {}, {}, 0, true
+  for c = 1, #row do
+    local cps = vim.fn.str2list(row[c][1])
+    shape = shape and #cps == 3 and cps[1] == 0x10EEEE and cps[2] == 0x0305
+    col[c] = cps[3] or 0
+    if not seen[col[c]] then seen[col[c]] = true; distinct = distinct + 1 end
+  end
+  local ok = #row == 297 and shape and distinct == 297 and col[116] == 0x081E
+    and col[117] == 0x081F and col[120] == 0x0822 and col[121] == 0x0823
+    and col[297] == 0x1D244
+  report("kitty placeholder builder uses all 297 kitty diacritics", ok,
+         string.format("cols=%d distinct=%d col117=U+%04X col121=U+%04X col297=U+%04X",
+                       #row, distinct, col[117] or 0, col[121] or 0, col[297] or 0))
+end)
+
+-- The builder the notebook draws with (placeholder_virt_lines): one row of 297 cells, and 297
+-- rows of one cell. Each cell is U+10EEEE, its row diacritic and its column diacritic; the
+-- diacritic of index i is the i-th of the 297 (index 116 is U+081F, 120 is U+0822).
+test_pcall("notebook placeholder builder uses all 297 kitty diacritics", function()
+  local img = require("jupynvim.notebook.image")
+  img._placements["e2e-wide"] = { renderer = "placeholder", image_id = 7, rows = 1, cols = 297 }
+  img._placements["e2e-tall"] = { renderer = "placeholder", image_id = 7, rows = 297, cols = 1 }
+  local wide = img.placeholder_virt_lines("e2e-wide")
+  local tall = img.placeholder_virt_lines("e2e-tall")
+  img._placements["e2e-wide"], img._placements["e2e-tall"] = nil, nil
+  local cols, rowsd, seen_c, seen_r, nc, nr, shape = {}, {}, {}, {}, 0, 0, true
+  local cps = vim.fn.str2list(wide[1][1][1])
+  for i = 1, #cps, 3 do
+    shape = shape and cps[i] == 0x10EEEE and cps[i + 1] == 0x0305
+    cols[#cols + 1] = cps[i + 2]
+    if not seen_c[cps[i + 2]] then seen_c[cps[i + 2]] = true; nc = nc + 1 end
+  end
+  for r = 1, #tall do
+    local t = vim.fn.str2list(tall[r][1][1])
+    shape = shape and #t == 3 and t[1] == 0x10EEEE and t[3] == 0x0305
+    rowsd[r] = t[2]
+    if not seen_r[t[2]] then seen_r[t[2]] = true; nr = nr + 1 end
+  end
+  local ok = #wide == 1 and #cols == 297 and #tall == 297 and shape and nc == 297 and nr == 297
+    and cols[116] == 0x081E and cols[117] == 0x081F and cols[120] == 0x0822
+    and cols[121] == 0x0823 and cols[297] == 0x1D244
+    and rowsd[117] == 0x081F and rowsd[121] == 0x0823 and rowsd[297] == 0x1D244
+  report("notebook placeholder builder uses all 297 kitty diacritics", ok,
+         string.format("cols=%d/%d distinct=%d/%d col117=U+%04X col121=U+%04X row117=U+%04X row297=U+%04X",
+                       #cols, #tall, nc, nr, cols[117] or 0, cols[121] or 0, rowsd[117] or 0,
+                       rowsd[297] or 0))
+end)
+
 -- T11.62: User's exact workflow: open, run, save, :e same path again, no dup
 test_pcall("repeated :e on same path doesn't accumulate cells", function()
   local p = vim.fn.tempname() .. ".ipynb"

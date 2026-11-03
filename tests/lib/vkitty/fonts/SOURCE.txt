@@ -1,0 +1,25 @@
+IosevkaCustom subsets for the headless renderer (tests/lib/vkitty/fonts).
+
+Upstream: Iosevka by Renzhi Li (aka Belleve Invis), SIL Open Font License 1.1 (OFL.txt).
+Copyright line (name ID 0 of the Regular source): Copyright 2015-2025, Renzhi Li (aka. Belleve Invis, belleve@typeof.net).
+Tool: tests/lib/vkitty/tools/subset_fonts.py
+fontTools: 4.62.0
+Unicode ranges: U+0020-007E,U+00A0-017F,U+0370-03FF,U+0400-045F,U+2000-206F,U+20A0-20BF,U+2100-214F,U+2190-21FF,U+2200-22FF,U+2300-23FF,U+2460-24FF,U+2500-259F,U+25A0-25FF,U+2600-26FF,U+2700-27BF,U+E0A0-E0D7
+Layout features: all (--layout-features=*); names 0 to 6, 13 and 14 kept; hinting kept.
+
+face: IosevkaCustom-Regular.subset.ttf
+  source: ~/Library/Fonts/IosevkaCustom-Regular.ttf sha256 f1aef96762bfb762863d4cdbc4fd3c94468da7a5dfecdde2a0e55387eaeefd24 bytes 2061060
+  subset: IosevkaCustom-Regular.subset.ttf sha256 91fc15615c83438ac379cdebb87dfeef24fcd7a13eae58c9b47ca23fac91363e bytes 602540
+  command: fontTools.subset IosevkaCustom-Regular.ttf --unicodes=U+0020-007E,U+00A0-017F,U+0370-03FF,U+0400-045F,U+2000-206F,U+20A0-20BF,U+2100-214F,U+2190-21FF,U+2200-22FF,U+2300-23FF,U+2460-24FF,U+2500-259F,U+25A0-25FF,U+2600-26FF,U+2700-27BF,U+E0A0-E0D7 --layout-features=* --name-IDs=0,1,2,3,4,5,6,13,14 --name-languages=* --output-file=SUBSET
+face: IosevkaCustom-SemiBold.subset.ttf
+  source: ~/Library/Fonts/IosevkaCustom-SemiBold.ttf sha256 4140b6b5fac7fb6f0261c92008b95237672cae058db7b24c09f28dfd53daf979 bytes 2043852
+  subset: IosevkaCustom-SemiBold.subset.ttf sha256 78cba407fd5f260d28b8373b0d0485b0d019be225fb4d30c8f5f4dde800f9ddd bytes 595780
+  command: fontTools.subset IosevkaCustom-SemiBold.ttf --unicodes=U+0020-007E,U+00A0-017F,U+0370-03FF,U+0400-045F,U+2000-206F,U+20A0-20BF,U+2100-214F,U+2190-21FF,U+2200-22FF,U+2300-23FF,U+2460-24FF,U+2500-259F,U+25A0-25FF,U+2600-26FF,U+2700-27BF,U+E0A0-E0D7 --layout-features=* --name-IDs=0,1,2,3,4,5,6,13,14 --name-languages=* --output-file=SUBSET
+face: IosevkaCustom-Italic.subset.ttf
+  source: ~/Library/Fonts/IosevkaCustom-Italic.ttf sha256 76a1d146330d88282d4390aa186ca9b6a5f9be9f77c3ece4caa620d091164f7d bytes 2146656
+  subset: IosevkaCustom-Italic.subset.ttf sha256 b290295467ad3e0a470f152ec42274c53ad69b9c07d6d4e1910e863bf9936b16 bytes 627824
+  command: fontTools.subset IosevkaCustom-Italic.ttf --unicodes=U+0020-007E,U+00A0-017F,U+0370-03FF,U+0400-045F,U+2000-206F,U+20A0-20BF,U+2100-214F,U+2190-21FF,U+2200-22FF,U+2300-23FF,U+2460-24FF,U+2500-259F,U+25A0-25FF,U+2600-26FF,U+2700-27BF,U+E0A0-E0D7 --layout-features=* --name-IDs=0,1,2,3,4,5,6,13,14 --name-languages=* --output-file=SUBSET
+face: IosevkaCustom-SemiBoldItalic.subset.ttf
+  source: ~/Library/Fonts/IosevkaCustom-SemiBoldItalic.ttf sha256 de384e5ef910ff6ac32a8680839c06b4f6d3a834e0a207cf826f77f4f55d3b18 bytes 2137164
+  subset: IosevkaCustom-SemiBoldItalic.subset.ttf sha256 387ea2b81f2c38495652d06f789d9c9cff8618205f94b7c68accb473f13c9c37 bytes 622368
+  command: fontTools.subset IosevkaCustom-SemiBoldItalic.ttf --unicodes=U+0020-007E,U+00A0-017F,U+0370-03FF,U+0400-045F,U+2000-206F,U+20A0-20BF,U+2100-214F,U+2190-21FF,U+2200-22FF,U+2300-23FF,U+2460-24FF,U+2500-259F,U+25A0-25FF,U+2600-26FF,U+2700-27BF,U+E0A0-E0D7 --layout-features=* --name-IDs=0,1,2,3,4,5,6,13,14 --name-languages=* --output-file=SUBSET

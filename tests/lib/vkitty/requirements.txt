@@ -1,0 +1,7 @@
+# Python packages for the headless Kitty graphics harness (tests/lib/vkitty).
+# Install into a dedicated environment, never into the system Python.
+# Pillow must be built with raqm (shaped text); on Linux raqm needs the
+# libfribidi0 system library at run time (Ubuntu package libfribidi0).
+numpy==2.4.2
+pillow==12.1.1
+fonttools==4.62.0
