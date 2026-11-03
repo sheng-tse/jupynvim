@@ -10,10 +10,55 @@ use crate::kernel::Kernel;
 use crate::kernelspec;
 use crate::widgets::Effect;
 
+/// The kernelspec for an interpreter handed over as `python_path`. Nothing is
+/// registered for it: argv launches `python -m ipykernel_launcher` with the
+/// usual `{connection_file}` substitution, the way `ipykernel install` writes
+/// one. An interpreter under a `.pixi` directory belongs to a Pixi env and is
+/// named so (`pixi-python`, shown as "Python (Pixi)"); any other is a venv
+/// (`venv-python`, "Python (venv)"). `path` is the env root: the
+/// interpreter's directory, or its parent when that is `bin` or `Scripts`
+/// (Pixi puts `python.exe` at the root of the env on Windows).
+fn python_path_spec(py: String) -> kernelspec::KernelSpec {
+    let path_buf = std::path::PathBuf::from(&py);
+    let dir = path_buf.parent();
+    let in_bin = dir
+        .and_then(|d| d.file_name())
+        .map_or(false, |n| n == "bin" || n.to_string_lossy().eq_ignore_ascii_case("Scripts"));
+    let root = if in_bin { dir.and_then(|d| d.parent()) } else { dir }
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| path_buf.clone());
+    // Identify Pixi environments from the interpreter path.
+    let is_pixi = path_buf
+        .components()
+        .any(|component| component.as_os_str() == ".pixi");
+    let (name, display_name) = if is_pixi {
+        ("pixi-python", "Python (Pixi)")
+    } else {
+        ("venv-python", "Python (venv)")
+    };
+    kernelspec::KernelSpec {
+        name: name.to_string(),
+        path: root,
+        argv: vec![
+            py,
+            "-m".to_string(),
+            "ipykernel_launcher".to_string(),
+            "-f".to_string(),
+            "{connection_file}".to_string(),
+        ],
+        display_name: display_name.to_string(),
+        language: "python".to_string(),
+        interrupt_mode: None,
+        env: std::collections::HashMap::new(),
+        metadata: serde_json::Value::Null,
+    }
+}
+
 impl Server {
     pub(super) fn list_kernels(&self, p: Json) -> Result<Json> {
         // Optional `dir` (a notebook's directory): include kernels from
-        // project-local venvs (.venv/venv/env walking up) in the listing.
+        // project-local envs (.venv/venv/env and Pixi's default env, walking
+        // up) in the listing.
         let dir = p
             .get("dir")
             .and_then(|v| v.as_str())
@@ -41,53 +86,24 @@ impl Server {
             .clone();
 
         // python_path bypasses kernelspec registry entirely. The frontend
-        // uses this to point at a project-local .venv/bin/python without
-        // requiring `python -m ipykernel install --user --name foo` first.
+        // uses this to point at a project-local .venv/bin/python (or a Pixi
+        // env's python) without requiring
+        // `python -m ipykernel install --user --name foo` first.
         // Constructed kernelspec mimics what `ipykernel install` would
         // produce: argv launches python -m ipykernel_launcher with the
         // standard {connection_file} substitution.
         let spec = if let Some(py) = p.get("python_path").and_then(|v| v.as_str()) {
-            let py = py.to_string();
-            let path_buf = std::path::PathBuf::from(&py);
-            let parent = path_buf
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| path_buf.clone());
-            // Identify Pixi environments from the interpreter path.
-            let is_pixi = path_buf
-                .components()
-                .any(|component| component.as_os_str() == ".pixi");
-            let (name, display_name) = if is_pixi {
-                ("pixi-python", "Python (Pixi)")
-            } else {
-                ("venv-python", "Python (venv)")
-            };
-            kernelspec::KernelSpec {
-                name: name.to_string(),
-                path: parent,
-                argv: vec![
-                    py,
-                    "-m".to_string(),
-                    "ipykernel_launcher".to_string(),
-                    "-f".to_string(),
-                    "{connection_file}".to_string(),
-                ],
-                display_name: display_name.to_string(),
-                language: "python".to_string(),
-                interrupt_mode: None,
-                env: std::collections::HashMap::new(),
-                metadata: serde_json::Value::Null,
-            }
+            python_path_spec(py.to_string())
         } else {
             let explicit = p.get("kernel_name").and_then(|v| v.as_str());
             let nb_dir = session.path.parent().map(|d| d.to_path_buf());
             let language = session.notebook.read().kernel_language();
             // Auto-venv (backend side, so it works for REMOTE notebooks too):
             // with no explicitly chosen kernel and a python notebook, a
-            // project-local venv (.venv/venv/env walking up from the notebook)
-            // takes priority — same semantics as the frontend's local .venv
-            // detection. Explicit picker choices always win.
+            // project-local env (.venv/venv/env, then Pixi's default env, in
+            // each dir walking up from the notebook) takes priority, with the
+            // same semantics as the frontend's local detection. Explicit
+            // picker choices always win.
             let auto_venv = p.get("auto_venv").and_then(|v| v.as_bool()).unwrap_or(false);
             let is_python = language.as_deref().map_or(true, |l| l.eq_ignore_ascii_case("python"));
             let auto = if explicit.is_none() && auto_venv && is_python {
@@ -354,5 +370,52 @@ impl Server {
         let kernel = guard.as_ref().ok_or_else(|| anyhow!("kernel not started"))?;
         let reply = kernel.inspect(code, cursor_pos, detail_level).await?;
         Ok(reply)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn python_path_spec_names_a_pixi_env() {
+        let py = "/p/proj/.pixi/envs/default/bin/python";
+        let spec = python_path_spec(py.to_string());
+        assert_eq!(spec.name, "pixi-python");
+        assert_eq!(spec.display_name, "Python (Pixi)");
+        assert_eq!(spec.argv[0], py);
+        assert_eq!(&spec.argv[1..], ["-m", "ipykernel_launcher", "-f", "{connection_file}"]);
+        assert_eq!(spec.path, Path::new("/p/proj/.pixi/envs/default"), "path is the env root");
+        assert_eq!(spec.language, "python");
+        assert!(spec.metadata.is_null(), "no ipykernel install is asked for");
+    }
+
+    #[test]
+    fn python_path_spec_names_a_venv() {
+        let py = "/p/proj/.venv/bin/python";
+        let spec = python_path_spec(py.to_string());
+        assert_eq!(spec.name, "venv-python");
+        assert_eq!(spec.display_name, "Python (venv)");
+        assert_eq!(spec.argv[0], py);
+        assert_eq!(spec.path, Path::new("/p/proj/.venv"));
+    }
+
+    #[test]
+    fn python_path_spec_is_pixi_only_for_a_dot_pixi_dir() {
+        // a dir that merely ends in .pixi is not Pixi's .pixi
+        let spec = python_path_spec("/p/x.pixi/bin/python".to_string());
+        assert_eq!(spec.name, "venv-python");
+        assert_eq!(spec.display_name, "Python (venv)");
+        let spec = python_path_spec("/p/pixi/envs/default/bin/python".to_string());
+        assert_eq!(spec.name, "venv-python");
+    }
+
+    #[test]
+    fn python_path_spec_env_root_for_python_exe_at_the_root() {
+        // Pixi on Windows puts python.exe at the env root, not in bin or Scripts
+        let spec = python_path_spec("/p/proj/.pixi/envs/default/python.exe".to_string());
+        assert_eq!(spec.name, "pixi-python");
+        assert_eq!(spec.path, Path::new("/p/proj/.pixi/envs/default"));
     }
 }

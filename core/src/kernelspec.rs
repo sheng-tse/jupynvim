@@ -162,15 +162,40 @@ fn conda_prefixes() -> Vec<PathBuf> {
     out
 }
 
+/// Is `prefix` one of Pixi's environments, `<project>/.pixi/envs/<name>`?
+fn is_pixi_env(prefix: &std::path::Path) -> bool {
+    let named = |p: Option<&std::path::Path>, want: &str| {
+        p.and_then(|p| p.file_name()).map_or(false, |n| n == want)
+    };
+    let envs = prefix.parent();
+    named(envs, "envs") && named(envs.and_then(|p| p.parent()), ".pixi")
+}
+
 /// Human label for an env prefix: its basename, with the parent folded in
 /// when the basename alone is ambiguous:
 ///   /opt/packages/anaconda3/2024.10 -> "anaconda3-2024.10" (version dir)
 ///   /home/me/myproj/.venv           -> "myproj-.venv" (generic venv name)
+///   /home/me/myproj/.pixi/envs/default -> "myproj-pixi" (Pixi's default env;
+///     another Pixi env keeps its name: "myproj-pixi-dev")
 fn env_label(prefix: &std::path::Path) -> String {
     let base = prefix
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "env".to_string());
+    if is_pixi_env(prefix) {
+        // the dir that holds `.pixi`: <project>/.pixi/envs/<name>
+        let project = prefix
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .and_then(|p| p.file_name())
+            .map(|s| s.to_string_lossy().into_owned());
+        let pixi = match project {
+            Some(project) => format!("{project}-pixi"),
+            None => "pixi".to_string(),
+        };
+        return if base == "default" { pixi } else { format!("{pixi}-{base}") };
+    }
     let generic_venv = base == ".venv" || base == "venv" || base == "env";
     let version_like = base.chars().next().map_or(false, |c| c.is_ascii_digit());
     if generic_venv || version_like {
@@ -186,11 +211,13 @@ fn env_label(prefix: &std::path::Path) -> String {
     base
 }
 
-/// Project-local virtualenv prefixes: walk up from `start_dir` (10 levels)
-/// looking for `.venv` / `venv` / `env` dirs. Closest-first, so the first
-/// entry is the one auto-venv should prefer. Only dirs that actually contain
-/// kernels get used downstream (pip's ipykernel ships
-/// `<venv>/share/jupyter/kernels/python3`, so no manual registration needed).
+/// Project-local env prefixes: walk up from `start_dir` (10 levels) looking
+/// for `.venv` / `venv` / `env` dirs and, after them in each dir, Pixi's
+/// default env (`.pixi/envs/default`). Closest-first, so the first entry is
+/// the one auto-venv should prefer. Only dirs that actually contain kernels
+/// get used downstream (pip's ipykernel ships
+/// `<venv>/share/jupyter/kernels/python3`, so no manual registration needed;
+/// Pixi's conda packages ship the same).
 pub fn project_env_prefixes(start_dir: &std::path::Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut dir = start_dir.to_path_buf();
@@ -201,6 +228,10 @@ pub fn project_env_prefixes(start_dir: &std::path::Path) -> Vec<PathBuf> {
                 out.push(p);
             }
         }
+        let pixi = dir.join(".pixi/envs/default");
+        if pixi.is_dir() {
+            out.push(pixi);
+        }
         match dir.parent() {
             Some(parent) => dir = parent.to_path_buf(),
             None => break,
@@ -209,10 +240,17 @@ pub fn project_env_prefixes(start_dir: &std::path::Path) -> Vec<PathBuf> {
     out
 }
 
-/// The closest project venv's python kernel for `start_dir`, if any. Used by
+/// The closest project env's python kernel for `start_dir`, if any. Used by
 /// auto-venv on the backend (remote parity with the frontend's local `.venv`
 /// detection): a notebook inside a project with its own env runs on that env
 /// unless the user explicitly picked a kernel.
+///
+/// A venv without ipykernel is still taken (it is offered with an ipykernel
+/// install, see `synthesize_env_kernel`). A Pixi env is not: nothing is
+/// installed into it, so the walk ends at a Pixi python that has no python
+/// kernel (None, the notebook's own kernel is used), the same way the
+/// frontend's walk ends there. A `.pixi/envs/default` dir with no python in it
+/// is passed over.
 pub fn closest_project_python_kernel(start_dir: &std::path::Path) -> Option<KernelSpec> {
     for prefix in project_env_prefixes(start_dir) {
         let mut found: HashMap<String, KernelSpec> = HashMap::new();
@@ -222,6 +260,9 @@ pub fn closest_project_python_kernel(start_dir: &std::path::Path) -> Option<Kern
             .find(|s| s.language.eq_ignore_ascii_case("python"))
         {
             return Some(spec);
+        }
+        if is_pixi_env(&prefix) && ["bin/python", "bin/python3"].iter().any(|c| prefix.join(c).is_file()) {
+            return None;
         }
     }
     None
@@ -271,7 +312,9 @@ fn disambiguated(
 /// standard dirs keep priority; name collisions get namespaced `<name>-<env>`.
 /// Relative `python`/`python3` argv is rewritten to the env's own binary so
 /// the kernel spawns correctly even when the backend's PATH lacks the env
-/// (the `module load anaconda3` case).
+/// (the `module load anaconda3` case). A Pixi env without a python kernel is
+/// not offered with an ipykernel install (nothing is pip-installed into an
+/// env Pixi manages): it is left out.
 fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBuf]) {
     // Dedupe against already-found kernels by resolved interpreter path, so a
     // registered spec and its conda twin don't both show.
@@ -286,7 +329,10 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
                 // Still list it if it has a python: picking it triggers an
                 // automatic `pip install ipykernel` into the env at start
                 // (VSCode-style), so every env is selectable with zero setup.
-                synthesize_env_kernel(found, prefix, &mut known_argv0);
+                // Not a Pixi env, which has its packages managed by Pixi.
+                if !is_pixi_env(prefix) {
+                    synthesize_env_kernel(found, prefix, &mut known_argv0);
+                }
                 continue;
             }
         };
@@ -335,8 +381,9 @@ fn add_conda_kernels(found: &mut HashMap<String, KernelSpec>, prefixes: &[PathBu
             found.insert(key, spec);
         }
         // kernels dir existed but yielded no python kernel (e.g. only an R
-        // kernel registered): still offer the env's python via auto-install.
-        if !added_python {
+        // kernel registered): still offer the env's python via auto-install
+        // (except a Pixi env, as above).
+        if !added_python && !is_pixi_env(prefix) {
             synthesize_env_kernel(found, prefix, &mut known_argv0);
         }
     }
@@ -392,8 +439,9 @@ pub fn discover_all() -> Vec<KernelSpec> {
 }
 
 /// Full kernel discovery. With `dir` set (a notebook's directory), kernels
-/// from project-local venvs (`.venv`/`venv`/`env`, walking up) are included
-/// ahead of conda envs, so the kernel picker can offer them directly.
+/// from project-local envs (`.venv`/`venv`/`env` and Pixi's default env
+/// `.pixi/envs/default`, walking up) are included ahead of conda envs, so the
+/// kernel picker can offer them directly.
 pub fn discover_for_dir(dir: Option<&std::path::Path>) -> Vec<KernelSpec> {
     let mut found: HashMap<String, KernelSpec> = HashMap::new();
     for sdir in search_dirs() {
@@ -419,7 +467,7 @@ pub fn discover_for_dir(dir: Option<&std::path::Path>) -> Vec<KernelSpec> {
             }
         }
     }
-    // Project-local venvs first (closest wins naming), then conda envs
+    // Project-local envs first (closest wins naming), then conda envs
     // (miniconda, anaconda, module-loaded system installs).
     if let Some(d) = dir {
         add_conda_kernels(&mut found, &project_env_prefixes(d));
@@ -630,6 +678,189 @@ mod tests {
         assert!(found.values().any(|s| s.display_name.contains("(myproj-.venv)")),
             "labels: {:?}", found.values().map(|s| s.display_name.clone()).collect::<Vec<_>>());
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // ---- Pixi's default environment (.pixi/envs/default) ----
+
+    /// A fresh temp root for one test (removed first, so a rerun starts clean).
+    fn pixi_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("jvtest-pixi-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    /// A Pixi-style env with a python but no ipykernel: no kernels dir at all.
+    fn mk_bare_env(prefix: &std::path::Path) {
+        fs::create_dir_all(prefix.join("bin")).unwrap();
+        fs::write(prefix.join("bin/python"), "").unwrap();
+    }
+
+    #[test]
+    fn pixi_default_env_is_a_project_env() {
+        let root = pixi_root("prefixes");
+        let nb_dir = root.join("work/myproj/notebooks");
+        fs::create_dir_all(&nb_dir).unwrap();
+        let dotvenv = root.join("work/myproj/.venv");
+        let pixi = root.join("work/myproj/.pixi/envs/default");
+        let outer = root.join("work/.venv");
+        for e in [&dotvenv, &pixi, &outer] {
+            mk_env(e, "Python 3 (ipykernel)");
+        }
+        let prefixes = project_env_prefixes(&nb_dir);
+        let at = |p: &PathBuf| {
+            prefixes
+                .iter()
+                .position(|x| x == p)
+                .unwrap_or_else(|| panic!("{} not in {prefixes:?}", p.display()))
+        };
+        assert!(at(&dotvenv) < at(&pixi), "the venvs of a dir come before its Pixi env: {prefixes:?}");
+        assert!(at(&pixi) < at(&outer), "closest dir first: {prefixes:?}");
+
+        // only the default env counts, and only when the dir exists
+        let nb2 = root.join("work/other/nb");
+        fs::create_dir_all(&nb2).unwrap();
+        fs::create_dir_all(root.join("work/other/.pixi/envs/dev")).unwrap();
+        fs::create_dir_all(root.join("work/third/.pixi")).unwrap();
+        let none = project_env_prefixes(&nb2);
+        assert!(none.iter().all(|p| !p.to_string_lossy().contains(".pixi")), "{none:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pixi_env_label_names_the_project() {
+        assert_eq!(env_label(std::path::Path::new("/x/myproj/.pixi/envs/default")), "myproj-pixi");
+        // a named Pixi env keeps its name next to the project's
+        assert_eq!(env_label(std::path::Path::new("/x/myproj/.pixi/envs/dev")), "myproj-pixi-dev");
+        // no project name to take: just pixi
+        assert_eq!(env_label(std::path::Path::new("/.pixi/envs/default")), "pixi");
+        // the labels of the other kinds are unchanged
+        assert_eq!(env_label(std::path::Path::new("/x/myproj/.venv")), "myproj-.venv");
+        assert_eq!(env_label(std::path::Path::new("/home/me/.conda/envs/ml")), "ml");
+        // `default` under another `envs` dir is a plain conda env named default
+        assert_eq!(env_label(std::path::Path::new("/home/me/.conda/envs/default")), "default");
+    }
+
+    #[test]
+    fn pixi_env_with_ipykernel_is_listed() {
+        let root = pixi_root("listed");
+        let pixi = root.join("myproj/.pixi/envs/default");
+        mk_env(&pixi, "Python 3 (ipykernel)");
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, std::slice::from_ref(&pixi));
+        assert_eq!(found.len(), 1, "{:?}", found.keys().collect::<Vec<_>>());
+        let spec = found.values().next().unwrap();
+        assert_eq!(spec.argv[0], pixi.join("bin/python").to_string_lossy());
+        assert!(spec.display_name.ends_with("(myproj-pixi)"), "display: {}", spec.display_name);
+        // and the kernel picker (discover_for_dir) offers it for a notebook inside
+        let nb_dir = root.join("myproj/notebooks");
+        fs::create_dir_all(&nb_dir).unwrap();
+        let listed = discover_for_dir(Some(&nb_dir));
+        assert!(
+            listed.iter().any(|s| s.argv.first().map(|a| a.as_str()) == Some(&*pixi.join("bin/python").to_string_lossy())),
+            "the Pixi env is in the picker: {:?}",
+            listed.iter().map(|s| s.display_name.clone()).collect::<Vec<_>>()
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pixi_env_without_ipykernel_is_not_synthesized() {
+        let root = pixi_root("nosynth");
+        // control: a venv with a python and no kernels is offered with an
+        // ipykernel install, which is what must NOT happen to a Pixi env
+        let venv = root.join("myproj/.venv");
+        mk_bare_env(&venv);
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, std::slice::from_ref(&venv));
+        assert!(
+            found.values().any(|s| s.display_name.contains("[installs ipykernel]")),
+            "the venv control is synthesized: {:?}",
+            found.values().map(|s| s.display_name.clone()).collect::<Vec<_>>()
+        );
+
+        // no kernels dir at all
+        let pixi = root.join("myproj/.pixi/envs/default");
+        mk_bare_env(&pixi);
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, std::slice::from_ref(&pixi));
+        assert!(found.is_empty(), "nothing synthesized: {:?}", found.keys().collect::<Vec<_>>());
+
+        // a kernels dir that holds only an R kernel
+        let pixi_r = root.join("rproj/.pixi/envs/default");
+        mk_bare_env(&pixi_r);
+        let kdir = pixi_r.join("share/jupyter/kernels/ir");
+        fs::create_dir_all(&kdir).unwrap();
+        fs::write(
+            kdir.join("kernel.json"),
+            r#"{"argv":["R","--slave","-e","IRkernel::main()","--args","{connection_file}"],"display_name":"R","language":"R"}"#,
+        )
+        .unwrap();
+        let mut found: HashMap<String, KernelSpec> = HashMap::new();
+        add_conda_kernels(&mut found, std::slice::from_ref(&pixi_r));
+        assert!(
+            found.values().all(|s| !s.display_name.contains("[installs ipykernel]")
+                && s.metadata.pointer("/jupynvim/ensure_ipykernel").is_none()),
+            "no python kernel synthesized beside the R one: {:?}",
+            found.values().map(|s| s.display_name.clone()).collect::<Vec<_>>()
+        );
+        assert!(found.values().all(|s| !s.language.eq_ignore_ascii_case("python")));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn closest_kernel_takes_the_pixi_env() {
+        let root = pixi_root("closest");
+        let nb_dir = root.join("work/myproj/notebooks");
+        fs::create_dir_all(&nb_dir).unwrap();
+        let pixi = root.join("work/myproj/.pixi/envs/default");
+        mk_env(&pixi, "Python 3 (ipykernel)");
+        let got = closest_project_python_kernel(&nb_dir).expect("the Pixi env's kernel");
+        assert_eq!(got.argv[0], pixi.join("bin/python").to_string_lossy());
+
+        // a .venv in the same dir takes precedence over the Pixi env
+        let dotvenv = root.join("work/myproj/.venv");
+        mk_env(&dotvenv, "Python 3 (ipykernel)");
+        let got = closest_project_python_kernel(&nb_dir).expect("the .venv's kernel");
+        assert_eq!(got.argv[0], dotvenv.join("bin/python").to_string_lossy());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn closest_kernel_stops_at_a_pixi_python_without_ipykernel() {
+        let root = pixi_root("stops");
+        let nb_dir = root.join("work/myproj/notebooks");
+        fs::create_dir_all(&nb_dir).unwrap();
+        // an outer .venv with a kernel, and a closer Pixi env with a python only
+        mk_env(&root.join("work/.venv"), "Python 3 (ipykernel)");
+        mk_bare_env(&root.join("work/myproj/.pixi/envs/default"));
+        assert!(
+            closest_project_python_kernel(&nb_dir).is_none(),
+            "no ipykernel is installed into a Pixi env, and the outer .venv is not taken instead"
+        );
+        // python3 alone (no python) counts as a python as well
+        let root2 = pixi_root("stops3");
+        let nb2 = root2.join("work/myproj/notebooks");
+        fs::create_dir_all(&nb2).unwrap();
+        mk_env(&root2.join("work/.venv"), "Python 3 (ipykernel)");
+        let env3 = root2.join("work/myproj/.pixi/envs/default");
+        fs::create_dir_all(env3.join("bin")).unwrap();
+        fs::write(env3.join("bin/python3"), "").unwrap();
+        assert!(closest_project_python_kernel(&nb2).is_none());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn closest_kernel_passes_a_pixi_dir_without_python() {
+        let root = pixi_root("passes");
+        let nb_dir = root.join("work/myproj/notebooks");
+        fs::create_dir_all(&nb_dir).unwrap();
+        let outer = root.join("work/.venv");
+        mk_env(&outer, "Python 3 (ipykernel)");
+        fs::create_dir_all(root.join("work/myproj/.pixi/envs/default/lib")).unwrap();
+        let got = closest_project_python_kernel(&nb_dir).expect("the outer .venv's kernel");
+        assert_eq!(got.argv[0], outer.join("bin/python").to_string_lossy());
         let _ = fs::remove_dir_all(&root);
     }
 }

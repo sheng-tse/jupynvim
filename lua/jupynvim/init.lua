@@ -45,10 +45,12 @@ M.config = {
   keymaps = {},
   -- Skip ALL default keybindings if you want to bind everything yourself.
   disable_default_keymaps = false,
-  -- Auto-detect a `.venv` next to the notebook (or in any parent directory)
-  -- and use its python as the kernel interpreter. Bypasses needing to
-  -- `ipykernel install --user` in every uv/poetry/pdm project. Set false
-  -- to keep the old behavior of using only registered kernelspecs.
+  -- Auto-detect a `.venv` (or `venv`, `env`, or Pixi's default env,
+  -- `.pixi/envs/default`) next to the notebook or in any parent directory and
+  -- use its python as the kernel interpreter. Bypasses needing to
+  -- `ipykernel install --user` in every uv/poetry/pdm/pixi project. A Pixi env
+  -- is used when there is no venv beside it and ipykernel is installed in it.
+  -- Set false to keep the old behavior of using only registered kernelspecs.
   auto_venv = true,
   -- LSP server names that should NOT attach to jupynvim buffers. Empty
   -- by default: users opt in for the ones that misbehave.
@@ -477,13 +479,16 @@ M._opening_from = M._opening_from or {}
 -- so a read of the name in that time is another open (an :edit, a plugin)
 M._asking = M._asking or {}
 
--- Walk up from `start_dir` looking for a project venv python under `.venv`,
--- `venv`, or `env` (`Scripts\python.exe` on Windows). Return the python path
--- if the venv exists AND ipykernel is importable from it. nil otherwise.
--- Search for pixi in each dir if no venv found.
+-- Walk up from `start_dir` looking for a project python. Each directory is
+-- checked for a venv under `.venv`, `venv` and `env` (`Scripts\python.exe` on
+-- Windows) and then for Pixi's default environment, `.pixi/envs/default`
+-- (`python.exe` at the env root on Windows, where Pixi puts it). The first
+-- interpreter found decides: return its path if ipykernel is importable from
+-- it, nil if not (an outer env is not tried instead).
 local function find_local_venv_python(start_dir)
   local is_win = package.config:sub(1, 1) == "\\"
   local bin = is_win and "Scripts\\python.exe" or "bin/python"
+  local pixi_bin = is_win and "python.exe" or "bin/python"
   local dir = start_dir
   for _ = 1, 10 do
     for _, name in ipairs({ ".venv", "venv", "env" }) do
@@ -494,13 +499,13 @@ local function find_local_venv_python(start_dir)
         return nil  -- venv exists but no ipykernel - don't fall back silently
       end
     end
-    -- Pixi's default environment.
-    local pixi_candidate = dir .. "/.pixi/envs/default/" .. bin
+    -- Pixi's default environment, after the venvs of the same directory.
+    local pixi_candidate = dir .. "/.pixi/envs/default/" .. pixi_bin
     if vim.fn.executable(pixi_candidate) == 1 then
       vim.fn.system({ pixi_candidate, "-c", "import ipykernel" })
       if vim.v.shell_error == 0 then return pixi_candidate end
-      return nil
-		end
+      return nil  -- a Pixi env exists but no ipykernel: nothing is installed into it
+    end
     local parent = vim.fn.fnamemodify(dir, ":h")
     if parent == dir then break end
     dir = parent
@@ -2655,7 +2660,7 @@ function M.start_kernel(buf, kernel_name)
   local cl = M._nb_client(nb)
   -- Auto-venv, local flavor: probe the local filesystem and pass the python
   -- directly. For REMOTE notebooks the backend does the equivalent walk-up on
-  -- its own filesystem when we pass auto_venv (same .venv/venv/env semantics).
+  -- its own filesystem when we pass auto_venv (same .venv/venv/env/Pixi semantics).
   local python_path = nil
   local nb_lang = (nb.notebook_meta and nb.notebook_meta.language) or "python"
   -- A .venv beside a Julia or R notebook is not its kernel. Passing its python

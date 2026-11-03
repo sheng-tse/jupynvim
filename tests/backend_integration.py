@@ -6,6 +6,7 @@ notebook ops, output streaming, save round-trip.
 """
 import json
 import os
+import shutil
 import signal
 import struct
 import subprocess
@@ -421,11 +422,134 @@ def t_kernel_killed_on_sigterm():
     )
 
 
+# ── Pixi environments (#47) ─────────────────────────────────────────────
+# A project that holds its interpreter in .pixi/envs/default is used by
+# auto_venv like a .venv, but only when ipykernel is installed there.
+def _kernel_python():
+    # The interpreter the suite's python3 kernel runs on (tests/lib/test_env.sh).
+    return os.environ.get("JNV_KERNEL_PYTHON")
+
+
+def _same_dir(a, b):
+    return os.path.realpath(os.path.dirname(a)) == os.path.realpath(os.path.dirname(b))
+
+
+def _pixi_env_with_kernel(env, py):
+    """An env at `env` whose bin/python is `py` and that registers the python3 kernel."""
+    (env / "bin").mkdir(parents=True)
+    os.symlink(py, env / "bin" / "python")
+    kdir = env / "share" / "jupyter" / "kernels" / "python3"
+    kdir.mkdir(parents=True)
+    (kdir / "kernel.json").write_text(json.dumps({
+        "argv": ["python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+        "display_name": "Python 3 (ipykernel)", "language": "python",
+    }))
+
+
+def _open_in(root_nb):
+    cl = Client()
+    json.dump(make_test_nb(), open(root_nb, "w"))
+    _, res = cl.call("open", {"path": str(root_nb)})
+    return cl, res["session_id"]
+
+
+def t_pixi_auto_venv():
+    py = _kernel_python()
+    if not py:
+        report("pixi auto_venv: JNV_KERNEL_PYTHON is set", False, "run through tests/lib/test_env.sh")
+        return
+    root = Path(tempfile.mkdtemp(prefix="jnv-pixi-"))
+    cl = None
+    try:
+        env = root / "proj" / ".pixi" / "envs" / "default"
+        _pixi_env_with_kernel(env, py)
+        cl, sid = _open_in(root / "proj" / "nb.ipynb")
+        err, st = cl.call("start_kernel", {"session_id": sid, "auto_venv": True}, timeout=30)
+        argv = (st or {}).get("argv") or []
+        want = str(env / "bin" / "python")
+        report("pixi auto_venv: the kernel runs on the Pixi env's python",
+               err is None and bool(argv) and _same_dir(argv[0], want)
+               and os.path.basename(argv[0]) == "python",
+               f"err={err} argv0={argv[:1]} want {want}")
+        cl.call("update_cell_source", {"session_id": sid, "cell_id": "c1", "source": "import sys; print(1)"})
+        cl.events.clear()
+        cl.call("execute", {"session_id": sid, "cell_id": "c1"})
+        ev = cl.wait_event(lambda e: e[0] == 2 and e[1] == "cell_event" and e[2][0]["cell_id"] == "c1"
+                           and e[2][0]["event"]["kind"] == "stream", timeout=15)
+        report("pixi auto_venv: a cell runs on it",
+               ev is not None and ev[2][0]["event"]["text"].rstrip() == "1", "no stream event" if ev is None else "")
+        cl.call("stop_kernel", {"session_id": sid})
+    finally:
+        if cl:
+            cl.stop()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_pixi_without_ipykernel():
+    py = _kernel_python()
+    if not py:
+        report("pixi without ipykernel: JNV_KERNEL_PYTHON is set", False, "run through tests/lib/test_env.sh")
+        return
+    root = Path(tempfile.mkdtemp(prefix="jnv-pixi-"))
+    cl = None
+    try:
+        # an outer .venv that has a kernel, and a closer Pixi env whose python
+        # has no ipykernel (a script that fails any use, and no kernels dir)
+        outer = root / ".venv"
+        _pixi_env_with_kernel(outer, py)
+        pixi_py = root / "proj" / ".pixi" / "envs" / "default" / "bin" / "python"
+        pixi_py.parent.mkdir(parents=True)
+        pixi_py.write_text("#!/bin/sh\nexit 1\n")
+        pixi_py.chmod(0o755)
+        cl, sid = _open_in(root / "proj" / "nb.ipynb")
+        err, st = cl.call("start_kernel", {"session_id": sid, "auto_venv": True}, timeout=30)
+        argv = (st or {}).get("argv") or []
+        a0 = argv[0] if argv else ""
+        report("pixi without ipykernel: the Pixi python is not used", err is None and bool(argv)
+               and not a0.startswith(str(pixi_py.parent)) and not _same_dir(a0, str(pixi_py)),
+               f"err={err} argv0={a0}")
+        report("pixi without ipykernel: the outer .venv is not taken in its place",
+               err is None and bool(argv) and not _same_dir(a0, str(outer / "bin" / "python")),
+               f"argv0={a0}")
+        msgs = [e for e in cl.events if isinstance(e, list) and len(e) > 2 and e[0] == 2 and e[1] == "user_message"]
+        installing = [m for m in msgs if "installing ipykernel" in json.dumps(m[2])]
+        report("pixi without ipykernel: no ipykernel is installed into it", not installing, str(installing[:1]))
+        cl.call("stop_kernel", {"session_id": sid})
+    finally:
+        if cl:
+            cl.stop()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_pixi_python_path():
+    py = _kernel_python()
+    if not py:
+        report("pixi python_path: JNV_KERNEL_PYTHON is set", False, "run through tests/lib/test_env.sh")
+        return
+    root = Path(tempfile.mkdtemp(prefix="jnv-pixi-"))
+    cl = None
+    try:
+        env = root / "proj" / ".pixi" / "envs" / "default"
+        _pixi_env_with_kernel(env, py)
+        cl, sid = _open_in(root / "proj" / "nb.ipynb")
+        err, st = cl.call("start_kernel", {"session_id": sid, "python_path": str(env / "bin" / "python")},
+                          timeout=30)
+        report("pixi python_path: the kernel is named pixi-python",
+               err is None and (st or {}).get("kernel_name") == "pixi-python",
+               f"err={err} kernel_name={(st or {}).get('kernel_name')}")
+        cl.call("stop_kernel", {"session_id": sid})
+    finally:
+        if cl:
+            cl.stop()
+        shutil.rmtree(root, ignore_errors=True)
+
+
 TESTS = [
     t_ping, t_list_kernels, t_open_close, t_kernel_lifecycle,
     t_run_cell_streams, t_run_cell_expression, t_run_cell_error,
     t_save_roundtrip, t_image_output, t_insert_delete_move, t_silent_execute,
     t_kernel_killed_on_disconnect, t_kernel_killed_on_sigterm,
+    t_pixi_auto_venv, t_pixi_without_ipykernel, t_pixi_python_path,
 ]
 
 

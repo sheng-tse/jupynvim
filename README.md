@@ -52,9 +52,12 @@ https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
   kernel's own docstring. nvim-cmp and blink.cmp consume it through the
   standard LSP client. Works for Python, Julia, R, or anything else whose
   kernel implements those messages.
-- Auto-detect a project-local `.venv`. If a notebook lives next to (or
-  inside) a uv/poetry/pdm project with a `.venv` containing `ipykernel`,
-  the kernel spawns from that interpreter directly. No need to
+- Auto-detect a project-local `.venv`, or a Pixi project's default env. If
+  a notebook lives next to (or inside) a uv/poetry/pdm project with a
+  `.venv` containing `ipykernel`, the kernel spawns from that interpreter
+  directly. A Pixi project works the same way: its default env
+  (`.pixi/envs/default`) is used when there is no venv (`.venv`, `venv` or
+  `env`) beside it and ipykernel is installed in it. No need to
   `python -m ipykernel install --user --name foo` per project.
 - Multi-image markdown cells are supported. `<leader>nD` deletes one image
   and `u` brings it back.
@@ -562,8 +565,10 @@ require("jupynvim").setup({
 
   -- Walk up from the notebook's directory to find a `.venv/bin/python` (or
   -- `.venv/Scripts/python.exe` on Windows) and use it as the kernel
-  -- interpreter when ipykernel is installed there. Bypasses needing to
-  -- register a per-project user kernel. Set false to use only registered
+  -- interpreter when ipykernel is installed there. A Pixi project's default
+  -- env (`.pixi/envs/default`, with `python.exe` at the env root on Windows)
+  -- is used the same way when there is no venv beside it. Bypasses needing
+  -- to register a per-project user kernel. Set false to use only registered
   -- kernelspecs.
   auto_venv = true,
 
