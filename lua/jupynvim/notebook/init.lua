@@ -11,6 +11,16 @@
 
 local M = {}
 
+-- The widget mirror (notebook/widgets.lua). That module requires this one only
+-- when it is called, so this require at load time is safe.
+local Widgets = require("jupynvim.notebook.widgets")
+
+-- Cell table -> buffer of its notebook. A buffer number, not the notebook:
+-- LuaJIT's weak keys do not let go of a key that a value refers to, so a
+-- notebook held here would keep its cells alive after its buffer closed.
+-- M.owner_of resolves it, and checks that the cell is still in the notebook.
+M._owner = setmetatable({}, { __mode = "k" })
+
 -- Cell separator: a string very unlikely to appear in real source code.
 -- (Plain `# %%` collides with jupytext-formatted notebooks.)
 M.CELL_SEP = "# %%[jupynvim:cell-sep]"
@@ -99,8 +109,9 @@ local _ol_cache = setmetatable({}, { __mode = "k" })
 -- identity, since a rerun can replace it with different text of the same
 -- length.
 local function _out_key(cell)
-  local p = { M.max_output_lines, cell._output_limit or 0, cell._output_expanded and 1 or 0,
-              cell._output_hidden and 1 or 0 }
+  -- _widget_rev moves when a widget the cell shows changes (widgets.lua)
+  local p = { "w" .. (cell._widget_rev or 0), M.max_output_lines, cell._output_limit or 0,
+              cell._output_expanded and 1 or 0, cell._output_hidden and 1 or 0 }
   for _, o in ipairs(cell.outputs or {}) do
     local t, d = o.text, o.data
     p[#p + 1] = (o.output_type or "?") .. (o._rev or "")
@@ -115,15 +126,104 @@ local function _out_key(cell)
   return table.concat(p, ",")
 end
 
--- A marker line in place of the lines the cap hides.
+-- The marker line in place of the lines a cap hides, as its text (no indent) and
+-- as an output row (indented like the output rows).
+local function trunc_text(hidden, total)
+  return string.format("%s %d lines hidden (%d total)", M.OUT_TRUNC_MARK, hidden, total)
+end
 local function trunc_marker(hidden, total)
-  return string.format("  %s %d lines hidden (%d total)", M.OUT_TRUNC_MARK, hidden, total)
+  return "  " .. trunc_text(hidden, total)
+end
+
+-- The text an execute_result or display_data shows. A figure's repr stays
+-- hidden behind its image. The Output widget's text uses it too (widgets.lua).
+local function result_text(o)
+  local data = o.data or {}
+  local text = _as_str(data["text/plain"])
+  if (data["image/png"] or data["image/gif"] or data["image/jpeg"])
+      and (text == "" or text:match("^<[Ff]igure ")
+           or text:match("^<[%w._]+ object>$")
+           or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
+    return ""
+  end
+  return text
+end
+M._result_text = result_text
+M._strip_ansi = _strip_ansi
+M._process_cr = _process_cr
+
+-- A row of output text that holds a data URI shows a marker in its place: base64 in
+-- the buffer lags the editor even off screen. Returns the row and
+-- whether it is the marker. A cell's text rows take it, and so does every row a
+-- widget view's leaf makes (widgets.lua lines_block), before a box lines its columns
+-- up: a box pads its rows to the widest one, so the URI must be gone by then.
+M.EMBEDDED_ROW = "[embedded image data]"
+function M._text_row(l)
+  if l:find("data:image/%w+;base64,") then return M.EMBEDDED_ROW, true end
+  return l, false
+end
+
+-- Does any output after the i-th of outputs show more than blank lines? Blank rows at
+-- the very end are dropped, so without one a stream's trailing blank lines never show,
+-- and its marker must not count them.
+function M._more_after(outputs, i)
+  for j = i + 1, #outputs do
+    local o, t = outputs[j], ""
+    -- a JSON null in an Output widget's outputs is vim.NIL: it shows nothing, and
+    -- indexing it is an error
+    if type(o) ~= "table" then
+      t = ""
+    elseif o.output_type == "stream" then
+      t = _as_str(o.text)
+    elseif o.output_type == "execute_result" or o.output_type == "display_data" then
+      t = result_text(o)
+    elseif o.output_type == "error" then
+      t = _as_str(o.ename) .. _as_str(o.evalue) .. table.concat(vim.tbl_map(_as_str, o.traceback or {}))
+    end
+    if t:find("%S") and (not t:find("\27", 1, true) or _strip_ansi(t):find("%S")) then return true end
+  end
+  return false
+end
+
+-- The rows a stream's text shows under a cap, through _process_cr and _strip_ansi, with
+-- no indent. cap is nil (every line shows) or { head, tail, fit }: a stream longer than
+-- fit shows its first head rows, a marker row and its last tail rows. Returns the rows,
+-- the index of the marker row (nil when nothing is cut) and the lines it hides. more()
+-- tells whether a later output shows text (_more_after). The text is split first and
+-- only the rows that show are processed: _process_cr and _strip_ansi walk the whole
+-- string, which cost 17 ms of 23 ms on a 420 KB stream. Neither changes the line count.
+-- A cell's stream and an Output widget's text both take this cut.
+function M._stream_rows(text, cap, more)
+  local function whole()
+    return vim.split(_strip_ansi(_process_cr(text)), "\n", { plain = true })
+  end
+  if not cap then return whole(), nil, 0 end
+  local head, tail, fit = cap.head, cap.tail, cap.fit
+  local raw = vim.split(text, "\n", { plain = true })
+  local function row_text(i) return _strip_ansi(_process_cr((raw[i]:gsub("\r$", "")))) end
+  -- The newline that ends the last line starts no line of its own. Counted as one, a
+  -- 1000-line print read "1001 total", took a row of the tail and hid one line more
+  -- than it said.
+  if #raw > 1 and raw[#raw] == "" then raw[#raw] = nil end
+  if #raw > fit and not more() then
+    while #raw > 0 and row_text(#raw) == "" do raw[#raw] = nil end
+  end
+  if #raw <= fit then return whole(), nil, 0 end
+  local rows = {}
+  for i = 1, head do rows[#rows + 1] = row_text(i) end
+  local hidden = #raw - head - tail
+  rows[#rows + 1] = trunc_text(hidden, #raw)
+  local mark = #rows
+  for i = #raw - tail + 1, #raw do rows[#rows + 1] = row_text(i) end
+  return rows, mark, hidden
 end
 
 -- The rows a cell's outputs show, which of them are markers, whether the cap
 -- cut any lines, and how many lines the outputs have in all. `expanded`
 -- shows every line.
 local function build(cell, expanded)
+  -- what this cell depended on is recorded again by the walk below
+  Widgets.begin(cell)
   local cap = not expanded and (cell._output_limit or M.max_output_lines) or nil
   local head, tail, fit
   if cap and cap > 0 then
@@ -132,81 +232,76 @@ local function build(cell, expanded)
     fit = head + tail + 1   -- past this a cut hides 2 lines or more, never 1
   end
 
+  -- the cap as the stream and view rows take it (nil: every line shows)
+  local cap_rows = fit and { head = head, tail = tail, fit = fit } or nil
   local outputs = cell.outputs or {}
   local lines = {}
   local hides = {}   -- row of a stream's marker -> the lines it hides
-  -- The text an execute_result or display_data shows. A figure's repr stays
-  -- hidden behind its image.
-  local function result_text(o)
-    local data = o.data or {}
-    local text = _as_str(data["text/plain"])
-    if (data["image/png"] or data["image/gif"] or data["image/jpeg"])
-        and (text == "" or text:match("^<[Ff]igure ")
-             or text:match("^<[%w._]+ object>$")
-             or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
-      return ""
-    end
-    return text
-  end
-  -- Does any output after the i-th show more than blank lines? Blank rows at
-  -- the very end are dropped, so without one a stream's trailing blank lines
-  -- never show, and its marker must not count them.
-  local function more_after(i)
-    for j = i + 1, #outputs do
-      local o, t = outputs[j], ""
-      if o.output_type == "stream" then
-        t = _as_str(o.text)
-      elseif o.output_type == "execute_result" or o.output_type == "display_data" then
-        t = result_text(o)
-      elseif o.output_type == "error" then
-        t = _as_str(o.ename) .. _as_str(o.evalue) .. table.concat(vim.tbl_map(_as_str, o.traceback or {}))
-      end
-      if t:find("%S") and (not t:find("\27", 1, true) or _strip_ansi(t):find("%S")) then return true end
-    end
-    return false
+  -- row -> the bar spans of a widget view on that row, { scol, ecol, hl }
+  local spans = {}
+  local function more_after(i) return M._more_after(outputs, i) end
+  -- A row of text as the cell shows it: a data URI is a marker, not its bytes. Returns
+  -- the row and whether it is that marker.
+  local function text_row(l)
+    local row, marker = M._text_row(l)
+    return "  " .. row, marker
   end
   local function add_text(text)
     for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
-      if l:find("data:image/%w+;base64,") then
-        table.insert(lines, "  [embedded image data]")
-      else
-        table.insert(lines, "  " .. l)
-      end
+      table.insert(lines, (text_row(l)))
     end
   end
-  -- Big stream outputs: slice the head/tail we will actually show BEFORE the
-  -- expensive passes. _process_cr and _strip_ansi each walk the whole string,
-  -- so running them over 420KB to emit 500 lines cost 17ms of the 23ms.
-  -- Neither changes the line count, so slicing first is equivalent.
+  -- A stream is cut to the rows the cap shows before any text pass (_stream_rows):
+  -- the same cut an Output widget's text gets (widgets.lua output_block).
   local function add_stream(text, at)
-    if not fit then
-      add_text(_strip_ansi(_process_cr(text))); return
+    local rows, mark, hidden = M._stream_rows(text, cap_rows, function() return more_after(at) end)
+    for k, row in ipairs(rows) do
+      if k == mark then
+        table.insert(lines, "  " .. row)
+        hides[#lines] = hidden
+      else
+        add_text(row)
+      end
     end
-    local raw = vim.split(text, "\n", { plain = true })
-    local function row_text(i) return _strip_ansi(_process_cr((raw[i]:gsub("\r$", "")))) end
-    -- The newline that ends the last line starts no line of its own. Counted
-    -- as one, a 1000-line print read "1001 total", took a row of the tail
-    -- and hid one line more than it said.
-    if #raw > 1 and raw[#raw] == "" then raw[#raw] = nil end
-    if #raw > fit and not more_after(at) then
-      while #raw > 0 and row_text(#raw) == "" do raw[#raw] = nil end
-    end
-    if #raw <= fit then
-      add_text(_strip_ansi(_process_cr(text))); return
-    end
-    local function emit(i) add_text(row_text(i)) end
-    for i = 1, head do emit(i) end
-    table.insert(lines, trunc_marker(#raw - head - tail, #raw))
-    hides[#lines] = #raw - head - tail
-    for i = #raw - tail + 1, #raw do emit(i) end
   end
 
   for i, o in ipairs(outputs) do
     if o.output_type == "stream" then
       add_stream(_as_str(o.text), i)
     elseif o.output_type == "execute_result" or o.output_type == "display_data" then
-      local text = result_text(o)
-      if text ~= "" then add_text(text) end
+      -- A widget view makes the cell depend on the widget. view_block gives
+      -- the block the view draws, or nil, and then the text shows as before.
+      -- M._owner and M.get, not owner_of: owner_of scans the cells, and this runs for
+      -- every view output of every build. A cell that left its notebook only gets a
+      -- dependency record that nothing reads, so the direct read is safe here.
+      local owner = o.data and o.data[Widgets.VIEW_MIME] and M._owner[cell]
+      local nb = owner and M.get(owner)
+      local block = nb and Widgets.view_block(nb, cell, o, cap_rows)
+      if block then
+        -- the block's rows, with the same row rule as the output's text (a data URI is
+        -- a marker); its spans move with them, and a row that became a marker has none.
+        -- The leaves already took the rule (widgets.lua lines_block); this is the
+        -- backstop for a row no leaf made.
+        local base = #lines
+        local replaced = {}
+        for k, l in ipairs(block.lines) do
+          local row, marker = text_row(l)
+          lines[#lines + 1] = row
+          if marker then replaced[k] = true end
+        end
+        for _, sp in ipairs(block.spans) do
+          if not replaced[sp[1]] then
+            local row = base + sp[1]
+            spans[row] = spans[row] or {}
+            table.insert(spans[row], { sp[2] + 2, sp[3] + 2, sp[4] })
+          end
+        end
+        -- the cut markers of the block (a stream the cap cut), at their rows
+        for row, k in pairs(block.hides or {}) do hides[base + row] = k end
+      else
+        local text = result_text(o)
+        if text ~= "" then add_text(text) end
+      end
     elseif o.output_type == "error" then
       local msg = _as_str(o.ename) .. ": " .. _as_str(o.evalue)
       if msg ~= ": " then add_text(msg) end
@@ -215,7 +310,9 @@ local function build(cell, expanded)
       end
     end
   end
+  Widgets.settle(cell)
   while lines[#lines] == "  " or lines[#lines] == "" do table.remove(lines) end
+  for row in pairs(spans) do if row > #lines then spans[row] = nil end end
 
   -- How many lines rows a..b stand for. A row is one line, and a stream's
   -- marker is every line it hides. Counted as rows, a marker that hid most
@@ -245,9 +342,15 @@ local function build(cell, expanded)
     for row in pairs(hides) do
       if row > #lines - tail then kept[row - drop] = true end
     end
-    lines, marks = shown, kept
+    -- the spans of the shown head and tail move as the marks do
+    local moved = {}
+    for row, list in pairs(spans) do
+      if row <= head then moved[row] = list
+      elseif row > #lines - tail then moved[row - drop] = list end
+    end
+    lines, marks, spans = shown, kept, moved
   end
-  return lines, marks, next(marks) ~= nil, total
+  return lines, marks, next(marks) ~= nil, total, spans
 end
 
 -- A hidden output shows one line in its place saying what it holds, or
@@ -277,9 +380,10 @@ local function cached(cell)
   if cell._output_hidden then
     e.lines = stand_in(cell)
     e.marks = #e.lines > 0 and { [1] = "hidden" } or {}
+    e.spans = {}
   else
     local marks
-    e.lines, marks, e.cut = build(cell, cell._output_expanded)
+    e.lines, marks, e.cut, _, e.spans = build(cell, cell._output_expanded)
     e.marks = {}
     for row in pairs(marks) do e.marks[row] = "cut" end
   end
@@ -289,6 +393,11 @@ end
 
 function M.output_lines(cell)
   return cached(cell).lines
+end
+
+-- The bar spans of the rows of output_lines(cell): row -> list of { scol, ecol, hl }.
+function M.output_spans(cell)
+  return cached(cell).spans
 end
 
 -- The rows of output_lines(cell) that stand for something not shown, as
@@ -356,6 +465,67 @@ function M.normalize_output_data(data)
   end
 end
 
+-- Every output that shows display_id takes the new data. The count tells the
+-- caller whether any did.
+local function replace_display(outputs, ev)
+  local n = 0
+  for _, o in ipairs(outputs) do
+    if o.transient and o.transient.display_id == ev.display_id then
+      o.data, o.metadata = ev.data, ev.metadata or {}
+      -- the rev bumps the output memo, which keys on lengths and would miss
+      -- a same-length update
+      o._rev = (o._rev or 0) + 1
+      n = n + 1
+    end
+  end
+  return n
+end
+
+-- One kernel output event applied to an output list, which is returned (a new
+-- list when clear_first or a clear starts one). Shared by a cell's outputs and
+-- an Output widget's outputs, so both read the same way: a stream of the same
+-- name joins the last output, clear_output without wait empties the list, and
+-- update_display_data replaces the outputs it names.
+function M.apply_output_event(outputs, ev)
+  M.normalize_output_data(ev.data)
+  -- the deferred half of clear_output(wait=True), decided by the backend
+  if ev.clear_first then outputs = {} end
+  local kind = ev.kind
+  if kind == "stream" then
+    local last = outputs[#outputs]
+    if last and last.output_type == "stream" and last.name == ev.name then
+      last.text = (last.text or "") .. ev.text
+    else
+      table.insert(outputs, { output_type = "stream", name = ev.name, text = ev.text })
+    end
+  elseif kind == "execute_result" then
+    table.insert(outputs, {
+      output_type = "execute_result",
+      execution_count = ev.execution_count,
+      data = ev.data,
+      metadata = ev.metadata or {},
+    })
+  elseif kind == "display_data" then
+    table.insert(outputs, {
+      output_type = "display_data",
+      data = ev.data,
+      metadata = ev.metadata or {},
+      -- display_id lives here in memory only, for update_display_data
+      transient = (type(ev.transient) == "table" and ev.transient.display_id) and ev.transient or nil,
+    })
+  elseif kind == "error" then
+    table.insert(outputs, {
+      output_type = "error",
+      ename = ev.ename, evalue = ev.evalue, traceback = ev.traceback,
+    })
+  elseif kind == "clear_output" then
+    if not ev.wait then outputs = {} end
+  elseif kind == "update_display_data" then
+    replace_display(outputs, ev)
+  end
+  return outputs
+end
+
 local notebooks = {}   -- buf -> Notebook
 
 local Notebook = {}
@@ -376,6 +546,8 @@ function M.create(buf, path, session_id, snapshot)
     next_image_id = 1000 + buf,
   }, Notebook)
   notebooks[buf] = nb
+  -- the widget models the backend holds for this session (dead until a kernel)
+  Widgets.load(session_id, snapshot.widgets or {})
   for _, c in ipairs(snapshot.cells) do
     local source = c.source
     -- Markdown: replace huge data:image/...;base64,XXX URIs with short
@@ -405,6 +577,7 @@ function M.create(buf, path, session_id, snapshot)
   if #nb.cells == 0 then
     table.insert(nb.cells, { id = "tmp_" .. tostring(buf), cell_type = "code", source = "", outputs = {} })
   end
+  for _, c in ipairs(nb.cells) do M._owner[c] = buf end
   return nb
 end
 
@@ -415,7 +588,18 @@ function M.get(buf)
   return notebooks[buf]
 end
 
+-- The notebook a cell table is in, or nil once the cell has left it.
+function M.owner_of(cell)
+  local buf = M._owner[cell]
+  local nb = buf and notebooks[buf]
+  if nb and nb:get_cell(cell.id) == cell then return nb end
+  return nil
+end
+
 function M.remove(buf)
+  local nb = notebooks[buf]
+  -- the widget models go with the session (the backend closes it too)
+  if nb then Widgets.drop(nb.session_id) end
   notebooks[buf] = nil
 end
 
@@ -427,6 +611,7 @@ function Notebook:to_lines()
   local out = {}
   local ranges = {}
   for i, c in ipairs(self.cells) do
+    M._owner[c] = self.buf
     local start = #out
     -- split source into lines (preserve empty cells as one empty line).
     -- Strip exactly ONE trailing newline first: nbformat sources commonly
@@ -546,28 +731,22 @@ end
 -- Returns the ids of the cells whose outputs changed, when that is not just
 -- `cell_id` (a display update can reach into any cell).
 function Notebook:apply_cell_event(cell_id, ev)
-  M.normalize_output_data(ev.data)
   local kind = ev.kind
   if kind == "update_display_data" then
     -- h = display(x, display_id=True); h.update(y): replace every output
-    -- showing that display, wherever it is. The rev bumps the output memo,
-    -- which keys on lengths and would miss a same-length update.
+    -- showing that display, wherever it is.
+    M.normalize_output_data(ev.data)
     local changed = {}
     for _, cell in ipairs(self.cells) do
-      for _, o in ipairs(cell.outputs or {}) do
-        if o.transient and o.transient.display_id == ev.display_id then
-          o.data, o.metadata = ev.data, ev.metadata or {}
-          o._rev = (o._rev or 0) + 1
-          changed[#changed + 1] = cell.id
-        end
+      if replace_display(cell.outputs or {}, ev) > 0 then
+        changed[#changed + 1] = cell.id
       end
     end
     return changed
   end
   local c = self:get_cell(cell_id)
   if not c then return end
-  -- the deferred half of clear_output(wait=True), decided by the backend
-  if ev.clear_first then c.outputs = {} end
+  M._owner[c] = self.buf
   if kind == "execute_input" then
     c.execution_count = ev.execution_count
     c.outputs = {}
@@ -578,37 +757,15 @@ function Notebook:apply_cell_event(cell_id, ev)
     -- start the execution stopwatch (drives the VSCode-style "[1] ✓ 0.1s"
     -- bar; live elapsed while busy, frozen duration once idle)
     self.cell_state[cell_id] = { exec_state = "busy", started_ns = vim.uv.hrtime() }
-  elseif kind == "stream" then
-    -- coalesce
-    local last = c.outputs[#c.outputs]
-    if last and last.output_type == "stream" and last.name == ev.name then
-      last.text = (last.text or "") .. ev.text
-    else
-      table.insert(c.outputs, { output_type = "stream", name = ev.name, text = ev.text })
+  elseif kind == "stream" or kind == "execute_result" or kind == "display_data"
+      or kind == "error" or kind == "clear_output" then
+    c.outputs = M.apply_output_event(c.outputs, ev)
+    if kind == "execute_result" then
+      c.execution_count = ev.execution_count
+    elseif kind == "error" then
+      local st = self.cell_state[cell_id]
+      if st then st.failed = true end
     end
-  elseif kind == "execute_result" then
-    table.insert(c.outputs, {
-      output_type = "execute_result",
-      execution_count = ev.execution_count,
-      data = ev.data,
-      metadata = ev.metadata or {},
-    })
-    c.execution_count = ev.execution_count
-  elseif kind == "display_data" then
-    table.insert(c.outputs, {
-      output_type = "display_data",
-      data = ev.data,
-      metadata = ev.metadata or {},
-      -- display_id lives here in memory only, for update_display_data
-      transient = (type(ev.transient) == "table" and ev.transient.display_id) and ev.transient or nil,
-    })
-  elseif kind == "error" then
-    table.insert(c.outputs, {
-      output_type = "error",
-      ename = ev.ename, evalue = ev.evalue, traceback = ev.traceback,
-    })
-    local st = self.cell_state[cell_id]
-    if st then st.failed = true end
   elseif kind == "status" then
     -- preserve the stopwatch fields; stamp the duration when leaving busy
     local st = self.cell_state[cell_id] or {}
@@ -619,8 +776,6 @@ function Notebook:apply_cell_event(cell_id, ev)
     self.cell_state[cell_id] = st
   elseif kind == "execute_reply" then
     -- nothing to mutate
-  elseif kind == "clear_output" then
-    if not ev.wait then c.outputs = {} end
   end
 end
 

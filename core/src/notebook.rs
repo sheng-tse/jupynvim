@@ -101,19 +101,29 @@ impl Notebook {
         })
     }
 
+    /// The notebook as JSON text, with its own metadata (tests use it).
+    #[cfg(test)]
     pub fn to_json_pretty(&self) -> Result<String> {
+        self.to_json_pretty_with(self.metadata.clone())
+    }
+
+    /// The notebook as JSON text, with `metadata` in place of the notebook's
+    /// own. The notebook is not changed.
+    pub fn to_json_pretty_with(&self, metadata: Value) -> Result<String> {
         let mut root = Map::new();
         let cells: Vec<Value> = self.cells.iter().map(|c| c.to_json()).collect();
         root.insert("cells".to_string(), Value::Array(cells));
-        root.insert("metadata".to_string(), self.metadata.clone());
+        root.insert("metadata".to_string(), metadata);
         root.insert("nbformat".to_string(), json!(self.nbformat));
         root.insert("nbformat_minor".to_string(), json!(self.nbformat_minor));
         let v = Value::Object(root);
         Ok(serde_json::to_string_pretty(&v)? + "\n")
     }
 
-    pub fn write(&self, path: &Path) -> Result<()> {
-        let s = self.to_json_pretty()?;
+    /// Writes the notebook with `metadata` in place of its own. The notebook
+    /// keeps its metadata: a save never changes what is in memory.
+    pub fn write_with_metadata(&self, path: &Path, metadata: Value) -> Result<()> {
+        let s = self.to_json_pretty_with(metadata)?;
         std::fs::write(path, s).with_context(|| format!("write {}", path.display()))?;
         Ok(())
     }

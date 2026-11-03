@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::Server;
 use crate::kernel::Kernel;
 use crate::kernelspec;
+use crate::widgets::Effect;
 
 impl Server {
     pub(super) fn list_kernels(&self, p: Json) -> Result<Json> {
@@ -147,6 +148,9 @@ impl Server {
 
         let cwd = session.path.parent().map(|p| p.to_path_buf());
         let kernel = Kernel::launch(spec, cwd).await?;
+        // Taken before the kernel moves into its slot: the widget path sends
+        // through this sender, never through the kernel.
+        let comm_sender = kernel.comm_sender();
         let kernel_name = kernel.spec().name.clone();
         // What actually started, which after a picker switch or a language
         // fallback is not what the notebook's metadata says.
@@ -168,12 +172,27 @@ impl Server {
             *slot = Some(kernel);
         }
 
+        // Every model of the previous kernel is dead from here on, so a widget
+        // request in between is refused rather than sent to a kernel that does
+        // not know the comm. Then the new kernel's sender is installed.
+        let reset = session.widgets_reset();
+        self.run_widget_effects(&session, &sid, reset);
+        *session.widgets.comm_tx.write() = Some(comm_sender);
+        let gen = session.widgets.store.lock().gen();
+
         // Spawn event pump: kernel events → session → frontend notifications
         let server = self.clone();
         let session_clone = session.clone();
         let sid_clone = sid.clone();
         tokio::spawn(async move {
             while let Some(ev) = rx.recv().await {
+                // The widget step first: comm traffic and our own messages'
+                // output end here, and a stale kernel's comm events are dropped.
+                let pre = session_clone.widget_pre(&ev, gen);
+                server.run_widget_effects(&session_clone, &sid_clone, pre.effects);
+                if pre.consumed {
+                    continue;
+                }
                 if let Some((cell_id, payload)) = session_clone.apply_event(&ev) {
                     let note = json!({
                         "session_id": sid_clone,
@@ -201,10 +220,25 @@ impl Server {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("session_id required"))?;
         let s = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?.clone();
+        // No widget message goes to a kernel that is being stopped.
+        *s.widgets.comm_tx.write() = None;
         let k = s.kernel.write().await.take();
-        if let Some(k) = k {
-            k.kill().await?;
+        let killed = match k {
+            Some(k) => k.kill().await,
+            None => Ok(()),
+        };
+        // The models stay on screen, dead. This runs even when the kill failed.
+        let reset = s.widgets_reset();
+        debug_assert!(
+            reset.iter().all(|e| matches!(e, Effect::Notify { .. })),
+            "a widget reset sends no kernel message"
+        );
+        for effect in reset {
+            if let Effect::Notify { event, buffers } = effect {
+                self.notify_widget_event(sid, event, buffers);
+            }
         }
+        killed?;
         Ok(json!({ "ok": true }))
     }
 
@@ -226,7 +260,7 @@ impl Server {
         self.start_kernel(p).await
     }
 
-    pub(super) async fn execute(&self, p: Json) -> Result<Json> {
+    pub(super) async fn execute(self: &Arc<Self>, p: Json) -> Result<Json> {
         let sid = p
             .get("session_id")
             .and_then(|v| v.as_str())
@@ -253,6 +287,10 @@ impl Server {
         let kernel = guard
             .as_ref()
             .ok_or_else(|| anyhow!("kernel not started"))?;
+        // The captures of Output widgets that wait for the cadence reach the kernel
+        // before the cell runs: the cell reads the outputs as they stand.
+        let flushed = session.widgets.store.lock().flush_before_request();
+        self.run_widget_effects(&session, sid, flushed);
         // Pre-generate msg_id and register routing BEFORE sending so iopub events
         // arriving immediately after will route to the correct cell.
         let msg_id = uuid::Uuid::new_v4().to_string();
@@ -266,12 +304,15 @@ impl Server {
     /// counter, doesn't broadcast iopub output, and stays out of the
     /// kernel's Out[N] cache. Used to inject things like the matplotlib
     /// inline magic at kernel start without polluting cell numbering.
-    pub(super) async fn execute_silent(&self, p: Json) -> Result<Json> {
+    pub(super) async fn execute_silent(self: &Arc<Self>, p: Json) -> Result<Json> {
         let sid = p.get("session_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("session_id"))?;
         let code = p.get("code").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("code"))?;
         let session = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?.clone();
         let guard = session.kernel.read().await;
         let kernel = guard.as_ref().ok_or_else(|| anyhow!("kernel not started"))?;
+        // As in `execute`: the captures waiting for the cadence go out first.
+        let flushed = session.widgets.store.lock().flush_before_request();
+        self.run_widget_effects(&session, sid, flushed);
         let msg_id = uuid::Uuid::new_v4().to_string();
         kernel.execute_with_id_opts(code, msg_id.clone(), true, false).await?;
         Ok(json!({ "msg_id": msg_id }))

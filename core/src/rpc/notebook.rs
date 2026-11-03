@@ -26,6 +26,8 @@ impl Server {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("session_id required"))?;
         if let Some((_, s)) = self.sessions.remove(sid) {
+            // No widget message goes to a kernel that is being closed.
+            *s.widgets.comm_tx.write() = None;
             let kernel = s.kernel.write().await.take();
             if let Some(k) = kernel {
                 let _ = k.kill().await;

@@ -20,6 +20,7 @@
 
 local Notebook = require("jupynvim.notebook")
 local image = require("jupynvim.notebook.image")
+local Widgets = require("jupynvim.notebook.widgets")
 local log = require("jupynvim.log")
 
 local M = {}
@@ -240,6 +241,12 @@ local function image_outputs(nb, cell)
                               b64 = v, mime = m }
           break
         end
+      end
+      -- the images of an Output widget this output shows, after its own; each
+      -- keeps its own key (the output and the widget's model and output index)
+      for _, img in ipairs(Widgets.view_images(nb, cell, o)) do
+        list[#list + 1] = { key = image.output_key(image.output_owner(nb.buf, cell.id), i .. "w" .. img.suffix),
+                            b64 = img.b64, mime = img.mime }
       end
     end
   end
@@ -533,6 +540,25 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
     end
   end
 
+  -- Widget spans (the bars of a progress view) go over the output rows they were
+  -- built for. A row whose buffer line is not the row's text (a region that lags
+  -- the model, after an undo) gets none.
+  if range.out_sep and range.out_stop then
+    local rows = Notebook.output_lines(cell)
+    local last = math.min(range.out_stop, total)
+    for row, list in pairs(Notebook.output_spans(cell)) do
+      local lnum = range.out_sep + row
+      if lnum < last and rows[row]
+          and vim.api.nvim_buf_get_lines(buf, lnum, lnum + 1, false)[1] == rows[row] then
+        for _, sp in ipairs(list) do
+          pcall(vim.api.nvim_buf_set_extmark, buf, nb.border_ns, lnum, sp[1], {
+            end_col = sp[2], hl_group = sp[3], priority = 5001,
+          })
+        end
+      end
+    end
+  end
+
   -- Schedule image placements for image outputs
   local chafa_available = (require("jupynvim").config or {}).image_renderer == "chafa"
     and vim.fn.executable("chafa") == 1
@@ -780,6 +806,7 @@ function M.setup_highlights()
   pcall(vim.fn.sign_define, "JupynvimBar", { text = "│", texthl = HL_BORDER })
   require("jupynvim.notebook.markdown").setup_hl()
   require("jupynvim.notebook.cellmode").setup_hl()
+  require("jupynvim.notebook.widgets").setup_hl()
 end
 
 return M
