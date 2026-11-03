@@ -56,6 +56,14 @@ local function code_and_cursor_for(buf, pos, nb)
   return code, cursor_pos
 end
 
+-- The plugin's version, the one :checkhealth jupynvim shows, or nil.
+local function plugin_version()
+  local ok, v = pcall(function()
+    return require("jupynvim.backend.install").source_version(require("jupynvim")._plugin_root())
+  end)
+  return ok and v or nil
+end
+
 -- Return the function used as `cmd` in vim.lsp.start. When called by Neovim,
 -- it returns a "client" object with request / notify / is_closing / terminate.
 local function make_cmd(buf, nb_getter, rpc_getter)
@@ -86,7 +94,7 @@ local function make_cmd(buf, nb_getter, rpc_getter)
             },
             hoverProvider = true,
           },
-          serverInfo = { name = "jupynvim_kernel", version = "0.2-dev" },
+          serverInfo = { name = "jupynvim_kernel", version = plugin_version() },
         })
         return id
       end
@@ -244,5 +252,7 @@ function M.attach(buf, nb_getter, rpc_getter)
     end,
   })
 end
+
+M._make_cmd = make_cmd   -- exposed for tests
 
 return M

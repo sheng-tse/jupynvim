@@ -112,6 +112,12 @@ function M.check()
   if vim.fn.has("nvim-0.11") ~= 1 then h.error("Neovim 0.11 or newer is required") end
   local root = J._plugin_root()
   local want = Install.source_version(root)
+  -- first, so a report names the version even when the backend is missing
+  if want then
+    h.info(("jupynvim v%s at %s"):format(want, root))
+  else
+    h.warn("no version found in " .. root .. "/core/Cargo.toml")
+  end
   local cfg_path = J.config and J.config.core_path
   local local_bin = root .. "/core/target/release/jupynvim-core"
   local dev_build = Install.is_dev_build(root)
