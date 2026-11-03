@@ -54,6 +54,8 @@
 #      and the README example state is the default the code has, #46)
 #      + pixi_env_spec.lua (the frontend's walk for a project python: venvs,
 #      then Pixi's default env, python.exe at its root on Windows, #47)
+#      + backend_startup_spec.lua (a second notebook opening while the first
+#      one's backend is being attached joins it: one spawn, local and remote, #44)
 #      + native_spec.lua (the in-process library libjupynvim from Lua: its
 #      discovery and checks, jobs, the pump, the budgets of what each may cost
 #      the UI thread, shutdown and the path without it)

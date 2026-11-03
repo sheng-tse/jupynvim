@@ -539,6 +539,30 @@ local function spawn_client(cmd_vec, alias, trust)
   -- A second notebook may open while Image.attach waits for the backend.
   M.clients[alias] = client
   if alias == "local" then M.client = client end
+  -- The handlers go on with the registration: a notebook opened during that
+  -- wait starts its kernel through this client, and a notification that
+  -- finds no handler is dropped ("installing ipykernel...", its first
+  -- events). `client` goes along, so an event counts only for the notebooks
+  -- it owns.
+  client:on("cell_event", function(args)
+    local p = args[1] or args
+    M._handle_cell_event(p, client)
+  end)
+  client:on("widget_event", function(args)
+    require("jupynvim.notebook.widgets").handle_event(args[1] or args)
+  end)
+  client:on("kernel_event", function(args)
+    local p = args[1] or args
+    Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
+  end)
+  -- Backend-initiated user-facing messages (e.g. "installing ipykernel into
+  -- this env..." during a first-use kernel start).
+  client:on("user_message", function(args)
+    local p = args[1] or args
+    local lvl = ({ info = vim.log.levels.INFO, warn = vim.log.levels.WARN,
+                   error = vim.log.levels.ERROR })[p.level or "info"] or vim.log.levels.INFO
+    vim.notify("jupynvim: " .. tostring(p.text or ""), lvl)
+  end)
   -- Native Kitty graphics. Only the local backend can write to this terminal,
   -- so only it is attached. Once a terminal UI has been attached, Image.attach
   -- encodes every escape in Lua and writes it through the UI with
@@ -559,26 +583,6 @@ local function spawn_client(cmd_vec, alias, trust)
     Image.attach_remote(client)
   end
 
-  -- `client` goes along, so an event counts only for the notebooks it owns
-  client:on("cell_event", function(args)
-    local p = args[1] or args
-    M._handle_cell_event(p, client)
-  end)
-  client:on("widget_event", function(args)
-    require("jupynvim.notebook.widgets").handle_event(args[1] or args)
-  end)
-  client:on("kernel_event", function(args)
-    local p = args[1] or args
-    Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
-  end)
-  -- Backend-initiated user-facing messages (e.g. "installing ipykernel into
-  -- this env..." during a first-use kernel start).
-  client:on("user_message", function(args)
-    local p = args[1] or args
-    local lvl = ({ info = vim.log.levels.INFO, warn = vim.log.levels.WARN,
-                   error = vim.log.levels.ERROR })[p.level or "info"] or vim.log.levels.INFO
-    vim.notify("jupynvim: " .. tostring(p.text or ""), lvl)
-  end)
   return client
 end
 

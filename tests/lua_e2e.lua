@@ -68,6 +68,40 @@ end
 -- ============================================================
 print("\n=== headless lua e2e tests ===\n")
 
+-- T0: a second open that arrives while Image.attach waits for the backend
+-- joins the backend being started instead of starting another (PR #44). In
+-- this headless editor no terminal UI takes the image escapes, so Image.attach
+-- waits for the real backend's answer in call_sync, which runs the event loop:
+-- a scheduled _ensure_client() runs inside that wait, as a second notebook
+-- opened by an autocmd or a plugin would.
+test_pcall("a second open during Image.attach joins the backend being started", function()
+  local RPC = require("jupynvim.rpc")
+  if J.client then
+    pcall(function() J.client:stop() end)
+    wait_until(function() return J.client == nil end, 10000)
+  end
+  local started, spawns = {}, 0
+  local real_spawn = RPC.spawn
+  RPC.spawn = function(...)
+    spawns = spawns + 1
+    local c = real_spawn(...)
+    started[#started + 1] = c
+    return c
+  end
+  local nested
+  vim.schedule(function() nested = J._ensure_client() end)
+  local ok, first = pcall(J._ensure_client)
+  RPC.spawn = real_spawn
+  -- the first backend stays up for the cases below; any other is stopped
+  for _, c in ipairs(started) do
+    if c ~= first then pcall(function() c:stop() end) end
+  end
+  report("a second open during Image.attach joins the backend being started",
+         ok and first ~= nil and spawns == 1 and nested == first and J.client == first,
+         ("ok=%s spawns=%d nested_same=%s registered_same=%s"):format(
+           tostring(ok), spawns, tostring(nested == first), tostring(J.client == first)))
+end)
+
 -- T1: Plugin loads & registers autocmd
 test_pcall("plugin loads and ipynb autocmd registered", function()
   local autos = vim.api.nvim_get_autocmds({ pattern = "*.ipynb" })
