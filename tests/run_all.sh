@@ -26,7 +26,8 @@
 #      + spec_out_spec.sh (what spec_out below prints and keeps of a
 #      headless spec's output, so a failed spec names its failing checks)
 #   3. lua_e2e.lua (headless Neovim Lua tests)
-#   4. cellui_spec.lua + markdown_spec.lua + remote_hl_spec.lua (headless
+#   4. cellui_spec.lua (also the queued cells of a run and the release when
+#      a backend exits) + markdown_spec.lua + remote_hl_spec.lua (headless
 #      render/UI specs) + remote_pick_open_spec.lua + remote_open_layout_spec.lua
 #      (window placement when opening a file from the remote explorer/picker)
 #      + dispatch_keys_spec.lua (global keys are session-only, issue #24)
@@ -96,6 +97,10 @@
 #      kernel and saved in the notebook, shows its table as aligned text and
 #      never its repr, a 600-row table is cut by the output cap, a named
 #      index keeps its column labels right-aligned and "<" text reads as written)
+#      queued_screen.sh (real nvim via tmux, read with its colors: Run all
+#      marks the cells waiting behind the running one "[*]" with a dot of the
+#      header color and a calm frame; a restart and a backend killed with
+#      kill -9 give them the badges they had, and stop the running cell's time)
 #      native_screen.sh (real nvim via tmux: the library's artifact and C ABI
 #      checks, typing while a job runs, silent panics, :qa! with a job
 #      running, and the notebook drawn the same without the library)
@@ -409,6 +414,8 @@ bash "$ROOT/tests/output_view_screen.sh"
 section "output-view screen" "$?"
 bash "$ROOT/tests/styler_screen.sh"
 section "styler screen" "$?"
+bash "$ROOT/tests/queued_screen.sh"
+section "queued screen" "$?"
 bash "$ROOT/tests/native_screen.sh"
 section "native screen" "$?"
 bash "$ROOT/tests/widget_screen.sh"

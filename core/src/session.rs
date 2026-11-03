@@ -76,6 +76,13 @@ pub struct Session {
     pub clear_pending: DashMap<String, ()>,
     /// The widget models of the current kernel (see widgets.rs).
     pub widgets: crate::widgets::Widgets,
+    /// The generation of the session's kernel: one more for every kernel
+    /// that goes in and for every stop. An event pump sends cell events only
+    /// while its kernel's generation is the current one, checked and sent
+    /// under this lock, so once a stop, a restart or a kernel's exit has
+    /// moved it on (and answered or told the frontend), no event of the old
+    /// kernel follows.
+    pub kernel_gen: parking_lot::Mutex<u64>,
 }
 
 /// What the event pump does with a kernel event before the cell path: the
@@ -104,7 +111,17 @@ impl Session {
             msg_to_cell: DashMap::new(),
             clear_pending: DashMap::new(),
             widgets,
+            kernel_gen: parking_lot::Mutex::new(0),
         }))
+    }
+
+    /// Moves the kernel generation on (see `kernel_gen`) and returns the new
+    /// one: the kernel being stopped, replaced or found dead sends no more
+    /// cell events.
+    pub fn retire_kernel(&self) -> u64 {
+        let mut g = self.kernel_gen.lock();
+        *g += 1;
+        *g
     }
 
     /// The event pump's widget step, run before the cell path for every kernel
@@ -565,6 +582,11 @@ impl Session {
                 ..
             } => {
                 stamp_end(cell); // fallback; status:idle above is the primary path
+                // A run whose cell was cleared while it ran ends with its count,
+                // as JupyterLab sets it from the reply (an aborted reply has none).
+                if cell.execution_count.is_none() && *execution_count > 0 {
+                    cell.execution_count = Some(*execution_count);
+                }
                 json!({ "kind": "execute_reply", "status": status, "execution_count": execution_count })
             }
             KernelEvent::ClearOutput { wait, .. } => {
@@ -699,6 +721,7 @@ mod tests {
             msg_to_cell: DashMap::new(),
             clear_pending: DashMap::new(),
             widgets: Default::default(),
+            kernel_gen: parking_lot::Mutex::new(0),
         };
         s.msg_to_cell.insert("msg1".into(), cell_id.clone());
         (s, cell_id)
@@ -809,6 +832,24 @@ mod tests {
             cell.metadata.get("execution").is_none(),
             "timing metadata not cleared by clear_outputs"
         );
+    }
+
+    #[test]
+    fn a_run_cleared_while_it_ran_ends_with_its_count() {
+        // A clear during a run drops the count execute_input set; the reply
+        // gives it back, as JupyterLab does. An aborted reply carries none
+        // (0), and a cell that has a count keeps it.
+        let (s, cell_id) = session_with_one_code_cell();
+        let count = |s: &Session| s.notebook.read().cells.iter().find(|c| c.id == cell_id).unwrap().execution_count;
+        s.apply_event(&KernelEvent::ExecuteInput { parent_msg_id: Some("msg1".into()), execution_count: 7, code: "x".into() });
+        s.clear_outputs();
+        assert_eq!(count(&s), None);
+        s.apply_event(&KernelEvent::ExecuteReply { parent_msg_id: Some("msg1".into()), status: "abort".into(), execution_count: 0 });
+        assert_eq!(count(&s), None, "an aborted reply has no count to give");
+        s.apply_event(&KernelEvent::ExecuteReply { parent_msg_id: Some("msg1".into()), status: "ok".into(), execution_count: 7 });
+        assert_eq!(count(&s), Some(7), "the reply gives the cleared run its count");
+        s.apply_event(&KernelEvent::ExecuteReply { parent_msg_id: Some("msg1".into()), status: "ok".into(), execution_count: 9 });
+        assert_eq!(count(&s), Some(7), "a cell with a count keeps it");
     }
 
     #[test]

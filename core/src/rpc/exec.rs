@@ -185,9 +185,14 @@ impl Server {
             .take_events()
             .await
             .ok_or_else(|| anyhow!("kernel events already taken"))?;
+        let mut exited = kernel.exit_watch();
+        let kernel_session = kernel.session().to_string();
 
-        {
+        let kgen = {
             let mut slot = session.kernel.write().await;
+            // From here on only this kernel's events reach a cell: a kernel
+            // this one replaces sends none, whatever it still had on its way.
+            let kgen = session.retire_kernel();
             // Drop alone doesn't kill the child process — only Kernel::kill
             // does. Without explicit kill, re-calling start_kernel orphans
             // the previous ipykernel_launcher (process leak).
@@ -195,7 +200,8 @@ impl Server {
                 let _ = old.kill().await;
             }
             *slot = Some(kernel);
-        }
+            kgen
+        };
 
         // Every model of the previous kernel is dead from here on, so a widget
         // request in between is refused rather than sent to a kernel that does
@@ -211,48 +217,89 @@ impl Server {
         let sid_clone = sid.clone();
         tokio::spawn(async move {
             while let Some(ev) = rx.recv().await {
-                // The widget step first: comm traffic and our own messages'
-                // output end here, and a stale kernel's comm events are dropped.
-                let pre = session_clone.widget_pre(&ev, gen);
-                server.run_widget_effects(&session_clone, &sid_clone, pre.effects);
-                if pre.consumed {
-                    continue;
-                }
-                if let Some((cell_id, payload)) = session_clone.apply_event(&ev) {
-                    let note = json!({
-                        "session_id": sid_clone,
-                        "cell_id": cell_id,
-                        "event": payload,
-                    });
-                    server.notify("cell_event", note).await;
-                } else {
-                    let note = json!({
-                        "session_id": sid_clone,
-                        "event": json!({ "kind": "global", "raw": format!("{ev:?}") }),
-                    });
+                if let Some(note) = server.pump_event(&session_clone, &sid_clone, gen, kgen, &ev) {
                     server.notify("kernel_event", note).await;
                 }
             }
             tracing::info!("kernel events channel closed for session {sid_clone}");
         });
 
+        // A kernel that exits by itself (a crash, the system out of memory,
+        // exit() in a cell) leaves the session with no kernel.
+        let server = self.clone();
+        let session_clone = session.clone();
+        let sid_clone = sid.clone();
+        tokio::spawn(async move {
+            if exited.wait_for(|e| *e).await.is_ok() {
+                server.kernel_exited(&session_clone, &sid_clone, kgen, &kernel_session).await;
+            }
+        });
+
         Ok(json!({ "kernel_name": kernel_name, "language": language, "argv": argv }))
     }
 
-    pub(super) async fn stop_kernel(&self, p: Json) -> Result<Json> {
-        let sid = p
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("session_id required"))?;
-        let s = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?.clone();
-        // No widget message goes to a kernel that is being stopped.
-        *s.widgets.comm_tx.write() = None;
-        let k = s.kernel.write().await.take();
-        let killed = match k {
-            Some(k) => k.kill().await,
-            None => Ok(()),
+    /// One event of the pump of the kernel of generation `kgen` (`gen`: the
+    /// widget store's generation it started with). The widget step first:
+    /// comm traffic and our own messages' output end there, and a stale
+    /// kernel's comm events are dropped. A kernel that was stopped, replaced
+    /// or found dead sends nothing more to a cell, neither to the notebook
+    /// model nor to the frontend. That is checked and the cell event sent
+    /// under the generation's lock, so a stop's answer (or the exit notice)
+    /// follows every cell event sent before the generation moved on, and none
+    /// comes after. Returns the `kernel_event` note for an event no cell takes.
+    fn pump_event(self: &Arc<Self>, session: &Arc<crate::session::Session>, sid: &str, gen: u64, kgen: u64,
+                  ev: &crate::kernel::KernelEvent) -> Option<Json> {
+        let pre = session.widget_pre(ev, gen);
+        self.run_widget_effects(session, sid, pre.effects);
+        if pre.consumed {
+            return None;
+        }
+        let current = session.kernel_gen.lock();
+        if *current != kgen {
+            return None;
+        }
+        match session.apply_event(ev) {
+            Some((cell_id, payload)) => {
+                let note = json!({ "session_id": sid, "cell_id": cell_id, "event": payload });
+                self.notify_now("cell_event", super::json_to_mp(&note));
+                None
+            }
+            None => Some(json!({
+                "session_id": sid,
+                "event": json!({ "kind": "global", "raw": format!("{ev:?}") }),
+            })),
+        }
+    }
+
+    /// The kernel of generation `kgen` exited. Unless a stop, a restart or a
+    /// new kernel already moved the generation on (then the exit is theirs),
+    /// the session's slot is emptied, so a run sent from now on is refused
+    /// as "kernel not started" instead of waiting for a kernel that is gone,
+    /// and the frontend is told with a `kernel_event` of kind "exited", which
+    /// no event of that kernel follows. Its widget models stay, dead, as
+    /// after a stop.
+    async fn kernel_exited(&self, session: &Arc<crate::session::Session>, sid: &str, kgen: u64, kernel_session: &str) {
+        let dead = {
+            let mut slot = session.kernel.write().await;
+            let mut current = session.kernel_gen.lock();
+            if *current != kgen || slot.as_ref().map(|k| k.session()) != Some(kernel_session) {
+                return;
+            }
+            *current += 1;
+            let dead = slot.take();
+            let note = json!({ "session_id": sid, "event": { "kind": "exited" } });
+            self.notify_now("kernel_event", super::json_to_mp(&note));
+            dead
         };
-        // The models stay on screen, dead. This runs even when the kill failed.
+        tracing::warn!("kernel of session {sid} exited by itself");
+        self.retire_widgets(session, sid);
+        drop(dead);
+    }
+
+    /// No widget message goes to the session's kernel any more, and its
+    /// models stay on screen, dead (a stop, a kernel that died).
+    fn retire_widgets(&self, s: &crate::session::Session, sid: &str) {
+        *s.widgets.comm_tx.write() = None;
         let reset = s.widgets_reset();
         debug_assert!(
             reset.iter().all(|e| matches!(e, Effect::Notify { .. })),
@@ -263,6 +310,28 @@ impl Server {
                 self.notify_widget_event(sid, event, buffers);
             }
         }
+    }
+
+    pub(super) async fn stop_kernel(&self, p: Json) -> Result<Json> {
+        let sid = p
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("session_id required"))?;
+        let s = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?.clone();
+        // No widget message goes to a kernel that is being stopped.
+        *s.widgets.comm_tx.write() = None;
+        let k = {
+            let mut slot = s.kernel.write().await;
+            // None of its events reach a cell once this answers.
+            s.retire_kernel();
+            slot.take()
+        };
+        let killed = match k {
+            Some(k) => k.kill().await,
+            None => Ok(()),
+        };
+        // The models stay on screen, dead. This runs even when the kill failed.
+        self.retire_widgets(&s, sid);
         killed?;
         Ok(json!({ "ok": true }))
     }
@@ -377,6 +446,111 @@ impl Server {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// A server whose output channel the test reads, with one session whose
+    /// only cell `c` owns the request "m1".
+    fn pump_fixture() -> (Arc<Server>, Arc<crate::session::Session>, tokio::sync::mpsc::UnboundedReceiver<rmpv::Value>) {
+        let server = Server::new();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = server.out.set(tx);
+        let session = crate::session::Session::open("s".into(), PathBuf::from("jupynvim-pump-test-no-such.ipynb"))
+            .expect("an empty session opens");
+        session.notebook.write().cells[0].id = "c".into();
+        session.msg_to_cell.insert("m1".into(), "c".into());
+        server.sessions.insert("s".into(), session.clone());
+        (server, session, rx)
+    }
+
+    fn stream(text: &str) -> crate::kernel::KernelEvent {
+        crate::kernel::KernelEvent::Stream {
+            msg_id: "o".into(),
+            parent_msg_id: Some("m1".into()),
+            name: "stdout".into(),
+            text: text.into(),
+        }
+    }
+
+    fn cell_events(rx: &mut tokio::sync::mpsc::UnboundedReceiver<rmpv::Value>) -> usize {
+        let mut n = 0;
+        while let Ok(m) = rx.try_recv() {
+            if let rmpv::Value::Array(a) = m {
+                if a.get(1).and_then(|v| v.as_str()) == Some("cell_event") {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn a_retired_kernel_sends_no_cell_event() {
+        let (server, session, mut rx) = pump_fixture();
+        let kgen = session.retire_kernel();
+        let gen = session.widgets.store.lock().gen();
+        assert!(server.pump_event(&session, "s", gen, kgen, &stream("one\n")).is_none());
+        assert_eq!(cell_events(&mut rx), 1, "the current kernel's output reaches the frontend");
+        assert_eq!(session.notebook.read().cells[0].outputs.len(), 1, "and the notebook");
+        // a stop, a restart or the kernel's death moves the generation on
+        session.retire_kernel();
+        assert!(server.pump_event(&session, "s", gen, kgen, &stream("two\n")).is_none());
+        assert_eq!(cell_events(&mut rx), 0, "an event of a retired kernel is not sent");
+        let nb = session.notebook.read();
+        assert_eq!(nb.cells[0].outputs.len(), 1, "nor applied to the notebook");
+        assert_eq!(nb.cells[0].outputs[0]["text"], "one\n");
+    }
+
+    /// The stop's side: the generation moved on, then its answer sent. A pump
+    /// running all the while on another thread never sends a cell event
+    /// after that answer (the check and the send are one step under the
+    /// lock). Each round races the two; the order holds in every one.
+    #[test]
+    fn no_cell_event_follows_the_answer_of_a_stop() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        for round in 0..200 {
+            let (server, session, mut rx) = pump_fixture();
+            let kgen = session.retire_kernel();
+            let gen = session.widgets.store.lock().gen();
+            let stop = Arc::new(AtomicBool::new(false));
+            let sent = Arc::new(AtomicUsize::new(0));
+            let (s2, sess2, stop2, sent2) = (server.clone(), session.clone(), stop.clone(), sent.clone());
+            let pump = std::thread::spawn(move || {
+                while !stop2.load(Ordering::Acquire) {
+                    s2.pump_event(&sess2, "s", gen, kgen, &stream("x"));
+                    sent2.fetch_add(1, Ordering::Release);
+                }
+            });
+            while sent.load(Ordering::Acquire) < 3 {
+                std::thread::yield_now();
+            }
+            session.retire_kernel();
+            server.notify_now("answer", rmpv::Value::Nil);
+            stop.store(true, Ordering::Release);
+            pump.join().expect("the pump thread ends");
+            let mut answered = false;
+            while let Ok(m) = rx.try_recv() {
+                if let rmpv::Value::Array(a) = m {
+                    match a.get(1).and_then(|v| v.as_str()) {
+                        Some("answer") => answered = true,
+                        Some("cell_event") => assert!(!answered, "round {round}: a cell event came after the stop's answer"),
+                        _ => {}
+                    }
+                }
+            }
+            assert!(answered);
+        }
+    }
+
+    #[test]
+    fn a_new_kernel_retires_the_one_it_replaces() {
+        let (server, session, mut rx) = pump_fixture();
+        let old = session.retire_kernel();
+        let new = session.retire_kernel();
+        let gen = session.widgets.store.lock().gen();
+        server.pump_event(&session, "s", gen, old, &stream("late\n"));
+        assert_eq!(cell_events(&mut rx), 0, "the replaced kernel's late event is dropped");
+        server.pump_event(&session, "s", gen, new, &stream("now\n"));
+        assert_eq!(cell_events(&mut rx), 1, "the new kernel's event is sent");
+    }
 
     #[test]
     fn python_path_spec_names_a_pixi_env() {

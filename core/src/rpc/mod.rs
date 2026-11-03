@@ -211,6 +211,8 @@ impl Server {
         let mut killed = 0;
         for s in sessions {
             let guard = s.kernel.read().await;
+            // these exits are ours: no kernel_event tells of them
+            s.retire_kernel();
             if let Some(k) = guard.as_ref() {
                 if let Err(e) = k.kill().await {
                     tracing::warn!("kill kernel on shutdown: {e}");

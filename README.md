@@ -69,8 +69,9 @@ https://github.com/user-attachments/assets/2a3fbd17-561d-4c37-b856-a912944f88f8
 - Per-cell execution timing. Each run shows an elapsed-time badge in the
   cell's footer border, persisted in the notebook so it survives save and
   reopen. Clearing the output clears it. Run all, run above and run below
-  mark every cell they submit `[*]` the JupyterLab way, with a greyed dot
-  while a cell waits behind the running one.
+  mark every cell they submit `[*]` the JupyterLab way, with a grayed dot
+  while a cell waits behind the running one. A restart, a kernel that dies
+  and a backend that exits release the waiting cells.
 - Jupyter widgets from ipywidgets 8 talk to the kernel. `tqdm.notebook` and
   `tqdm.auto` bars update live until they reach 100%. An Output widget captures
   the prints and displays made inside it, plots included. The widget state is

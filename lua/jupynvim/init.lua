@@ -2315,6 +2315,7 @@ function M.run_cell(buf, opts)
       return
     end
     nb:mark_queued(cell.id)
+    nb:ran_through(cl)
     Render.refresh(nb, vim.fn.bufwinid(buf))
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
       if err2 then
@@ -2370,6 +2371,7 @@ local function run_chain(nb, cells, retry)
   -- to be respawned can raise here, and nothing would release the cells
   local cl = M._nb_client(nb)
   for _, c in ipairs(cells) do nb:mark_queued(c.id) end
+  nb:ran_through(cl)
   Render.refresh(nb, vim.fn.bufwinid(buf))
   local i = 0
   local function fail(show)
@@ -2772,8 +2774,10 @@ function M.stop_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb.kernel_started = false
-  M._release_pending(nb)
+  M._release_pending(nb, true)
+  local epoch = nb.epoch
   M._nb_client(nb):call("stop_kernel", { session_id = nb.session_id }, function(err)
+    nb:retired(epoch)
     if err then vim.notify("stop: " .. tostring(err), vim.log.levels.ERROR) end
   end)
 end
@@ -2781,8 +2785,54 @@ end
 -- Executions die with the kernel: queued cells drop their waiting badge,
 -- and a cell that was running is finished as failed (its stopwatch stops at
 -- the kill), since the kernel that would have sent its idle is gone.
-function M._release_pending(nb)
-  if nb:release_pending() then Render.refresh(nb, vim.fn.bufwinid(nb.buf)) end
+-- `retire` is set for a stop or a restart this editor asked for: the stopped
+-- kernel's state events still on their way are then not applied
+-- (Notebook:retire), and the caller ends that with nb:retired(nb.epoch) in
+-- its request's callback.
+function M._release_pending(nb, retire)
+  local changed
+  if retire then changed = nb:retire() else changed = nb:release_pending() end
+  if changed then Render.refresh(nb, vim.fn.bufwinid(nb.buf)) end
+end
+
+-- A backend that exits (it crashed, was killed, or :JupynvimUseJob and a
+-- reconnect replaced it) takes its kernels and their executions with it, and
+-- no idle will come. The notebooks whose runs went through it
+-- (Notebook:ran_through, called when a run is submitted) are released: once
+-- over the open notebooks, and only those that changed are redrawn.
+-- Compared with the client itself, not with the one registered, because the
+-- replacement is already registered when the old one's exit arrives.
+function M._release_client_cells(client)
+  for _, nb in pairs(Notebook.all()) do
+    if nb.exec_clients and nb.exec_clients[client] then
+      nb.exec_clients[client] = nil
+      M._release_pending(nb)
+    end
+  end
+end
+
+-- The backend tells when a kernel it did not stop exits by itself (it
+-- crashed, the system ran out of memory, the code called exit()). The
+-- notebook has no kernel from then on: its runs are released, and the next
+-- start or a restart gives it a new one. Only the backend the notebook
+-- belongs to is listened to, as for cell events.
+function M._handle_kernel_event(p, from)
+  local ev = type(p) == "table" and p.event or nil
+  if type(ev) ~= "table" or ev.kind ~= "exited" then
+    Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
+    return
+  end
+  for _, nb in pairs(Notebook.all()) do
+    if nb.session_id == p.session_id then
+      local own
+      if nb.alias then own = M.clients[nb.alias] else own = M.client end
+      if from and own ~= from then return end
+      nb.kernel_started = false
+      M._release_pending(nb)
+      vim.notify("jupynvim: the kernel died; :JupynvimRestart starts a new one", vim.log.levels.WARN)
+      return
+    end
+  end
 end
 
 function M.interrupt_kernel(buf)
@@ -2810,7 +2860,8 @@ function M.clear_outputs(buf)
       -- also drop the execution-timing stamp, else saved_duration_ns rebuilds
       -- the "✓ 1.6s" badge from it after the clear
       if type(c.metadata) == "table" then c.metadata.execution = nil end
-      nb.cell_state[c.id] = nil
+      -- the badge of the last run goes; a run still on keeps its own
+      nb:clear_badge(c.id)
       -- Drop only code-cell output images; markdown embedded images
       -- (keys like "<id>_md_<idx>") stay so the cell still renders them.
       for _, key in ipairs(Image.clear_outputs_for_cell(Image.output_owner(nb.buf, c.id))) do
@@ -2855,7 +2906,7 @@ function M.clear_cell_output(buf)
   cell.outputs = {}
   cell.execution_count = nil
   if type(cell.metadata) == "table" then cell.metadata.execution = nil end
-  nb.cell_state[cell.id] = nil
+  nb:clear_badge(cell.id)
   nb.image_ids = nb.image_ids or {}
   for _, key in ipairs(Image.clear_outputs_for_cell(Image.output_owner(nb.buf, cell.id))) do
     nb.image_ids[key] = nil
@@ -2882,8 +2933,10 @@ function M.restart_kernel(buf)
   if not nb then return end
   -- the backend stops the old kernel before starting the new one, so the
   -- pending executions are gone whether or not the start succeeds
-  M._release_pending(nb)
+  M._release_pending(nb, true)
+  local epoch = nb.epoch
   M._nb_client(nb):call("restart_kernel", { session_id = nb.session_id }, function(err, res)
+    nb:retired(epoch)
     if err then vim.notify("restart: " .. tostring(err), vim.log.levels.ERROR); return end
     vim.notify("jupynvim: kernel restarted", vim.log.levels.INFO)
   end)

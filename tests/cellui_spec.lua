@@ -220,7 +220,7 @@ assert(sc3i:find("JupynvimBorder", 1, true), "left edge returns to JupynvimBorde
 print("F3. running cell paints the whole frame busy ok")
 
 -- F4. a cell WAITING behind another (Run all, run below) is queued the
--- JupyterLab way: "[*]" like a running cell, but with the dot greyed out and
+-- JupyterLab way: "[*]" like a running cell, but with the dot grayed out and
 -- the frame left calm, so the one busy-colored cell is the one running.
 nb:mark_queued("c3")
 assert(nb.cell_state["c3"].exec_state == "queued", "c3 should be queued")
@@ -230,7 +230,7 @@ for _, c in ipairs(Render._exec_status_chunks(nb.cells[3], nb.cell_state["c3"]))
 end
 assert(qs:find("[*]", 1, true) and qs:find("●", 1, true), "queued bar should show [*] + dot: " .. qs)
 assert(vim.tbl_contains(qhl, "JupynvimQueued") and not vim.tbl_contains(qhl, "JupynvimBusy"),
-  "queued dot must be grey, not the busy color: " .. vim.inspect(qhl))
+  "queued dot must be gray, not the busy color: " .. vim.inspect(qhl))
 assert(not qs:find("%d", 1), "queued bar must not show an elapsed time: " .. qs)
 local scq = CellMode._statuscol_for(buf, r3.start + 1, 0)
 assert(scq:find("JupynvimBorder", 1, true), "frame stays calm while only queued: " .. scq)
@@ -269,7 +269,163 @@ assert(nb:release_pending() and nb.cell_state["c3"].exec_state == "idle", "relea
 assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed and nb.cell_state["c2"].duration_ns,
   "release_pending must finish the running cell as failed with its stopwatch stopped")
 assert(not nb:release_pending(), "release_pending reports nothing to release")
-print("F4. queued cell: grey [*], calm frame, released on abort/restart ok")
+print("F4. queued cell: gray [*], calm frame, released on abort/restart ok")
+
+-- F4b. A cell submitted again before an earlier run of it ended (Shift-Enter
+-- on a running cell, Run all twice while a slow cell runs) counts the runs
+-- still waiting: the end of one leaves it queued, not done, until the last.
+local function badge_of(id, i)
+  local s = ""
+  for _, c in ipairs(Render._exec_status_chunks(nb.cells[i], nb.cell_state[id])) do s = s .. c[1] end
+  return s
+end
+local function run_events(id, n, opts)
+  opts = opts or {}
+  if not opts.no_busy then nb:apply_cell_event(id, { kind = "status", state = "busy" }) end
+  if not opts.no_input then nb:apply_cell_event(id, { kind = "execute_input", execution_count = n }) end
+  if not opts.no_idle then nb:apply_cell_event(id, { kind = "status", state = "idle" }) end
+end
+nb.cell_state["c3"] = nil
+-- run again while it runs
+nb:mark_queued("c3")
+run_events("c3", 11, { no_idle = true })
+nb:mark_queued("c3")
+assert(nb.cell_state["c3"].exec_state == "busy", "a running cell stays running when it is run again")
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+assert(nb.cell_state["c3"].exec_state == "queued" and badge_of("c3", 3):find("[*]", 1, true)
+  and not badge_of("c3", 3):find("✓", 1, true),
+  "a run that ends while the next one waits leaves the cell queued, not done: " .. badge_of("c3", 3))
+run_events("c3", 12)
+assert(nb.cell_state["c3"].exec_state == "idle" and nb.cell_state["c3"].duration_ns
+  and badge_of("c3", 3):find("✓", 1, true), "the last run finishes the cell: " .. badge_of("c3", 3))
+-- queued twice before the kernel reached it
+nb:mark_queued("c3"); nb:mark_queued("c3")
+run_events("c3", 13)
+assert(nb.cell_state["c3"].exec_state == "queued", "the first of two waiting runs ends with the second still waiting")
+run_events("c3", 14)
+assert(nb.cell_state["c3"].exec_state == "idle", "the second run finishes the cell")
+-- a status busy that never arrived: the execute_input takes the run, once
+nb:mark_queued("c3"); nb:mark_queued("c3")
+run_events("c3", 15, { no_busy = true })
+assert(nb.cell_state["c3"].exec_state == "queued", "a run whose busy was missed still counts once")
+run_events("c3", 16, { no_busy = true })
+assert(nb.cell_state["c3"].exec_state == "idle", "and the next one too: " .. vim.inspect(nb.cell_state["c3"]))
+-- an idle that never arrived: the next run's busy is a new run
+nb:mark_queued("c3"); nb:mark_queued("c3")
+run_events("c3", 17, { no_idle = true })
+run_events("c3", 18)
+assert(nb.cell_state["c3"].exec_state == "idle", "a missed idle does not leave the cell waiting for a run already taken")
+-- an aborted submission gets a busy and an idle, no execute_input
+nb:mark_queued("c3"); nb:mark_queued("c3")
+run_events("c3", nil, { no_input = true })
+assert(nb.cell_state["c3"].exec_state == "queued", "an aborted run comes off the count, the other still waits")
+run_events("c3", 19)
+assert(nb.cell_state["c3"].exec_state == "idle", "then the cell finishes")
+-- a second submission refused (run_cell unqueues it)
+nb:mark_queued("c3"); run_events("c3", 20, { no_idle = true })
+nb:mark_queued("c3"); nb:unqueue("c3")
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+assert(nb.cell_state["c3"].exec_state == "idle", "a refused submission is not waited for")
+-- a release forgets the count: a late idle after it does not queue the cell again
+nb:mark_queued("c3"); nb:mark_queued("c3"); run_events("c3", 21, { no_idle = true })
+assert(nb:release_pending() and nb.cell_state["c3"].exec_state == "idle" and nb.cell_state["c3"].failed)
+nb:apply_cell_event("c3", { kind = "status", state = "idle" })
+assert(nb.cell_state["c3"].exec_state == "idle", "a released cell stays released")
+nb.cell_state["c3"] = nil
+print("F4b. a cell run again before its earlier run ended stays queued until its last run ok")
+
+-- F4c. Stop and restart release the cells at once, and the stopped kernel's
+-- state events still on their way (read by the backend before it got the
+-- request) do not take a released cell back to busy. A run sent after the
+-- request is the new kernel's and is applied; once the backend answered,
+-- every event is.
+local real_nb_client, real_notify4 = J._nb_client, vim.notify
+local kcalls = {}
+J._nb_client = function()
+  return { call = function(_, method, params, cb) kcalls[#kcalls + 1] = { method = method, cb = cb } end }
+end
+vim.notify = function() end
+for _, what in ipairs({ "restart_kernel", "stop_kernel" }) do
+  kcalls = {}
+  nb.cell_state["c2"], nb.cell_state["c3"] = nil, nil
+  nb:mark_queued("c2"); nb:mark_queued("c3")
+  run_events("c2", 30, { no_idle = true })
+  J[what](buf)
+  assert(#kcalls == 1 and kcalls[1].method == what, what .. " is sent: " .. vim.inspect(kcalls))
+  assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed, what .. " finishes the running cell")
+  assert(nb.cell_state["c3"].exec_state == "idle", what .. " releases the waiting cell")
+  -- the stopped kernel had just started c3
+  nb:apply_cell_event("c3", { kind = "status", state = "busy" })
+  nb:apply_cell_event("c3", { kind = "execute_input", execution_count = 31 })
+  assert(nb.cell_state["c3"].exec_state == "idle",
+    what .. ": a stopped kernel's late execute_input must not take a released cell back to busy")
+  nb:apply_cell_event("c3", { kind = "stream", name = "stdout", text = "late\n" })
+  assert(#nb.cells[3].outputs == 1, what .. ": its outputs still apply, as the backend's model has them")
+  nb:apply_cell_event("c2", { kind = "status", state = "idle" })
+  assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed, what .. ": the released running cell stays failed")
+  -- a run sent while the backend restarts goes to the new kernel
+  nb:mark_queued("c2")
+  nb:apply_cell_event("c2", { kind = "status", state = "busy" })
+  assert(nb.cell_state["c2"].exec_state == "busy", what .. ": a run sent after the request is applied")
+  kcalls[1].cb(nil, {})
+  assert(nb.retiring == nil, what .. ": the answer ends the wait")
+  nb:apply_cell_event("c3", { kind = "status", state = "busy" })
+  assert(nb.cell_state["c3"].exec_state == "busy", what .. ": after the answer every event applies")
+  nb:release_pending()
+end
+-- an answer that is an error ends the wait too
+kcalls = {}
+J.stop_kernel(buf)
+kcalls[1].cb("no session")
+assert(nb.retiring == nil, "a failed stop ends the wait")
+J._nb_client, vim.notify = real_nb_client, real_notify4
+nb.cell_state["c2"], nb.cell_state["c3"] = nil, nil
+nb.cells[3].outputs = {}
+print("F4c. stop and restart release at once, and the stopped kernel's late events stay out ok")
+
+-- F4d. Clearing outputs while cells run: the running cell keeps its
+-- stopwatch and the cells still waiting keep [*]; a done cell's badge goes.
+local real_nb_client5 = J._nb_client
+J._nb_client = function() return { call = function() end } end
+-- the later cases read cell 2's output lines and the cells as they are now:
+-- both are put back afterwards
+local keep_out = {}
+for i, c in ipairs(nb.cells) do
+  keep_out[i] = { outputs = c.outputs, ec = c.execution_count, meta = vim.deepcopy(c.metadata) }
+end
+nb:mark_queued("c2"); nb:mark_queued("c3")
+run_events("c2", 40, { no_idle = true })
+local started2 = nb.cell_state["c2"].started_ns
+J.clear_outputs(buf)
+assert(nb.cell_state["c2"] and nb.cell_state["c2"].exec_state == "busy" and nb.cell_state["c2"].started_ns == started2,
+  "a clear keeps the running cell running with its stopwatch: " .. vim.inspect(nb.cell_state["c2"]))
+assert(nb.cell_state["c3"] and nb.cell_state["c3"].exec_state == "queued" and badge_of("c3", 3):find("[*]", 1, true),
+  "a clear keeps a waiting cell queued: " .. vim.inspect(nb.cell_state["c3"]))
+nb:apply_cell_event("c2", { kind = "status", state = "idle" })
+assert(nb.cell_state["c2"].duration_ns and nb.cell_state["c2"].exec_state == "idle", "the cleared running cell still finishes with its time")
+assert(nb.cells[2].execution_count == nil, "the clear dropped the count")
+nb:apply_cell_event("c2", { kind = "execute_reply", status = "ok", execution_count = 40 })
+assert(nb.cells[2].execution_count == 40 and badge_of("c2", 2):find("[40] ✓", 1, true),
+  "the run's reply gives the cleared cell its count, as JupyterLab: " .. badge_of("c2", 2))
+nb:apply_cell_event("c2", { kind = "execute_reply", status = "ok", execution_count = 41 })
+assert(nb.cells[2].execution_count == 40, "a cell that has a count keeps it")
+vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[3].start + 1, 0 })
+J.clear_cell_output(buf)
+assert(nb.cell_state["c3"] and nb.cell_state["c3"].exec_state == "queued", "a cell clear keeps the cell's queued mark")
+run_events("c3", 41)
+J.clear_cell_output(buf)
+assert(nb.cell_state["c3"] == nil, "a clear drops a finished cell's badge, as before")
+J._nb_client = real_nb_client5
+nb.cell_state["c2"] = nil
+for i, c in ipairs(nb.cells) do
+  c.outputs, c.execution_count = snapshot.cells[i].outputs or {}, snapshot.cells[i].execution_count
+end
+J._populate_buffer(nb)
+vim.bo[buf].modified = false
+for i, c in ipairs(nb.cells) do
+  c.outputs, c.execution_count, c.metadata = keep_out[i].outputs, keep_out[i].ec, keep_out[i].meta
+end
+print("F4d. a clear keeps the runs that are still on ok")
 
 -- F5. Run all queues EVERY code cell at once, before the first one has even
 -- been submitted, then feeds them to the kernel in order; a failed
@@ -280,7 +436,12 @@ local real_client, real_notify = J._nb_client, vim.notify
 local notes = {}
 J._nb_client = function() return fake end
 vim.notify = function(msg) notes[#notes + 1] = msg end
+-- B48-1: marking the cells queued is one refresh for the whole run, not one
+-- per cell, and a failure is one more
+local real_refresh, refreshes = Render.refresh, 0
+Render.refresh = function(...) refreshes = refreshes + 1; return real_refresh(...) end
 J.run_all(buf)
+assert(refreshes == 1, "B48-1: run_all refreshes once when it marks its cells queued, got " .. refreshes)
 assert(nb.cell_state["c2"].exec_state == "queued" and nb.cell_state["c3"].exec_state == "queued",
   "run_all must queue every code cell up front")
 assert(not nb.cell_state["c1"], "run_all must not queue a markdown cell")
@@ -289,12 +450,13 @@ assert(#calls == 1 and calls[1].method == "update_cell_source" and calls[1].para
 calls[1].cb(nil)
 assert(#calls == 2 and calls[2].method == "execute" and calls[2].params.cell_id == "c2", "execute follows the source push")
 calls[2].cb("kernel not started")
+assert(refreshes == 2, "B48-1: a failed run refreshes once more, got " .. refreshes)
 assert(#calls == 2, "a failed submission must stop the run: c3 must not be submitted")
 assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c3"].exec_state == "idle",
   "the failed cell and every cell after it are released")
 assert(#notes == 1 and notes[1]:find("kernel not started", 1, true), "the failure is reported once: " .. vim.inspect(notes))
 -- a run that is accepted keeps every cell queued until the kernel's execute_input
-calls, notes = {}, {}
+calls, notes, refreshes = {}, {}, 0
 J.run_all(buf)
 calls[1].cb(nil); calls[2].cb(nil)   -- c2 accepted (the backend answers on submission, not completion)
 assert(#calls == 3 and calls[3].params.cell_id == "c3", "the next cell is submitted once the previous is accepted")
@@ -302,21 +464,226 @@ calls[3].cb(nil); calls[4].cb(nil)
 assert(#calls == 4 and nb.cell_state["c2"].exec_state == "queued" and nb.cell_state["c3"].exec_state == "queued",
   "cells stay queued until the kernel's execute_input arrives")
 assert(#notes == 0, "an accepted run reports nothing")
+assert(refreshes == 1, "B48-1: an accepted run of two cells refreshed " .. refreshes .. " times, not once")
 nb:release_pending()
 -- run_below from cell 2 queues c2 and c3; run_above from cell 3 queues c2 only
-calls = {}
+calls, refreshes = {}, 0
 vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[2].start + 1, 0 })
 J.run_below(buf)
+assert(refreshes == 1, "B48-1: run_below refreshes once, got " .. refreshes)
 assert(#calls == 1 and calls[1].params.cell_id == "c2" and nb.cell_state["c3"].exec_state == "queued", "run_below queues the rest")
 nb:release_pending()
-calls = {}
+calls, refreshes = {}, 0
 vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[3].start + 1, 0 })
 J.run_above(buf)
+assert(refreshes == 1, "B48-1: run_above refreshes once, got " .. refreshes)
 assert(#calls == 1 and calls[1].params.cell_id == "c2" and nb.cell_state["c2"].exec_state == "queued"
   and nb.cell_state["c3"].exec_state == "idle", "run_above queues only the cells above")
 nb:release_pending()
+-- a run over a cell that is running counts it: the running cell stays
+-- running, and its run ends with the new one still waiting
+calls = {}
+nb:mark_queued("c2"); run_events("c2", 50, { no_idle = true })
+J.run_all(buf)
+assert(nb.cell_state["c2"].exec_state == "busy", "run_all leaves the running cell running")
+nb:apply_cell_event("c2", { kind = "status", state = "idle" })
+assert(nb.cell_state["c2"].exec_state == "queued",
+  "the running cell's run ends while run_all's run of it waits: queued, not done")
+nb:release_pending()
+Render.refresh = real_refresh
 J._nb_client, vim.notify = real_client, real_notify
 print("F5. run all/below/above queue up front, stop + release on failure ok")
+
+-- F6. A backend that exits takes its executions with it: the cells of the
+-- runs it took are released (the queued ones drop the waiting badge, the
+-- running one finishes as failed with its stopwatch stopped), and nothing
+-- else is touched. Backend and notebooks are stubs here; the real backend
+-- is killed in tests/queued_screen.sh.
+local RPC = require("jupynvim.rpc")
+local Image = require("jupynvim.notebook.image")
+local real_spawn, real_attach, real_attach_remote = RPC.spawn, Image.attach, Image.attach_remote
+local real_cfg = { core_path = J.config.core_path, auto_install = J.config.auto_install }
+local real_all, real_clients_local, real_client_field = Notebook.all, J.clients["local"], J.client
+J.config.core_path, J.config.auto_install = "jupynvim-core", false
+local spawned = {}
+RPC.spawn = function(opts)
+  local c = { job = 100 + #spawned, pid = 100 + #spawned, opts = opts, calls = {},
+    on = function() end, stop = function() end,
+    call = function(self, method, params, cb) self.calls[#self.calls + 1] = { method = method, params = params, cb = cb } end }
+  spawned[#spawned + 1] = c
+  return c
+end
+Image.attach, Image.attach_remote = function() end, function() end
+local function fresh_backend()
+  J.client, J.clients["local"] = nil, nil
+  return J._ensure_client()
+end
+-- a second notebook, to prove one backend's exit leaves the others alone
+local buf2 = vim.api.nvim_create_buf(true, false)
+local nb2 = Notebook.create(buf2, TMPD .. "/t2.ipynb", "sess2", { cells = {
+  { id = "e1", cell_type = "code", source = "1+1", outputs = {} } } })
+J._populate_buffer(nb2)
+-- run a notebook through a given backend: the run goes where _nb_client says
+local function run_through(client, fn, arg)
+  local keep = J._nb_client
+  J._nb_client = function() return client end
+  fn(arg)
+  J._nb_client = keep
+end
+-- feed the backend's answers: every call accepted, as it answers on submission
+local function accept_all(client)
+  local n = 1
+  while client.calls[n] do
+    local call = client.calls[n]; client.calls[n] = { done = true, method = call.method, params = call.params }
+    if call.cb then call.cb(nil) end
+    n = n + 1
+  end
+end
+local old_notify = vim.notify
+local exit_notes = {}
+vim.notify = function(msg) exit_notes[#exit_notes + 1] = msg end
+
+nb.cell_state["c2"], nb.cell_state["c3"] = nil, nil   -- F4 left c2 failed
+local be1 = fresh_backend()
+assert(be1 == spawned[1] and J.client == be1 and J.clients["local"] == be1, "the stub backend is the local one")
+J.run_all(buf)                               -- local notebook: goes to be1
+accept_all(be1)
+nb:apply_cell_event("c2", { kind = "execute_input", execution_count = 9 })   -- c2 runs, c3 waits
+assert(nb.cell_state["c2"].exec_state == "busy" and nb.cell_state["c3"].exec_state == "queued")
+local other = { calls = {}, call = function(self, method, params, cb) self.calls[#self.calls + 1] = { method = method, cb = cb } end }
+run_through(other, J.run_all, buf2)          -- the second notebook went through another backend
+accept_all(other)
+assert(nb2.cell_state["e1"].exec_state == "queued")
+-- B48-2: the exit walks the open notebooks once and refreshes only the changed one
+local walks, refreshed = 0, {}
+Notebook.all = function() walks = walks + 1; return real_all() end
+Render.refresh = function(n, ...) refreshed[n] = (refreshed[n] or 0) + 1; return real_refresh(n, ...) end
+be1.opts.on_exit(137)
+Notebook.all, Render.refresh = real_all, real_refresh
+local st2 = nb.cell_state["c2"]
+assert(st2.exec_state == "idle" and st2.failed, "the running cell finishes as failed when its backend exits")
+assert(st2.duration_ns and st2.duration_ns > 0, "its stopwatch stops at the exit")
+local stopped = st2.duration_ns
+vim.wait(30)
+assert(st2.duration_ns == stopped, "the stopped time does not move on")
+assert(nb.cell_state["c3"].exec_state == "idle", "the cell waiting behind it is released")
+assert(not nb.cell_state["c3"].failed, "a released waiting cell keeps its old badge, it is not marked failed")
+assert(nb2.cell_state["e1"].exec_state == "queued", "a notebook that ran through another backend is untouched")
+assert(walks == 1, "B48-2: a backend exit walks the open notebooks once, walked " .. walks)
+assert(refreshed[nb] == 1 and refreshed[nb2] == nil and next(refreshed, next(refreshed)) == nil,
+  "B48-2: only the notebook whose cells changed is refreshed: " .. vim.inspect(refreshed))
+assert(not nb.exec_clients[be1], "the exited backend is forgotten")
+assert(nb2.exec_clients[other], "the other notebook still names the backend it ran through")
+assert(J.clients["local"] == nil and J.client == nil, "the exited backend is unregistered")
+vim.wait(100, function() return #exit_notes > 0 end)
+assert(#exit_notes == 1 and exit_notes[1]:find("exited", 1, true), "the exit is still announced: " .. vim.inspect(exit_notes))
+nb2:release_pending(); nb2.exec_clients = nil
+print("F6. a backend exit releases the cells of the runs it took, only those ok")
+
+-- F6b. :JupynvimUseJob stops the backend and spawns the next at once; the old
+-- one's exit lands after the new one is registered. It must still release
+-- the cells it took, and must not take the new one out of routing nor touch
+-- a run the new one took.
+exit_notes = {}
+local old = fresh_backend()
+nb.cell_state["c2"], nb.cell_state["c3"] = nil, nil
+J.run_all(buf)
+accept_all(old)
+nb:apply_cell_event("c2", { kind = "execute_input", execution_count = 10 })
+J.client, J.clients["local"] = nil, nil      -- UseJob: the old one is stopped and dropped
+local new = J._ensure_client()
+assert(new ~= old and J.client == new and J.clients["local"] == new)
+run_through(new, J.run_all, buf2)            -- the second notebook runs on the new backend
+accept_all(new)
+assert(nb2.cell_state["e1"].exec_state == "queued")
+old.opts.on_exit(143)                        -- the old backend's exit arrives
+assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed,
+  "the old backend's exit still releases the run it took")
+assert(nb.cell_state["c3"].exec_state == "idle", "and the cell waiting behind it")
+assert(J.client == new and J.clients["local"] == new, "the new backend stays in routing")
+assert(nb2.cell_state["e1"].exec_state == "queued" and nb2.exec_clients[new],
+  "a run the new backend took is not released by the old one's exit")
+-- and its own exit releases it
+new.opts.on_exit(1)
+assert(nb2.cell_state["e1"].exec_state == "idle", "the new backend's exit releases its run")
+vim.wait(100, function() return #exit_notes > 1 end)
+print("F6b. the old backend's late exit (UseJob order) releases only its own runs ok")
+
+-- F6c. Running one cell queues it the same way, names the backend that took
+-- it, and a refusal releases it and is reported once.
+exit_notes = {}
+local cell_be = { calls = {}, call = function(self, method, params, cb) self.calls[#self.calls + 1] = { method = method, params = params, cb = cb } end }
+nb.cell_state["c3"] = nil
+vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[3].start + 1, 0 })
+local before_refresh = 0
+Render.refresh = function(...) before_refresh = before_refresh + 1; return real_refresh(...) end
+run_through(cell_be, J.run_cell, buf)
+cell_be.calls[1].cb(nil)                                      -- the source is taken
+assert(cell_be.calls[2] and cell_be.calls[2].method == "execute" and cell_be.calls[2].params.cell_id == "c3")
+assert(nb.cell_state["c3"].exec_state == "queued", "run_cell queues the cell before the kernel answers")
+assert(before_refresh == 1, "run_cell refreshes once to show the queued cell, got " .. before_refresh)
+cell_be.calls[2].cb("kernel not started")
+assert(nb.cell_state["c3"].exec_state == "idle", "a refused run releases the cell")
+assert(before_refresh == 2, "and refreshes once more, got " .. before_refresh)
+assert(#exit_notes == 1 and exit_notes[1]:find("kernel not started", 1, true), "the refusal is reported once: " .. vim.inspect(exit_notes))
+cell_be.calls = {}
+run_through(cell_be, J.run_cell, buf)
+cell_be.calls[1].cb(nil); cell_be.calls[2].cb(nil)           -- taken
+assert(nb.cell_state["c3"].exec_state == "queued")
+J._release_client_cells(cell_be)                              -- the backend that took the run exits
+assert(nb.cell_state["c3"].exec_state == "idle", "run_cell's backend exit releases the cell")
+Render.refresh = real_refresh
+print("F6c. run_cell queues the cell, a refusal or the backend's exit releases it ok")
+
+-- F6d. A kernel that dies by itself (its backend lives): the backend's
+-- kernel_event of kind "exited" releases the notebook's runs, says so once,
+-- and lets the next start through. Only the notebook's own backend counts.
+exit_notes = {}
+local kbe = fresh_backend()
+nb.cell_state["c2"], nb.cell_state["c3"] = nil, nil
+nb.kernel_started = true
+J.run_all(buf)
+accept_all(kbe)
+nb:apply_cell_event("c2", { kind = "execute_input", execution_count = 60 })
+J._handle_kernel_event({ session_id = "sess", event = { kind = "exited" } }, other)
+assert(nb.cell_state["c2"].exec_state == "busy", "another backend's word about this session is not taken")
+J._handle_kernel_event({ session_id = "sess", event = { kind = "global", raw = "x" } }, kbe)
+assert(nb.cell_state["c2"].exec_state == "busy" and nb.kernel_started, "a global kernel_event changes nothing")
+J._handle_kernel_event({ session_id = "sess", event = { kind = "exited" } }, kbe)
+assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed and nb.cell_state["c2"].duration_ns,
+  "the running cell finishes as failed with its time stopped when its kernel dies")
+assert(nb.cell_state["c3"].exec_state == "idle", "the cell waiting behind it is released")
+assert(nb.kernel_started == false, "the notebook has no kernel any more, so the next start goes through")
+assert(#exit_notes == 1 and exit_notes[1]:find("kernel died", 1, true), "the death is said once: " .. vim.inspect(exit_notes))
+print("F6d. a kernel that dies by itself releases the notebook's runs ok")
+
+-- F6e. A run sent in the moments between :JupynvimUseJob and the old
+-- backend's exit goes through the new backend; the old one's exit still
+-- releases the run it took, rather than leave it running for good.
+local o2 = fresh_backend()
+nb.cell_state["c2"], nb.cell_state["c3"] = nil, nil
+nb.exec_clients = nil
+J.run_all(buf)
+accept_all(o2)
+nb:apply_cell_event("c2", { kind = "execute_input", execution_count = 70 })   -- c2 runs on the old backend
+J.client, J.clients["local"] = nil, nil
+local n2 = J._ensure_client()
+vim.api.nvim_win_set_cursor(win, { CellMode.ranges(buf)[3].start + 1, 0 })
+J.run_cell(buf)                                                                -- c3 goes through the new one
+accept_all(n2)
+assert(n2 ~= o2 and nb.exec_clients[n2] and nb.exec_clients[o2], "the notebook ran through both backends")
+o2.opts.on_exit(137)
+assert(nb.cell_state["c2"].exec_state == "idle" and nb.cell_state["c2"].failed,
+  "the old backend's exit releases the run it took, though a later run went through the new one")
+assert(not nb.exec_clients[o2] and nb.exec_clients[n2], "only the exited backend is forgotten")
+n2.opts.on_exit(1)
+assert(next(nb.exec_clients) == nil, "and the new one at its own exit")
+print("F6e. a backend's exit releases its runs after a later run went elsewhere ok")
+
+vim.notify = old_notify
+RPC.spawn, Image.attach, Image.attach_remote = real_spawn, real_attach, real_attach_remote
+J.config.core_path, J.config.auto_install = real_cfg.core_path, real_cfg.auto_install
+J.client, J.clients["local"] = real_client_field, real_clients_local
 
 -- F2. duration survives save + reopen: restored from jupyter-standard
 --     timing metadata (metadata.execution stamps)

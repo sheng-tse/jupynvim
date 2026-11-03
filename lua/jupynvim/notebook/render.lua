@@ -316,7 +316,7 @@ end
 -- VSCode's execution bar: "[1] ✓ 0.1s" under the input box. Live elapsed
 -- time with a spinner glyph while running; ✗ on error. A cell queued behind
 -- another (Run all, run below) shows JupyterLab's "[*]" with the running
--- dot greyed out, so the one cell in the busy color is the one running.
+-- dot grayed out, so the one cell in the busy color is the one running.
 local function fmt_duration(ns)
   local s = ns / 1e9
   if s < 10 then return string.format("%.1fs", s) end

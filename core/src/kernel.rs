@@ -762,6 +762,10 @@ impl Kernel {
     pub fn spec(&self) -> &KernelSpec { &self.spec }
     pub fn session(&self) -> &str { &self.session }
 
+    /// Turns true once the kernel's process has exited, for any reason (a
+    /// kill of ours included), and its dir is removed.
+    pub fn exit_watch(&self) -> watch::Receiver<bool> { self.process.exited.clone() }
+
     /// Move the events receiver out. Returns None if already taken.
     pub async fn take_events(&self) -> Option<mpsc::UnboundedReceiver<KernelEvent>> {
         self.events.lock().await.take()

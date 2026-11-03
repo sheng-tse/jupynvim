@@ -760,35 +760,108 @@ end
 -- waiting behind a long one read as waiting instead of keeping their old
 -- "[n] ✓ 0.1s" badge. The badge's other fields (duration, failed) stay, so a
 -- queued cell the kernel never runs (interrupt, restart) gets its old badge
--- back when it is unqueued. A cell already running is left alone.
+-- back when it is unqueued.
+--
+-- A cell can be submitted again before an earlier run of it started or
+-- ended (Run all twice, Shift-Enter on a running cell), so it counts its
+-- runs that have not started (`pending`): one more per submission, one less
+-- when the kernel takes one. A run opens with its status busy (every
+-- request gets one, an aborted one too) or, should that be missed, its
+-- execute_input, and closes with its idle (`run`: nil, "busy" once the busy
+-- came, "input" once the execute_input came; a second execute_input or a
+-- busy after it is the next run, its idle missed). A run that ends while
+-- another is still waiting leaves the cell queued, not done. `epoch` is the
+-- notebook's kernel epoch the cell was last submitted in (see retire).
 function Notebook:mark_queued(cell_id)
   local st = self.cell_state[cell_id] or {}
-  if st.exec_state == "busy" then return end
-  st.exec_state = "queued"
+  st.pending = (st.pending or 0) + 1
+  st.epoch = self.epoch or 0
+  if st.exec_state ~= "busy" then st.exec_state = "queued" end
   self.cell_state[cell_id] = st
 end
 
+-- A submission that never reached the kernel (refused, or the run stopped
+-- before it). Returns true when the cell's badge changed.
 function Notebook:unqueue(cell_id)
   local st = self.cell_state[cell_id]
-  if st and st.exec_state == "queued" then st.exec_state = "idle"; return true end
+  if not st or (st.pending or 0) == 0 then return false end
+  st.pending = st.pending - 1
+  if st.pending == 0 and st.exec_state == "queued" then st.exec_state = "idle"; return true end
   return false
 end
 
--- The kernel is going away (stop, restart): release every queued cell and
--- finish the running one as failed, stopwatch stopped now, since nothing
--- will send its idle any more. Returns true when any cell changed.
+-- The kernel took one of the cell's submissions: `how` is "busy" or "input".
+local function take_run(st, how)
+  if st.run == nil or st.run == "input" then
+    local n = st.pending or 0
+    st.pending = n > 0 and n - 1 or 0
+  end
+  st.run = how
+end
+
+-- The kernel is going away (stop, restart, a death) or its backend did:
+-- release every queued cell and finish the running one as failed, stopwatch
+-- stopped now, since nothing will send its idle any more. Returns true when
+-- any cell changed.
 function Notebook:release_pending()
   local any = false
   for _, c in ipairs(self.cells) do
-    if self:unqueue(c.id) then any = true end
     local st = self.cell_state[c.id]
-    if st and st.exec_state == "busy" then
-      if st.started_ns and not st.duration_ns then st.duration_ns = vim.uv.hrtime() - st.started_ns end
-      st.exec_state, st.failed = "idle", true
-      any = true
+    if st then
+      if (st.pending or 0) > 0 then st.pending = 0 end
+      st.run = nil
+      if st.exec_state == "queued" then
+        st.exec_state = "idle"
+        any = true
+      elseif st.exec_state == "busy" then
+        if st.started_ns and not st.duration_ns then st.duration_ns = vim.uv.hrtime() - st.started_ns end
+        st.exec_state, st.failed = "idle", true
+        any = true
+      end
     end
   end
   return any
+end
+
+-- A stop or a restart is asked for: the kernel's executions are released
+-- now, and until the backend answers (`retired(epoch)`) the state events of
+-- the cells submitted before it are not applied. They come from the kernel
+-- being stopped, read by the backend before it got the request: a status
+-- busy or execute_input of the next cell would take that cell back to busy
+-- with a stopwatch nothing stops. The backend sends no such event once it
+-- answered. Outputs still apply. Returns true when any cell changed.
+function Notebook:retire()
+  self.epoch = (self.epoch or 0) + 1
+  self.retiring = self.epoch
+  return self:release_pending()
+end
+
+function Notebook:retired(epoch)
+  if self.retiring == epoch then self.retiring = nil end
+end
+
+-- The backends this notebook's runs went through: a backend that exits
+-- releases the notebooks it ran. Normally one; two when a run was sent in
+-- the moments between :JupynvimUseJob or a reconnect and the old backend's
+-- exit, which then releases the notebook too rather than leave its old
+-- runs waiting for good.
+function Notebook:ran_through(client)
+  self.exec_clients = self.exec_clients or {}
+  self.exec_clients[client] = true
+end
+
+-- What a clear of the cell's outputs does to its badge: the last run's time
+-- and failure go, a run still on stays (a running cell keeps its stopwatch,
+-- a waiting one its queued mark).
+function Notebook:clear_badge(cell_id)
+  local st = self.cell_state[cell_id]
+  if not st then return end
+  if st.exec_state == "busy" or st.exec_state == "queued" or (st.pending or 0) > 0 then
+    st.duration_ns, st.failed = nil, nil
+    if st.exec_state ~= "busy" then st.started_ns = nil end
+  else
+    self.cell_state[cell_id] = nil
+  end
 end
 
 -- Returns the ids of the cells whose outputs changed, when that is not just
@@ -810,6 +883,12 @@ function Notebook:apply_cell_event(cell_id, ev)
   local c = self:get_cell(cell_id)
   if not c then return end
   M._owner[c] = self.buf
+  -- a state event of a kernel being stopped (see retire)
+  local stale = false
+  if self.retiring and (kind == "execute_input" or kind == "status") then
+    local st = self.cell_state[cell_id]
+    stale = ((st and st.epoch) or -1) < self.retiring
+  end
   if kind == "execute_input" then
     c.execution_count = ev.execution_count
     c.outputs = {}
@@ -819,7 +898,12 @@ function Notebook:apply_cell_event(cell_id, ev)
     c._output_expanded = nil
     -- start the execution stopwatch (drives the VSCode-style "[1] ✓ 0.1s"
     -- bar; live elapsed while busy, frozen duration once idle)
-    self.cell_state[cell_id] = { exec_state = "busy", started_ns = vim.uv.hrtime() }
+    if not stale then
+      local st = self.cell_state[cell_id] or {}
+      take_run(st, "input")
+      st.exec_state, st.started_ns, st.duration_ns, st.failed = "busy", vim.uv.hrtime(), nil, nil
+      self.cell_state[cell_id] = st
+    end
   elseif kind == "stream" or kind == "execute_result" or kind == "display_data"
       or kind == "error" or kind == "clear_output" then
     c.outputs = M.apply_output_event(c.outputs, ev)
@@ -829,21 +913,38 @@ function Notebook:apply_cell_event(cell_id, ev)
       local st = self.cell_state[cell_id]
       if st then st.failed = true end
     end
-  elseif kind == "status" then
+  elseif kind == "status" and not stale then
     -- preserve the stopwatch fields; stamp the duration when leaving busy
     local st = self.cell_state[cell_id] or {}
     if st.exec_state == "busy" and ev.state ~= "busy" and st.started_ns and not st.duration_ns then
       st.duration_ns = vim.uv.hrtime() - st.started_ns
     end
-    st.exec_state = ev.state
+    if ev.state == "busy" then
+      take_run(st, "busy")
+      st.exec_state = "busy"
+    elseif ev.state == "idle" then
+      -- the run is over; another one still waiting keeps the cell queued
+      st.run = nil
+      st.exec_state = (st.pending or 0) > 0 and "queued" or "idle"
+    else
+      st.exec_state = ev.state
+    end
     self.cell_state[cell_id] = st
   elseif kind == "execute_reply" then
-    -- nothing to mutate. In particular a queued cell is NOT released here:
+    -- A run whose cell was cleared while it ran ends with its count, as
+    -- JupyterLab sets it from the reply (an aborted reply has none). The
+    -- backend's model does the same.
+    local ec = c.execution_count
+    if (ec == nil or ec == vim.NIL) and type(ev.execution_count) == "number" and ev.execution_count > 0 then
+      c.execution_count = ev.execution_count
+    end
+    -- Nothing else changes. In particular a queued cell is NOT released here:
     -- the reply rides the shell channel and can land after the iopub idle
     -- that already finished the cell, i.e. after the cell was queued again
     -- for its next run. Should a kernel abort a queued request (this
     -- backend sends stop_on_error=false, so ipykernel does not), the
-    -- busy/idle statuses it publishes on iopub release the cell.
+    -- busy/idle statuses it publishes on iopub take that submission off
+    -- the cell's count.
   end
 end
 

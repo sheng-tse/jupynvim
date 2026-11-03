@@ -28,7 +28,12 @@ impl Server {
         if let Some((_, s)) = self.sessions.remove(sid) {
             // No widget message goes to a kernel that is being closed.
             *s.widgets.comm_tx.write() = None;
-            let kernel = s.kernel.write().await.take();
+            let kernel = {
+                let mut slot = s.kernel.write().await;
+                // its exit is ours: nothing is told about it
+                s.retire_kernel();
+                slot.take()
+            };
             if let Some(k) = kernel {
                 let _ = k.kill().await;
             }

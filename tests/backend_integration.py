@@ -422,6 +422,85 @@ def t_kernel_killed_on_sigterm():
     )
 
 
+def _exited_events(cl, sid):
+    return [i for i, e in enumerate(list(cl.events))
+            if isinstance(e, list) and e[0] == 2 and e[1] == "kernel_event"
+            and e[2][0].get("session_id") == sid and (e[2][0].get("event") or {}).get("kind") == "exited"]
+
+
+def t_kernel_died_by_itself():
+    # A kernel that dies while its backend lives (an OOM kill, a crash,
+    # os._exit): the backend says so once with a kernel_event of kind
+    # "exited", sends nothing of that kernel after it, and refuses the next
+    # run instead of sending it to a kernel that is gone. A kernel the backend
+    # stops itself is not reported.
+    cl = Client()
+    nb_path = tmp_nb()
+    nb = make_test_nb()
+    nb["cells"].append({"cell_type": "code", "id": "die", "metadata": {}, "execution_count": None, "outputs": [],
+                        "source": "import os\nfor i in range(3000):\n    print(i, flush=True)\nos._exit(3)"})
+    json.dump(nb, open(nb_path, "w"))
+    kpids = []
+    try:
+        _, res = cl.call("open", {"path": nb_path})
+        sid = res["session_id"]
+        err, _ = cl.call("start_kernel", {"session_id": sid}, timeout=30)
+        kpids = _kernel_pids_of(cl.p.pid)
+        err, _ = cl.call("stop_kernel", {"session_id": sid})
+        time.sleep(1.0)
+        report("a kernel the backend stops is not reported as exited", err is None and not _exited_events(cl, sid),
+               f"err={err} exited={_exited_events(cl, sid)}")
+        err, _ = cl.call("start_kernel", {"session_id": sid}, timeout=30)
+        kpids = _kernel_pids_of(cl.p.pid)
+        report("died: the kernel runs", err is None and len(kpids) == 1, f"err={err} kernels={kpids}")
+        if len(kpids) != 1:
+            return
+        os.kill(kpids[0], signal.SIGKILL)
+        ev = cl.wait_event(lambda e: isinstance(e, list) and e[0] == 2 and e[1] == "kernel_event"
+                           and (e[2][0].get("event") or {}).get("kind") == "exited", timeout=10)
+        time.sleep(0.5)
+        report("a kernel killed from outside is reported once", ev is not None and len(_exited_events(cl, sid)) == 1,
+               f"exited events: {_exited_events(cl, sid)}")
+        err, _ = cl.call("execute", {"session_id": sid, "cell_id": "c1"})
+        report("a run after the death is refused, not sent to a kernel that is gone",
+               err is not None and "kernel not started" in str(err), f"err={err}")
+        # a kernel that exits while it prints: nothing of it follows the notice
+        err, _ = cl.call("start_kernel", {"session_id": sid}, timeout=30)
+        kpids = _kernel_pids_of(cl.p.pid)
+        n0 = len(cl.events)
+        err2, _ = cl.call("execute", {"session_id": sid, "cell_id": "die"})
+        deadline = time.time() + 20
+        while time.time() < deadline and not [i for i in _exited_events(cl, sid) if i >= n0]:
+            time.sleep(0.05)
+        time.sleep(1.0)
+        evs = list(cl.events)
+        at = [i for i in _exited_events(cl, sid) if i >= n0]
+        late = [i for i, e in enumerate(evs) if at and i > at[0] and isinstance(e, list) and e[0] == 2
+                and e[1] == "cell_event" and e[2][0].get("session_id") == sid]
+        printed = [e for e in evs[n0:] if isinstance(e, list) and e[0] == 2 and e[1] == "cell_event"
+                   and e[2][0]["event"].get("kind") == "stream"]
+        report("a kernel that exits by itself while printing is reported once, after what it printed",
+               err is None and err2 is None and len(at) == 1 and printed and not late,
+               f"err={err} err2={err2} exited={at} streams={len(printed)} cell events after the notice={len(late)}")
+        # and the next start gives the notebook a kernel again
+        err, _ = cl.call("start_kernel", {"session_id": sid}, timeout=30)
+        cl.events.clear()
+        cl.call("execute", {"session_id": sid, "cell_id": "c1"})
+        ev = cl.wait_event(lambda e: e[0] == 2 and e[1] == "cell_event" and e[2][0]["cell_id"] == "c1"
+                           and e[2][0]["event"]["kind"] == "stream", timeout=15)
+        report("after a death the next start runs cells again", err is None and ev is not None, f"err={err}")
+        kpids = _kernel_pids_of(cl.p.pid)
+        cl.call("stop_kernel", {"session_id": sid})
+    finally:
+        cl.stop()
+        for p in _wait_all_dead(kpids, timeout=3):
+            try:
+                os.kill(p, 9)
+            except OSError:
+                pass
+        os.unlink(nb_path)
+
+
 # ── Pixi environments (#47) ─────────────────────────────────────────────
 # A project that holds its interpreter in .pixi/envs/default is used by
 # auto_venv like a .venv, but only when ipykernel is installed there.
@@ -548,7 +627,7 @@ TESTS = [
     t_ping, t_list_kernels, t_open_close, t_kernel_lifecycle,
     t_run_cell_streams, t_run_cell_expression, t_run_cell_error,
     t_save_roundtrip, t_image_output, t_insert_delete_move, t_silent_execute,
-    t_kernel_killed_on_disconnect, t_kernel_killed_on_sigterm,
+    t_kernel_killed_on_disconnect, t_kernel_killed_on_sigterm, t_kernel_died_by_itself,
     t_pixi_auto_venv, t_pixi_without_ipykernel, t_pixi_python_path,
 ]
 

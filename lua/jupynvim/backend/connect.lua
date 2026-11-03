@@ -510,6 +510,10 @@ local function spawn_client(cmd_vec, alias, trust)
       -- take the new one out of routing.
       if M.clients[alias] == client then M.clients[alias] = nil end
       if alias == "local" and M.client == client then M.client = nil end
+      -- Its executions died with it: the cells of the runs it took are
+      -- released, whichever backend is registered now.
+      local okr, rerr = pcall(M._release_client_cells, client)
+      if not okr then Log.warn("releasing the cells of an exited backend: " .. tostring(rerr)) end
       -- A remote backend that died before it ever answered did not start.
       -- That counts against the deploy record only when the spawn rested on
       -- the record alone: 127 for a binary gone, 126 for another arch. After
@@ -552,8 +556,7 @@ local function spawn_client(cmd_vec, alias, trust)
     require("jupynvim.notebook.widgets").handle_event(args[1] or args)
   end)
   client:on("kernel_event", function(args)
-    local p = args[1] or args
-    Log.debug("kernel_event: " .. vim.inspect(p):sub(1, 200))
+    M._handle_kernel_event(args[1] or args, client)
   end)
   -- Backend-initiated user-facing messages (e.g. "installing ipykernel into
   -- this env..." during a first-use kernel start).
