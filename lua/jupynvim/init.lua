@@ -480,6 +480,7 @@ M._asking = M._asking or {}
 -- Walk up from `start_dir` looking for a project venv python under `.venv`,
 -- `venv`, or `env` (`Scripts\python.exe` on Windows). Return the python path
 -- if the venv exists AND ipykernel is importable from it. nil otherwise.
+-- Search for pixi in each dir if no venv found.
 local function find_local_venv_python(start_dir)
   local is_win = package.config:sub(1, 1) == "\\"
   local bin = is_win and "Scripts\\python.exe" or "bin/python"
@@ -493,6 +494,13 @@ local function find_local_venv_python(start_dir)
         return nil  -- venv exists but no ipykernel - don't fall back silently
       end
     end
+    -- Pixi's default environment.
+    local pixi_candidate = dir .. "/.pixi/envs/default/" .. bin
+    if vim.fn.executable(pixi_candidate) == 1 then
+      vim.fn.system({ pixi_candidate, "-c", "import ipykernel" })
+      if vim.v.shell_error == 0 then return pixi_candidate end
+      return nil
+		end
     local parent = vim.fn.fnamemodify(dir, ":h")
     if parent == dir then break end
     dir = parent

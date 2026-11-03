@@ -54,8 +54,17 @@ impl Server {
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| path_buf.clone());
+            // Identify Pixi environments from the interpreter path.
+            let is_pixi = path_buf
+                .components()
+                .any(|component| component.as_os_str() == ".pixi");
+            let (name, display_name) = if is_pixi {
+                ("pixi-python", "Python (Pixi)")
+            } else {
+                ("venv-python", "Python (venv)")
+            };
             kernelspec::KernelSpec {
-                name: "venv-python".to_string(),
+                name: name.to_string(),
                 path: parent,
                 argv: vec![
                     py,
@@ -64,7 +73,7 @@ impl Server {
                     "-f".to_string(),
                     "{connection_file}".to_string(),
                 ],
-                display_name: "venv python".to_string(),
+                display_name: display_name.to_string(),
                 language: "python".to_string(),
                 interrupt_mode: None,
                 env: std::collections::HashMap::new(),
