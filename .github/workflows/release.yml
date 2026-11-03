@@ -14,8 +14,30 @@ permissions:
   contents: write
 
 jobs:
+  # The installer downloads the release tagged v<version of core/Cargo.toml>
+  # and keeps only binaries that report that version, so a tag that is not
+  # exactly that publishes a release nothing installs. A pre-release tag
+  # such as v0.5.0-beta.1 needs the same suffix in both manifests.
+  version:
+    name: tag matches core/Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: check the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          core=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' core/Cargo.toml | head -n 1)
+          lib=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' core/native/Cargo.toml | head -n 1)
+          if [ -z "$core" ] || [ "$TAG" != "v$core" ] || [ "$lib" != "$core" ]; then
+            echo "::error::the tag is $TAG, core/Cargo.toml says ${core:-nothing} and core/native/Cargo.toml ${lib:-nothing}; the tag must be v<version> with both manifests at that version"
+            exit 1
+          fi
+          echo "tag $TAG matches version $core"
+
   build:
     name: build ${{ matrix.target }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -72,6 +94,7 @@ jobs:
 
   build-lib:
     name: build libjupynvim ${{ matrix.target }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
