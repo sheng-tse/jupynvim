@@ -1,0 +1,1262 @@
+JNVMATH 2
+doc open-space
+src 7
+a $x$ b
+text 15
+a ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc space-after-open
+src 8
+a $ x$ b
+text 10
+a \$ x\$ b
+end
+doc space-before-close
+src 8
+a $x $ b
+text 10
+a \$x \$ b
+end
+doc word-before-open
+src 6
+a$x$ b
+text 14
+aZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc word-after-close
+src 6
+a $x$b
+text 14
+a ZZMTH0001ZZb
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc digit-before-open
+src 6
+1$x$ b
+text 14
+1ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc digit-after-close
+src 6
+a $x$1
+text 8
+a \$x\$1
+end
+doc paren
+src 5
+($x$)
+text 13
+(ZZMTH0001ZZ)
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc bracket
+src 5
+[$x$]
+text 13
+[ZZMTH0001ZZ]
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc dquote
+src 5
+"$x$"
+text 13
+"ZZMTH0001ZZ"
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc squote
+src 5
+'$x$'
+text 13
+'ZZMTH0001ZZ'
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc brace
+src 5
+{$x$}
+text 13
+{ZZMTH0001ZZ}
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc hyphen
+src 5
+-$x$-
+text 13
+-ZZMTH0001ZZ-
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc slash
+src 5
+/$x$/
+text 13
+/ZZMTH0001ZZ/
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc colon-after
+src 11
+is $x$: yes
+text 19
+is ZZMTH0001ZZ: yes
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc period-after
+src 8
+end $x$.
+text 16
+end ZZMTH0001ZZ.
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc comma-after
+src 8
+a $x$, b
+text 16
+a ZZMTH0001ZZ, b
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc currency-two
+src 21
+costs $5 and $10 each
+text 23
+costs \$5 and \$10 each
+end
+doc currency-close-digit
+src 17
+from $5 to 10$ ok
+text 19
+from ZZMTH0001ZZ ok
+math 0 0 0 dollar
+tex 7
+5 to 10
+raw 9
+$5 to 10$
+prepared 7
+5 to 10
+katex 7
+5 to 10
+end
+doc currency-doc
+src 43
+to split $100 in half, we calculate $100/2$
+text 48
+to split \$100 in half, we calculate ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+end
+doc escaped-open
+src 6
+\$x$ b
+text 7
+\$x\$ b
+end
+doc escaped-close
+src 8
+a $x\$ b
+text 9
+a \$x\$ b
+end
+doc escaped-inside
+src 12
+a $x \$ y$ b
+text 15
+a ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 6
+x \$ y
+raw 8
+$x \$ y$
+prepared 6
+x \$ y
+katex 6
+x \$ y
+end
+doc escaped-backslash-then-math
+src 9
+a \\$x$ b
+text 17
+a \\ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc dbl-inline-mid
+src 9
+a $$x$$ b
+text 16
+a ZZDMTH0001ZZ b
+math 0 1 0 dollars
+tex 1
+x
+raw 5
+$$x$$
+prepared 1
+x
+katex 1
+x
+end
+doc dbl-space-after-open
+src 10
+a $$ x$$ b
+text 16
+a ZZDMTH0001ZZ b
+math 0 1 0 dollars
+tex 1
+x
+raw 6
+$$ x$$
+prepared 1
+x
+katex 1
+x
+end
+doc dbl-alone
+src 5
+$$x$$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 1
+x
+raw 5
+$$x$$
+prepared 1
+x
+katex 1
+x
+end
+doc dbl-alone-spaces
+src 7
+$$ x $$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 1
+x
+raw 7
+$$ x $$
+prepared 1
+x
+katex 1
+x
+end
+doc dbl-open-single-close
+src 8
+a $$x$ b
+text 15
+a ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 2
+$x
+raw 4
+$$x$
+prepared 2
+$x
+katex 2
+$x
+end
+doc adjacent
+src 6
+$a$$b$
+text 22
+ZZMTH0001ZZZZMTH0002ZZ
+math 0 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 0 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+end
+doc three
+src 7
+$a$b$c$
+text 23
+ZZMTH0001ZZbZZMTH0002ZZ
+math 0 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 0 0 0 dollar
+tex 1
+c
+raw 3
+$c$
+prepared 1
+c
+katex 1
+c
+end
+doc emph-star-inside
+src 7
+$a*b*c$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+a*b*c
+raw 7
+$a*b*c$
+prepared 5
+a*b*c
+katex 5
+a*b*c
+end
+doc emph-under-inside
+src 7
+$a_b_c$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+a_b_c
+raw 7
+$a_b_c$
+prepared 5
+a_b_c
+katex 5
+a_b_c
+end
+doc two-subscripts
+src 15
+$x_1$ and $y_1$
+text 27
+ZZMTH0001ZZ and ZZMTH0002ZZ
+math 0 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 0 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+end
+doc strong-around
+src 7
+**$x$**
+text 15
+**ZZMTH0001ZZ**
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc em-around
+src 5
+*$x$*
+text 13
+*ZZMTH0001ZZ*
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc link-around
+src 20
+[$x$](https://e.com)
+text 28
+[ZZMTH0001ZZ](https://e.com)
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc link-inside
+src 8
+$[a](b)$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 6
+[a](b)
+raw 8
+$[a](b)$
+prepared 6
+[a](b)
+katex 6
+[a](b)
+end
+doc autolink-inside
+src 17
+$<https://e.com>$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 15
+<https://e.com>
+raw 17
+$<https://e.com>$
+prepared 15
+<https://e.com>
+katex 15
+<https://e.com>
+end
+doc code-inside
+src 6
+$`a`b$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 4
+`a`b
+raw 6
+$`a`b$
+prepared 4
+`a`b
+katex 4
+`a`b
+end
+doc backtick-form
+src 10
+$`a \\ b`$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 backtick
+tex 6
+a \\ b
+raw 10
+$`a \\ b`$
+prepared 6
+a \\ b
+katex 6
+a \\ b
+end
+doc backtick-unclosed
+src 6
+$`a` b
+text 7
+\$`a` b
+end
+doc strike-inside
+src 9
+$a~~b~~c$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 7
+a~~b~~c
+raw 9
+$a~~b~~c$
+prepared 7
+a~~b~~c
+katex 7
+a~~b~~c
+end
+doc emoji-inside
+src 9
+$:smile:$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 7
+:smile:
+raw 9
+$:smile:$
+prepared 7
+:smile:
+katex 7
+:smile:
+end
+doc lt-tight
+src 5
+$a<b$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 3
+a<b
+raw 5
+$a<b$
+prepared 3
+a<b
+katex 3
+a<b
+end
+doc lt-space
+src 7
+$a < b$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+a < b
+raw 7
+$a < b$
+prepared 5
+a < b
+katex 5
+a < b
+end
+doc html-tag-inside
+src 9
+$a <b> c$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 7
+a <b> c
+raw 9
+$a <b> c$
+prepared 7
+a <b> c
+katex 7
+a <b> c
+end
+doc amp
+src 7
+$a & b$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+a & b
+raw 7
+$a & b$
+prepared 5
+a & b
+katex 5
+a & b
+end
+doc brace-escape
+src 7
+$\{a\}$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+\{a\}
+raw 7
+$\{a\}$
+prepared 5
+\{a\}
+katex 5
+\{a\}
+end
+doc thinspace
+src 6
+$a\,b$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 4
+a\,b
+raw 6
+$a\,b$
+prepared 4
+a\,b
+katex 4
+a\,b
+end
+doc dbl-backslash-inline
+src 8
+$a \\ b$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 6
+a \\ b
+raw 8
+$a \\ b$
+prepared 6
+a \\ b
+katex 6
+a \\ b
+end
+doc pipe-escape
+src 7
+$\|v\|$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 5
+\|v\|
+raw 7
+$\|v\|$
+prepared 5
+\|v\|
+katex 5
+\|v\|
+end
+doc underscore-escape
+src 4
+$\_$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 2
+\_
+raw 4
+$\_$
+prepared 2
+\_
+katex 2
+\_
+end
+doc hash-percent
+src 6
+$\#\%$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 4
+\#\%
+raw 6
+$\#\%$
+prepared 4
+\#\%
+katex 4
+\#\%
+end
+doc paren-delims
+src 5
+\(x\)
+text 11
+ZZMTH0001ZZ
+math 0 0 0 paren
+tex 1
+x
+raw 5
+\(x\)
+prepared 1
+x
+katex 1
+x
+end
+doc bracket-delims
+src 5
+\[x\]
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 bracket
+tex 1
+x
+raw 5
+\[x\]
+prepared 1
+x
+katex 1
+x
+end
+doc dbl-paren-delims
+src 7
+\\(x\\)
+text 11
+ZZMTH0001ZZ
+math 0 0 0 doubled
+tex 1
+x
+raw 7
+\\(x\\)
+prepared 1
+x
+katex 1
+x
+end
+doc bare-env-inline
+src 41
+text \begin{equation}x\end{equation} text
+text 22
+text ZZDMTH0001ZZ text
+math 0 1 0 env
+tex 31
+\begin{equation}x\end{equation}
+raw 31
+\begin{equation}x\end{equation}
+prepared 41
+\begin{equation*}x \tag{1}\end{equation*}
+katex 41
+\begin{equation*}x \tag{1}\end{equation*}
+end
+doc env-in-dollar
+src 34
+$\begin{aligned}a&=b\end{aligned}$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 32
+\begin{aligned}a&=b\end{aligned}
+raw 34
+$\begin{aligned}a&=b\end{aligned}$
+prepared 32
+\begin{aligned}a&=b\end{aligned}
+katex 32
+\begin{aligned}a&=b\end{aligned}
+end
+doc display-blank-line
+src 10
+$$
+a
+
+b
+$$
+text 14
+\$\$
+a
+
+b
+\$\$
+end
+doc display-plus-line
+src 11
+$$
+a
++ b
+$$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 5
+a
++ b
+raw 11
+$$
+a
++ b
+$$
+prepared 5
+a
++ b
+katex 5
+a
++ b
+end
+doc display-hash-line
+src 11
+$$
+a
+# b
+$$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 5
+a
+# b
+raw 11
+$$
+a
+# b
+$$
+prepared 5
+a
+# b
+katex 5
+a
+# b
+end
+doc display-indented-4
+src 9
+    $$x$$
+text 9
+    $$x$$
+end
+doc display-in-list
+src 21
+- item
+
+  $$
+  x
+  $$
+text 22
+- item
+
+  ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 1
+x
+raw 11
+$$
+  x
+  $$
+prepared 1
+x
+katex 1
+x
+end
+doc display-in-quote
+src 13
+> $$
+> x
+> $$
+text 14
+> ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 1
+x
+raw 11
+$$
+> x
+> $$
+prepared 1
+x
+katex 1
+x
+end
+doc display-after-text-no-blank
+src 12
+text
+$$
+x
+$$
+text 17
+text
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 1
+x
+raw 7
+$$
+x
+$$
+prepared 1
+x
+katex 1
+x
+end
+doc display-then-text
+src 12
+$$
+x
+$$
+text
+text 17
+ZZDMTH0001ZZ
+text
+math 0 1 1 dollars
+tex 1
+x
+raw 7
+$$
+x
+$$
+prepared 1
+x
+katex 1
+x
+end
+doc display-dbl-backslash
+src 12
+$$
+a \\ b
+$$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 6
+a \\ b
+raw 12
+$$
+a \\ b
+$$
+prepared 6
+a \\ b
+katex 6
+a \\ b
+end
+doc display-thinspace
+src 10
+$$
+a\,b
+$$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 4
+a\,b
+raw 10
+$$
+a\,b
+$$
+prepared 4
+a\,b
+katex 4
+a\,b
+end
+doc display-two-adjacent
+src 15
+$$
+a
+$$
+$$
+b
+$$
+text 25
+ZZDMTH0001ZZ
+ZZDMTH0002ZZ
+math 0 1 1 dollars
+tex 1
+a
+raw 7
+$$
+a
+$$
+prepared 1
+a
+katex 1
+a
+math 0 1 1 dollars
+tex 1
+b
+raw 7
+$$
+b
+$$
+prepared 1
+b
+katex 1
+b
+end
+doc display-same-line-open
+src 9
+$$ a
+b $$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 3
+a
+b
+raw 9
+$$ a
+b $$
+prepared 3
+a
+b
+katex 3
+a
+b
+end
+doc fence-math
+src 18
+```math
+a \\ b
+```
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 fence
+tex 6
+a \\ b
+raw 18
+```math
+a \\ b
+```
+prepared 6
+a \\ b
+katex 6
+a \\ b
+end
+doc fence-math-tilde
+src 13
+~~~math
+a
+~~~
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 fence
+tex 1
+a
+raw 13
+~~~math
+a
+~~~
+prepared 1
+a
+katex 1
+a
+end
+doc fence-math-upper
+src 13
+```MATH
+a
+```
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 fence
+tex 1
+a
+raw 13
+```MATH
+a
+```
+prepared 1
+a
+katex 1
+a
+end
+doc fence-latex
+src 14
+```latex
+a
+```
+text 14
+```latex
+a
+```
+end
+doc empty-inline
+src 6
+a $$ b
+text 8
+a \$\$ b
+end
+doc single-space-math
+src 7
+a $ $ b
+text 9
+a \$ \$ b
+end
+doc unbalanced-brace
+src 15
+a $\frac{1}{$ b
+text 15
+a ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 9
+\frac{1}{
+raw 11
+$\frac{1}{$
+prepared 9
+\frac{1}{
+katex 9
+\frac{1}{
+end
+doc table-pipe
+src 21
+| h |
+|---|
+| $|x|$ |
+text 27
+| h |
+|---|
+| ZZMTH0001ZZ |
+math 0 0 0 dollar
+tex 3
+|x|
+raw 5
+$|x|$
+prepared 3
+|x|
+katex 3
+|x|
+end
+doc table-escaped-pipe
+src 23
+| h |
+|---|
+| $\|x\|$ |
+text 27
+| h |
+|---|
+| ZZMTH0001ZZ |
+math 0 0 0 dollar
+tex 5
+\|x\|
+raw 7
+$\|x\|$
+prepared 5
+\|x\|
+katex 5
+\|x\|
+end
+doc heading
+src 7
+# T $x$
+text 15
+# T ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+end
+doc newline-inside-inline
+src 9
+a $x
+y$ b
+text 15
+a ZZMTH0001ZZ b
+math 0 0 0 dollar
+tex 3
+x
+y
+raw 5
+$x
+y$
+prepared 3
+x
+y
+katex 3
+x
+y
+end
+count 82

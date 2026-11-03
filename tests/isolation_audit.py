@@ -8,14 +8,16 @@ as `RULE path:line: text`; the last line is `ALL ISOLATION AUDIT CHECKS PASSED`
 (exit 0) or `N ISOLATION AUDIT VIOLATIONS` (exit 1).
 
   R1 fixed-tmp        no fixed system temp dir (the plain one, or the ones
-                      under /private and /var) in tests, lua or core/src, on
-                      any line, comments included. A temp dir name right
-                      after a name, a variable or a substitution ($R, ${R},
-                      $(dirname "$x") and the like) is part of that path, not
-                      the fixed dir; the same holds after a placeholder such
-                      as <run> in a comment or docstring, but not after a
-                      redirection arrow. In Python and Lua, string pieces
-                      joined with + or .. (or side by side) are read joined
+                      under /private and /var) in tests (also their .mjs,
+                      .cjs and .js helpers), lua, core/src, core/native/src or
+                      core/native/tests, on any line, comments included.
+                      A temp dir name right after a name, a variable or a
+                      substitution ($R, ${R}, $(dirname "$x") and the like)
+                      is part of that path, not the fixed dir; the same
+                      holds after a placeholder such as <run> in a comment
+                      or docstring, but not after a redirection arrow. In
+                      Python and Lua, string pieces joined with + or .. (or
+                      side by side) are read joined
   R2 blanket-kill     tests never look up or kill processes by name or
                       pattern, and never signal every process or a whole
                       process group; they stop processes by pid. That covers
@@ -58,8 +60,13 @@ as `RULE path:line: text`; the last line is `ALL ISOLATION AUDIT CHECKS PASSED`
                       tmux is not a use
   R4 run-env          every top-level test script runs in the per-run env
   R5 no-local-notes   nothing public refers to the git-ignored local notes dir
+                      (tests, lua, core/src, core/native, .github, README.md)
   R6 racy-tempfile    no racy temp names in Python tests
-  R7 wired            every top-level test is run by tests/run_all.sh
+  R7 wired            every top-level test is run by tests/run_all.sh, and
+                      every .mjs, .cjs or .js helper in a subdirectory of tests/ is
+                      named, as a whole file name, on a code line of a
+                      top-level test (a name in a comment or docstring, or
+                      inside a longer name, is not one)
   R8 exit-trap        no EXIT trap of a script's own; cleanup goes through
                       jnv_on_exit so the shared exit hooks keep running
   R9 run-tmp          a shell test's mktemp names its template under $TMPDIR
@@ -105,6 +112,12 @@ T = "tm" + "ux"
 # and neither does a redirection arrow, so "/x" and > /x are still caught.
 R1_RE = re.compile(r"""(?<![\w.})])(?<![\w})]["'])(?:/""" + "private)?(?:/" + "var)?"
                    + re.escape(TMP) + r"""(?=[/"'\s)}\],;]|$)""")
+# R1 in a language with prefixed string literals (Python b"..", rb"..", f"..",
+# Rust b"..", br#".."#, c".."): the prefix is a word, so the plain rule above
+# reads the quote as the end of a variable. A prefix is one or two of these
+# letters standing alone before the quote (and the # marks of a Rust raw string).
+R1_PREFIXED_RE = re.compile(r"""(?<![\w.})])[bBrRfFuUcC]{1,2}#*["'](?:/""" + "private)?(?:/" + "var)?"
+                            + re.escape(TMP) + r"""(?=[/"'\s)}\],;]|$)""")
 # a placeholder such as <run> or <run dir> right before the match; skipped only
 # inside a comment or docstring, where it names a dir instead of redirecting
 PLACEHOLDER_RE = re.compile(r"<[A-Za-z][\w.-]*(?: [\w.-]+)*>$")
@@ -196,9 +209,11 @@ HINTS = {
           + "`, and the lib picks a private server and its config; Python and Lua tests do"
           " not run " + T + " (there is no lib helper for them): drive it from a shell test",
     "R4": "source tests/lib/test_env.sh, tests/lib/" + T + ".sh or tests/screen_lib.sh",
-    "R5": "keep tests, code and public docs free of the git-ignored local notes dir",
+    "R5": "keep tests, code (the native library included) and public docs free of the"
+          " git-ignored local notes dir",
     "R6": "use tempfile.mkstemp or tempfile.mkdtemp",
-    "R7": "run the test from tests/run_all.sh",
+    "R7": "run the test from tests/run_all.sh; name a helper under a tests/ subdirectory"
+          " (.mjs, .cjs, .js) on a code line of the top-level test that runs it",
     "R8": "register cleanup with jnv_on_exit instead of an EXIT trap",
     "R9": "mktemp with a template under the run's temp dir: mktemp -d \"$TMPDIR/name.XXXXXX\"",
     "SE": "a rule misread one of its own probes (SELF_TEST_FILES): fix the rule, not the probe",
@@ -1151,6 +1166,19 @@ def lua_joined(toks, starts):
     return out
 
 
+_JS_STR = r"""\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`"""
+_JS_JOIN_RE = re.compile("(?:%s)(?:\\s*\\+\\s*(?:%s))+" % (_JS_STR, _JS_STR))
+_JS_PART_RE = re.compile("(%s)" % _JS_STR)
+
+
+def js_joined_text(text):
+    """(line, text) for each run of two or more JavaScript string literals
+    joined with + ("/" + "tm" + "p"), read as one literal."""
+    return [(text.count("\n", 0, m.start()) + 1,
+             "".join(p[1:-1] for p in _JS_PART_RE.findall(m.group(0))))
+            for m in _JS_JOIN_RE.finditer(text)]
+
+
 def lua_joined_text(text):
     starts = [0] + [m.end() for m in re.finditer("\n", text)]
     return [(line, content) for line, content, _ in lua_joined(_lua_toks(text), starts)]
@@ -1295,6 +1323,20 @@ class Audit:
                     out.append(rel)
         return sorted(out)
 
+    def names_in_code(self, rel, regex):
+        """True when regex matches a line of the file outside its comments
+        (and Python docstrings). A file that cannot be read as code is judged
+        by whole-line comments only."""
+        marker = "--" if rel.endswith(".lua") else "#"
+        for i, ln in enumerate(self.lines(rel) or (), 1):
+            for m in regex.finditer(ln):
+                if self.prose_masked(rel) is None:
+                    if not ln.lstrip().startswith(marker):
+                        return True
+                elif not self.in_prose(rel, i, m.start()):
+                    return True
+        return False
+
     def grep(self, rule, files, regexes):
         for rel in files:
             for i, ln in enumerate(self.lines(rel) or (), 1):
@@ -1316,7 +1358,12 @@ def run(repo):
 
     # R1 fixed-tmp: every line, comments too; only a placeholder such as
     # <run> right before the match, inside a comment or docstring, is let go
-    for rel in tests_code + a.walk("lua", (".lua",)) + a.walk("core/src", (".rs",)):
+    tests_js = [p for p in tests_all if p.endswith((".mjs", ".cjs", ".js"))]
+    tests_c = [p for p in tests_all if p.endswith((".c", ".h"))]
+    native_rs = (a.walk("core/native/src", (".rs",)) + a.walk("core/native/tests", (".rs",))
+                 + a.walk("core/native/examples", (".rs",)) + a.walk("core/native/build.rs"))
+    for rel in (tests_code + tests_js + tests_c + a.walk("lua", (".lua",)) + a.walk("core/src", (".rs",))
+                + native_rs):
         hit = set()
         for i, ln in enumerate(a.lines(rel) or (), 1):
             for m in R1_RE.finditer(ln):
@@ -1325,10 +1372,20 @@ def run(repo):
                 a.add("R1-fixed-tmp", rel, i, ln)
                 hit.add(i)
                 break
+            else:
+                # a prefixed literal: b"<tmp>/x", rb"<tmp>", f"<tmp>/{x}"
+                if not rel.endswith(".sh"):
+                    for m in R1_PREFIXED_RE.finditer(ln):
+                        if PLACEHOLDER_RE.search(ln, 0, m.start()) and a.in_prose(rel, i, m.start()):
+                            continue
+                        a.add("R1-fixed-tmp", rel, i, ln)
+                        hit.add(i)
+                        break
         # string pieces joined into the path ("/" + "tmp/x", "/" .. "tmp")
         text = "\n".join(a.lines(rel) or [])
         joined = py_joined_text(text) if rel.endswith(".py") else \
-            lua_joined_text(text) if rel.endswith(".lua") else None
+            lua_joined_text(text) if rel.endswith(".lua") else \
+            js_joined_text(text) if rel.endswith((".mjs", ".cjs", ".js")) else None
         for line, content in joined or ():
             if line not in hit and R1_RE.search(content):
                 a.add("R1-fixed-tmp", rel, line, a.line_text(rel, line) + "  (joined: " + content + ")")
@@ -1417,7 +1474,8 @@ def run(repo):
 
     # R5 no-local-notes
     a.grep("R5-no-local-notes",
-           tests_all + a.walk("lua") + a.walk("core/src") + a.walk(".github") + a.walk("README.md"),
+           tests_all + a.walk("lua") + a.walk("core/src") + a.walk("core/native")
+           + a.walk(".github") + a.walk("README.md"),
            [R5_RE])
 
     # R6 racy-tempfile
@@ -1429,10 +1487,21 @@ def run(repo):
     for rel in top:
         name = rel.split("/", 1)[1]
         stem, ext = os.path.splitext(name)
-        if ext not in (".sh", ".lua", ".py") or name in R7_EXEMPT:
+        if ext not in (".sh", ".lua", ".py", ".mjs", ".cjs", ".js") or name in R7_EXEMPT:
             continue
         if not re.search(r"(?<![\w-])" + re.escape(stem) + r"(?![\w-])", code):
             a.add("R7-wired", rel, 1, "not run by tests/run_all.sh (no word " + stem + " there)")
+    # helpers in a subdirectory of tests/ (node scripts): a top-level test runs
+    # them, so one of those names the file, as a whole name, on a code line
+    runners = [p for p in top if p != SELF_REL and p.endswith((".sh", ".lua", ".py"))]
+    for rel in tests_js:
+        if rel.count("/") < 2:
+            continue
+        name = rel.rsplit("/", 1)[1]
+        named = re.compile(r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])")
+        if not any(a.names_in_code(r, named) for r in runners):
+            a.add("R7-wired", rel, 1, "not named by any top-level test (no word " + name
+                  + " on a code line)")
 
     # R8 exit-trap
     for rel in tests_sh:
@@ -1493,6 +1562,22 @@ SELF_TEST_FILES = {
         ("R3", 'x = "tm" + "p"', False),
         ("R1", 'open("/" + "' + TMP[1:] + '/x", "w")', True),
         ("R1", 'p = "/" + "var"', False),
+        ("R1", 'p = b"' + TMP + '/x"', True),
+        ("R1", 'p = rb"' + TMP + '"', True),
+        ("R1", 'p = f"' + TMP + '/{n}"', True),
+        ("R1", 'p = ab"' + TMP + '/x"', False),
+        ("R1", 'p = f"{d}' + TMP + '/x"', False),
+    ],
+    "tests/probe.mjs": [
+        ("R1", 'const p = "/" + "' + TMP[1:] + '/x";', True),
+        ("R1", "const p = '/' + 'va' + 'r';", False),
+        ("R1", 'const p = "/" + dir + "' + TMP[1:] + '";', False),
+    ],
+    "core/native/src/probe.rs": [
+        ("R1", 'let p = b"' + TMP + '/x";', True),
+        ("R1", 'let p = br#"' + TMP + '"#;', True),
+        ("R1", 'let p = c"' + TMP + '/x";', True),
+        ("R1", 'let p = nb"' + TMP + '/x";', False),
     ],
     "tests/probe.lua": [
         ("R2", "vim.uv.kill(-1, 9)", True),
@@ -1545,6 +1630,7 @@ def self_test():
     with tempfile.TemporaryDirectory(prefix="isolation-audit.") as tmp:
         os.makedirs(os.path.join(tmp, "tests"))
         for rel, probes in SELF_TEST_FILES.items():
+            os.makedirs(os.path.dirname(os.path.join(tmp, rel)), exist_ok=True)
             with open(os.path.join(tmp, rel), "w") as f:
                 f.write("".join(text + "\n" for _, text, _ in probes))
         found, _ = run(tmp)

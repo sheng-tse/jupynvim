@@ -1,0 +1,8034 @@
+JNVMATH 2
+doc md-fixture.md
+src 14683
+<!-- section: headings -->
+
+# Heading level 1
+## Heading level 2
+### Heading level 3
+#### Heading level 4
+##### Heading level 5
+###### Heading level 6
+####### Seven hashes is a paragraph
+#NoSpace is a paragraph on GitHub
+
+Setext heading level 1
+======================
+
+Setext heading level 2
+----------------------
+
+## Closing hashes are stripped ##
+### Heading with *italic* and `code` inside
+
+<!-- section: paragraphs -->
+
+This paragraph is written
+across three source lines
+that GitHub joins into one flowing paragraph.
+
+Hard break with two trailing spaces  
+next line after two spaces.
+
+Hard break with a backslash\
+next line after backslash.
+
+Single newline inside a paragraph is a soft break, so this line
+and this line render on the same visual line on GitHub.
+
+<!-- section: emphasis -->
+
+*italic star* and _italic underscore_
+
+**bold star** and __bold underscore__
+
+***bold italic star*** and ___bold italic underscore___
+
+**bold with *nested italic* inside** and *italic with **nested bold** inside*
+
+snake_case_name and __init__ and file_name_here.py stay literal
+
+**bold**text works but __bold__text does not
+
+un*frigging*believable works but un_frigging_believable does not
+
+~~strikethrough two tildes~~ and ~strikethrough one tilde~
+
+**unclosed bold and *unclosed italic
+
+a * b * c with spaced stars stays literal
+
+<!-- section: inlinecode -->
+
+Use `printf()` here.
+
+Backtick inside: `` a ` b `` and double: ``` a `` b ```
+
+Spaces are stripped: `` `foo` `` shows backticks
+
+Markers inside code are literal: `**not bold**` and `a_b_c` and `[x](y)`
+
+Code spanning
+lines `foo
+bar` joins with a space
+
+<!-- section: links -->
+
+Inline link: [GitHub](https://github.com)
+
+Inline link with title: [GitHub home](https://github.com "GitHub home")
+
+Reference full [ref link][gh], collapsed [gh][], shortcut [gh], case-folded [Ref][GH]
+
+Autolink: <https://example.com/path?q=1> and email <user@example.com>
+
+Bare URLs: https://www.example.com/page and www.example.com and user@example.org
+
+Formatting in link text: [**bold link** and `code`](https://example.com)
+
+Relative link [the README](README.md) and anchor [to h1](#heading-level-1)
+
+Issue #1, mention @sheng-tse, commit 8c23c85
+
+[gh]: https://github.com "GitHub"
+
+<!-- section: images -->
+
+Relative: ![Relative alt](docs/screenshot.png)
+
+Remote: ![Remote rocket](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png)
+
+Data URI: ![Data red](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAMCAIAAAD3UuoiAAAAUklEQVR4nI3CoRXCAABDwUwSXY3+uroajUaj0ejOlLEYIbl3ykHtofKg9lCB2kPlpPZQuag9VJ7UHiovag+VN7WHyofaQ+VL7aHyo/ZQuak9/AOPFC/Qz30IHQAAAABJRU5ErkJggg==)
+
+Linked image: [![Linked](https://github.githubassets.com/images/icons/emoji/unicode/2b50.png)](https://github.com)
+
+Text before ![inline img](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png "title") text after
+
+<!-- section: bullets -->
+
+- Level one dash
+  * Level two star
+    + Level three plus
+    + Another level three
+  * Back to level two
+- Level one again
+* Changing marker starts a new list
+
+<!-- section: ordered -->
+
+3. Ordered starting at three
+4. Four
+5. Five
+
+1. All ones
+1. Still renders as 2
+1. Renders as 3
+
+8) Paren delimiter starts at eight
+9) Nine
+
+- Bullet with ordered inside
+  1. First nested ordered
+  2. Second nested ordered
+     - Bullet inside ordered inside bullet
+
+A paragraph line
+2. two does not interrupt a paragraph
+
+<!-- section: tasks -->
+
+- [ ] Unchecked task
+- [x] Checked task with **bold**
+  - [ ] Nested unchecked
+  - [X] Nested checked uppercase X
+    - [ ] Third level task
+1. [ ] Ordered task item
+2. [x] Ordered checked task
+
+<!-- section: loose -->
+
+Tight list:
+- tight a
+- tight b
+
+Loose list:
+- loose a
+
+- loose b
+
+- Item with a second paragraph
+
+  Second paragraph inside the item, indented.
+
+  ```python
+  print("code in list")
+  ```
+
+<!-- section: quotes -->
+
+> Blockquote level one
+> continues here
+lazy continuation line without marker
+>
+> > Nested blockquote level two
+> > - list inside nested quote
+> > - second item
+> >
+> > ```bash
+> > echo "code in quote"
+> > ```
+>
+> Back to level one with **bold**.
+
+<!-- section: alerts -->
+
+> [!NOTE]
+> Useful information that users should know, even when skimming.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+> [!note]
+> Lowercase type name.
+>
+> Second paragraph in the alert.
+
+<!-- section: code -->
+
+```python
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+```bash
+for f in *.ipynb; do echo "$f"; done
+```
+
+```json
+{"name": "jupynvim", "version": "0.4.6", "tags": ["nvim", "jupyter"]}
+```
+
+```rust
+fn main() { println!("hello {}", 42); }
+```
+
+```
+plain fence without a language
+```
+
+~~~python
+tilde_fence = True
+~~~
+
+````markdown
+```python
+nested_fence = True
+```
+````
+
+    indented code block line 1
+    indented code block line 2
+
+```python
+very_long_code_line = "this code line is deliberately longer than the window so we can see whether it wraps or scrolls horizontally like GitHub"
+```
+
+<!-- section: math-basic -->
+
+```math
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+```
+
+Inline $x^2 + y_1$ and backtick form $`\sqrt{x^2+1}`$ in prose.
+
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+
+$$
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+$$
+
+Prices like $5 and $10 are not math.
+
+<!-- section: tables -->
+
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a | b | c |
+| **bold** | `code` | *it* |
+| escaped \| pipe | [link](https://x.com) | 1,234.56 |
+| ragged |
+
+Name | Value
+--- | ---
+no outer pipes | 1
+
+<!-- section: widetable -->
+
+| id | first_name | last_name | email_address | department | job_title | start_date | salary_usd | manager | office_location |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Alexandra | Montgomery | alexandra.montgomery@example.com | Engineering | Senior Software Engineer | 2019-03-14 | 185000 | Jordan Lee | San Francisco, CA |
+| 2 | Bartholomew | Fitzgerald | bart.fitzgerald@example.com | Marketing | Director of Brand | 2021-11-02 | 162500 | Priya Patel | New York, NY |
+
+<!-- section: hr -->
+
+Above the rules
+
+---
+
+***
+
+___
+
+- - -
+
+Below the rules
+
+<!-- section: footnotes -->
+
+Here is a footnote reference[^1] and a named one[^note].
+
+[^1]: The first footnote.
+[^note]: A named footnote with **bold**.
+
+<!-- section: html -->
+
+<details>
+<summary>Click to expand</summary>
+
+Hidden content with **markdown** inside.
+
+</details>
+
+Line one<br>line two after br.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.
+
+H<sub>2</sub>O and E = mc<sup>2</sup>
+
+<img width="100" src="https://github.githubassets.com/images/icons/emoji/unicode/1f680.png" alt="rocket">
+
+<!-- This comment is hidden on GitHub -->
+
+<p align="center">Centered paragraph</p>
+
+<ins>inserted</ins> <mark>marked</mark> <b>b tag</b> <i>i tag</i> <s>s tag</s> <code>code tag</code>
+
+<span style="color:red">styled span</span> <script>alert(1)</script>
+
+<!-- section: emoji -->
+
+:rocket: :+1: :tada: :smile: :heavy_check_mark: :not_an_emoji:
+
+\*not italic\* \# not heading \[not link\](x) \`not code\` \\ backslash
+
+&copy; &nbsp;x &amp; &lt;tag&gt; &#169; &#x1F600; &ne;
+
+<!-- section: mixed -->
+
+## Heading followed immediately by a list
+- item right after heading
+- second item
+### Heading followed immediately by code
+```python
+x = 1
+```
+Paragraph directly above a quote
+> quote directly below a paragraph
+
+<!-- section: wrapping -->
+
+This is a very long single source line that keeps going well past the right edge of a normal terminal window so that we can observe how the renderer wraps prose, whether it breaks at word boundaries, and whether the continuation rows keep any indentation or decoration that the first row had, which matters for lists and quotes.
+
+- A very long list item that also runs past the right edge of the window so we can see whether the wrapped continuation rows hang under the text of the item or fall back to the left margin like plain text does.
+
+> A very long blockquote line that runs past the right edge of the window so we can see whether the quote bar is repeated on each wrapped continuation row or only drawn on the first visual row.
+
+## A very long heading that runs past the right edge of the window to see whether the heading style and prefix glyph carry onto the wrapped continuation row
+
+<!-- section: math-inline -->
+
+Inline $x^2$, then $x$, $y$; and ($z$) or [$w$] or "$v$" at the end $u$.
+
+Word-adjacent: the $x$-axis, the $n$th term, foo$x$bar, 2$x$3, plural $\alpha$s.
+
+Spaces inside the delimiters: $ x $ and $x $ and $ x$.
+
+Currency: it costs $5 and $10 per item, $1,000 total or $20.50 each.
+
+Currency then math on one line: to split $100 in half, we calculate $100/2$.
+
+Same with a span: to split <span>$</span>100 in half, we calculate $100/2$.
+
+Escaped dollars stay text: \$5 and \$10 each.
+
+An escaped dollar inside math: $\$4 + x$ and $`\sqrt{\$4}`$.
+
+Both on one line: \$5 and \$10, then $\$4 + x$.
+
+Backtick form: $`a_1 * b_2 * c_3`$ and $`x < y`$ and $`\{1,2\}`$.
+
+Code spans stay code: `$HOME` and `$x$` and `a $ b $ c`.
+
+Empty and doubled: $$ alone and $ $ single space.
+
+Inline math across a soft line break: $a +
+b = c$ continues here.
+
+Adjacent maths: $a$$b$ and $a$ $b$.
+
+<!-- section: math-nested -->
+
+# Heading with $E = mc^2$ math
+
+## Heading with $`\alpha`$ backtick math
+
+*Italic with $a_1$ inside* and **bold with $\sum_i x_i$ inside** and ~~struck $x$~~.
+
+_underscore emphasis with $x_1$ and $y_1$ inside_
+
+[Link text with $x^2$](https://example.com) and footnote with math[^m].
+
+- List item with $x^2$
+- Item with display math:
+
+  $$
+  \int_0^1 x\,dx
+  $$
+
+  1. Nested ordered with $\alpha$
+     - Deeper with $\beta_{ij}$
+
+| Expression | Note |
+|---|---|
+| $x^2$ | $4$ |
+| $\frac{a}{b}$ | `code` |
+| $\lvert x \rvert$ | abs via lvert |
+| $|x|$ | pipe inside math |
+| $$x$$ | display in a cell |
+
+> Quote with $e^{i\pi} + 1 = 0$
+>
+> $$
+> \sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+> $$
+
+> [!NOTE]
+> Alert with inline $x \in \mathbb{R}$ and display:
+>
+> $$a^2 + b^2 = c^2$$
+
+[^m]: Footnote containing $\sqrt{2}$.
+
+<!-- section: math-display -->
+
+Display on one line:
+
+$$E = mc^2$$
+
+Display spanning lines:
+
+$$
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+$$
+
+Text before $$x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$$ text after in the same paragraph.
+
+A paragraph line
+$$
+y = mx + b
+$$
+directly continues without blank lines.
+
+$$
+a = b
+
+c = d
+$$
+
+```math
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+```
+
+```math
+x = 1 \\ y = 2
+```
+
+~~~math
+\sqrt{2}
+~~~
+
+<!-- section: math-env -->
+
+$$
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+$$
+
+$$
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+$$
+
+$$
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+$$
+
+$$
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+$$
+
+$$
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+$$
+
+$$
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+$$
+
+$$
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+$$
+
+$$
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+$$
+
+See equation $\eqref{eq:euler}$ and $\ref{eq:euler}$.
+
+<!-- section: math-bare -->
+
+Bare environment after a blank line:
+
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+
+Bare environment right after a text line:
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+
+Parenthesis delimiters: \(x^2 + y^2\) inline, and bracket display:
+
+\[
+\int_0^1 x^2\,dx = \frac{1}{3}
+\]
+
+Doubled-backslash delimiters (classic notebook form): \\(a + b\\) and
+
+\\[
+c + d
+\\]
+
+<!-- section: math-macros -->
+
+$$
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+$$
+
+Using the macros in the same block: $x \in \RR$, $\norm{v}$, $\abs{-3} = 3$.
+
+Defining a name that already exists: $\newcommand{\R}{\mathbf{R}} \R$, then $\renewcommand{\R}{\mathbf{R}} \R$.
+
+Operator names: $\operatorname{argmax}_{x} f(x)$, $\operatorname{Tr}(A)$, built-ins $\max_i a_i$ and $\sin x$.
+
+Fonts: $\mathbb{R} \mathbb{N}$, $\mathcal{L} \mathcal{O}$, $\mathfrak{g} \mathfrak{A}$, $\mathrm{d}x$, $\mathbf{v}$, $\boldsymbol{\alpha}$, $\text{with spaces inside text}$, $x \text{ if } y$.
+
+<!-- section: math-constructs -->
+
+Macros from the previous section reused here: $\RR^n$ and $\norm{x}_2$.
+
+$$
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+$$
+
+$$
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+$$
+
+$$
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+$$
+
+$$
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+$$
+
+$$
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+$$
+
+$$
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+$$
+
+$$
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+$$
+
+<!-- section: math-conflicts -->
+
+Plain text a_1 * b_2 * c_3 is markdown, math $a_1 * b_2 * c_3$ must keep the stars.
+
+Two maths with underscores: $x_1$ and $y_1$ and $z_{1}$.
+
+Stars: $a*b*c$ and $a * b$ next to *real italic*.
+
+Escapes inside math: $\{a, b\}$, $a \, b$, $a\;b$, $\|v\|$, $a \\ b$, $\#\%\&\_$, $\$$.
+
+Comparison and ampersand: $a<b$, $a < b$, $a>b$, $x \lt y$, $a \& b$, $p \land q$.
+
+Percent comment inside display math:
+
+$$
+a + b % this is a comment
+= c
+$$
+
+A display math line that starts with a plus sign:
+
+$$
+a % comment
++ c
+$$
+
+Unicode inside math: $α + β = γ$, $x ≤ y$, $\text{café naïve}$, $∀x∈ℝ$.
+
+Invalid formula one: $\frac{1}{$ here.
+
+Invalid formula two: $\badmacro{x}$ here.
+
+Invalid formula three: $x^$ here.
+
+$$
+\begin{align}
+a &= b
+\end{aligned}
+$$
+
+HTML-like text inside math: $x<y>z$ and $a <b> c$ (kept last on purpose).
+
+<!-- section: mermaid -->
+
+```mermaid
+graph LR
+  A[Markdown] --> B{Math?}
+  B -->|yes| C[KaTeX or MathJax]
+  B -->|no| D[HTML]
+```
+
+text 12678
+<!-- section: headings -->
+
+# Heading level 1
+## Heading level 2
+### Heading level 3
+#### Heading level 4
+##### Heading level 5
+###### Heading level 6
+####### Seven hashes is a paragraph
+#NoSpace is a paragraph on GitHub
+
+Setext heading level 1
+======================
+
+Setext heading level 2
+----------------------
+
+## Closing hashes are stripped ##
+### Heading with *italic* and `code` inside
+
+<!-- section: paragraphs -->
+
+This paragraph is written
+across three source lines
+that GitHub joins into one flowing paragraph.
+
+Hard break with two trailing spaces  
+next line after two spaces.
+
+Hard break with a backslash\
+next line after backslash.
+
+Single newline inside a paragraph is a soft break, so this line
+and this line render on the same visual line on GitHub.
+
+<!-- section: emphasis -->
+
+*italic star* and _italic underscore_
+
+**bold star** and __bold underscore__
+
+***bold italic star*** and ___bold italic underscore___
+
+**bold with *nested italic* inside** and *italic with **nested bold** inside*
+
+snake_case_name and __init__ and file_name_here.py stay literal
+
+**bold**text works but __bold__text does not
+
+un*frigging*believable works but un_frigging_believable does not
+
+~~strikethrough two tildes~~ and ~strikethrough one tilde~
+
+**unclosed bold and *unclosed italic
+
+a * b * c with spaced stars stays literal
+
+<!-- section: inlinecode -->
+
+Use `printf()` here.
+
+Backtick inside: `` a ` b `` and double: ``` a `` b ```
+
+Spaces are stripped: `` `foo` `` shows backticks
+
+Markers inside code are literal: `**not bold**` and `a_b_c` and `[x](y)`
+
+Code spanning
+lines `foo
+bar` joins with a space
+
+<!-- section: links -->
+
+Inline link: [GitHub](https://github.com)
+
+Inline link with title: [GitHub home](https://github.com "GitHub home")
+
+Reference full [ref link][gh], collapsed [gh][], shortcut [gh], case-folded [Ref][GH]
+
+Autolink: <https://example.com/path?q=1> and email <user@example.com>
+
+Bare URLs: https://www.example.com/page and www.example.com and user@example.org
+
+Formatting in link text: [**bold link** and `code`](https://example.com)
+
+Relative link [the README](README.md) and anchor [to h1](#heading-level-1)
+
+Issue #1, mention @sheng-tse, commit 8c23c85
+
+[gh]: https://github.com "GitHub"
+
+<!-- section: images -->
+
+Relative: ![Relative alt](docs/screenshot.png)
+
+Remote: ![Remote rocket](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png)
+
+Data URI: ![Data red](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAMCAIAAAD3UuoiAAAAUklEQVR4nI3CoRXCAABDwUwSXY3+uroajUaj0ejOlLEYIbl3ykHtofKg9lCB2kPlpPZQuag9VJ7UHiovag+VN7WHyofaQ+VL7aHyo/ZQuak9/AOPFC/Qz30IHQAAAABJRU5ErkJggg==)
+
+Linked image: [![Linked](https://github.githubassets.com/images/icons/emoji/unicode/2b50.png)](https://github.com)
+
+Text before ![inline img](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png "title") text after
+
+<!-- section: bullets -->
+
+- Level one dash
+  * Level two star
+    + Level three plus
+    + Another level three
+  * Back to level two
+- Level one again
+* Changing marker starts a new list
+
+<!-- section: ordered -->
+
+3. Ordered starting at three
+4. Four
+5. Five
+
+1. All ones
+1. Still renders as 2
+1. Renders as 3
+
+8) Paren delimiter starts at eight
+9) Nine
+
+- Bullet with ordered inside
+  1. First nested ordered
+  2. Second nested ordered
+     - Bullet inside ordered inside bullet
+
+A paragraph line
+2. two does not interrupt a paragraph
+
+<!-- section: tasks -->
+
+- [ ] Unchecked task
+- [x] Checked task with **bold**
+  - [ ] Nested unchecked
+  - [X] Nested checked uppercase X
+    - [ ] Third level task
+1. [ ] Ordered task item
+2. [x] Ordered checked task
+
+<!-- section: loose -->
+
+Tight list:
+- tight a
+- tight b
+
+Loose list:
+- loose a
+
+- loose b
+
+- Item with a second paragraph
+
+  Second paragraph inside the item, indented.
+
+  ```python
+  print("code in list")
+  ```
+
+<!-- section: quotes -->
+
+> Blockquote level one
+> continues here
+lazy continuation line without marker
+>
+> > Nested blockquote level two
+> > - list inside nested quote
+> > - second item
+> >
+> > ```bash
+> > echo "code in quote"
+> > ```
+>
+> Back to level one with **bold**.
+
+<!-- section: alerts -->
+
+> [!NOTE]
+> Useful information that users should know, even when skimming.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+> [!note]
+> Lowercase type name.
+>
+> Second paragraph in the alert.
+
+<!-- section: code -->
+
+```python
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+```bash
+for f in *.ipynb; do echo "$f"; done
+```
+
+```json
+{"name": "jupynvim", "version": "0.4.6", "tags": ["nvim", "jupyter"]}
+```
+
+```rust
+fn main() { println!("hello {}", 42); }
+```
+
+```
+plain fence without a language
+```
+
+~~~python
+tilde_fence = True
+~~~
+
+````markdown
+```python
+nested_fence = True
+```
+````
+
+    indented code block line 1
+    indented code block line 2
+
+```python
+very_long_code_line = "this code line is deliberately longer than the window so we can see whether it wraps or scrolls horizontally like GitHub"
+```
+
+<!-- section: math-basic -->
+
+ZZDMTH0001ZZ
+
+Inline ZZMTH0002ZZ and backtick form ZZMTH0003ZZ in prose.
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+Prices like \$5 and \$10 are not math.
+
+<!-- section: tables -->
+
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a | b | c |
+| **bold** | `code` | *it* |
+| escaped \| pipe | [link](https://x.com) | 1,234.56 |
+| ragged |
+
+Name | Value
+--- | ---
+no outer pipes | 1
+
+<!-- section: widetable -->
+
+| id | first_name | last_name | email_address | department | job_title | start_date | salary_usd | manager | office_location |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Alexandra | Montgomery | alexandra.montgomery@example.com | Engineering | Senior Software Engineer | 2019-03-14 | 185000 | Jordan Lee | San Francisco, CA |
+| 2 | Bartholomew | Fitzgerald | bart.fitzgerald@example.com | Marketing | Director of Brand | 2021-11-02 | 162500 | Priya Patel | New York, NY |
+
+<!-- section: hr -->
+
+Above the rules
+
+---
+
+***
+
+___
+
+- - -
+
+Below the rules
+
+<!-- section: footnotes -->
+
+Here is a footnote reference[^1] and a named one[^note].
+
+[^1]: The first footnote.
+[^note]: A named footnote with **bold**.
+
+<!-- section: html -->
+
+<details>
+<summary>Click to expand</summary>
+
+Hidden content with **markdown** inside.
+
+</details>
+
+Line one<br>line two after br.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.
+
+H<sub>2</sub>O and E = mc<sup>2</sup>
+
+<img width="100" src="https://github.githubassets.com/images/icons/emoji/unicode/1f680.png" alt="rocket">
+
+<!-- This comment is hidden on GitHub -->
+
+<p align="center">Centered paragraph</p>
+
+<ins>inserted</ins> <mark>marked</mark> <b>b tag</b> <i>i tag</i> <s>s tag</s> <code>code tag</code>
+
+<span style="color:red">styled span</span> <script>alert(1)</script>
+
+<!-- section: emoji -->
+
+:rocket: :+1: :tada: :smile: :heavy_check_mark: :not_an_emoji:
+
+\*not italic\* \# not heading ZZDMTH0007ZZ(x) \`not code\` \\ backslash
+
+&copy; &nbsp;x &amp; &lt;tag&gt; &#169; &#x1F600; &ne;
+
+<!-- section: mixed -->
+
+## Heading followed immediately by a list
+- item right after heading
+- second item
+### Heading followed immediately by code
+```python
+x = 1
+```
+Paragraph directly above a quote
+> quote directly below a paragraph
+
+<!-- section: wrapping -->
+
+This is a very long single source line that keeps going well past the right edge of a normal terminal window so that we can observe how the renderer wraps prose, whether it breaks at word boundaries, and whether the continuation rows keep any indentation or decoration that the first row had, which matters for lists and quotes.
+
+- A very long list item that also runs past the right edge of the window so we can see whether the wrapped continuation rows hang under the text of the item or fall back to the left margin like plain text does.
+
+> A very long blockquote line that runs past the right edge of the window so we can see whether the quote bar is repeated on each wrapped continuation row or only drawn on the first visual row.
+
+## A very long heading that runs past the right edge of the window to see whether the heading style and prefix glyph carry onto the wrapped continuation row
+
+<!-- section: math-inline -->
+
+Inline ZZMTH0008ZZ, then ZZMTH0009ZZ, ZZMTH0010ZZ; and (ZZMTH0011ZZ) or [ZZMTH0012ZZ] or "ZZMTH0013ZZ" at the end ZZMTH0014ZZ.
+
+Word-adjacent: the ZZMTH0015ZZ-axis, the ZZMTH0016ZZth term, fooZZMTH0017ZZbar, 2\$x\$3, plural ZZMTH0018ZZs.
+
+Spaces inside the delimiters: \$ x \$ and \$x \$ and \$ x\$.
+
+Currency: it costs \$5 and \$10 per item, \$1,000 total or \$20.50 each.
+
+Currency then math on one line: to split \$100 in half, we calculate ZZMTH0019ZZ.
+
+Same with a span: to split <span>\$</span>100 in half, we calculate ZZMTH0020ZZ.
+
+Escaped dollars stay text: \$5 and \$10 each.
+
+An escaped dollar inside math: ZZMTH0021ZZ and ZZMTH0022ZZ.
+
+Both on one line: \$5 and \$10, then ZZMTH0023ZZ.
+
+Backtick form: ZZMTH0024ZZ and ZZMTH0025ZZ and ZZMTH0026ZZ.
+
+Code spans stay code: `$HOME` and `$x$` and `a $ b $ c`.
+
+Empty and doubled: \$\$ alone and \$ \$ single space.
+
+Inline math across a soft line break: ZZMTH0027ZZ continues here.
+
+Adjacent maths: ZZMTH0028ZZZZMTH0029ZZ and ZZMTH0030ZZ ZZMTH0031ZZ.
+
+<!-- section: math-nested -->
+
+# Heading with ZZMTH0032ZZ math
+
+## Heading with ZZMTH0033ZZ backtick math
+
+*Italic with ZZMTH0034ZZ inside* and **bold with ZZMTH0035ZZ inside** and ~~struck ZZMTH0036ZZ~~.
+
+_underscore emphasis with ZZMTH0037ZZ and ZZMTH0038ZZ inside_
+
+[Link text with ZZMTH0039ZZ](https://example.com) and footnote with math[^m].
+
+- List item with ZZMTH0040ZZ
+- Item with display math:
+
+  ZZDMTH0041ZZ
+
+  1. Nested ordered with ZZMTH0042ZZ
+     - Deeper with ZZMTH0043ZZ
+
+| Expression | Note |
+|---|---|
+| ZZMTH0044ZZ | ZZMTH0045ZZ |
+| ZZMTH0046ZZ | `code` |
+| ZZMTH0047ZZ | abs via lvert |
+| ZZMTH0048ZZ | pipe inside math |
+| ZZDMTH0049ZZ | display in a cell |
+
+> Quote with ZZMTH0050ZZ
+>
+> ZZDMTH0051ZZ
+
+> [!NOTE]
+> Alert with inline ZZMTH0052ZZ and display:
+>
+> ZZDMTH0053ZZ
+
+[^m]: Footnote containing ZZMTH0054ZZ.
+
+<!-- section: math-display -->
+
+Display on one line:
+
+ZZDMTH0055ZZ
+
+Display spanning lines:
+
+ZZDMTH0056ZZ
+
+Text before ZZDMTH0057ZZ text after in the same paragraph.
+
+A paragraph line
+ZZDMTH0058ZZ
+directly continues without blank lines.
+
+\$\$
+a = b
+
+c = d
+\$\$
+
+ZZDMTH0059ZZ
+
+ZZDMTH0060ZZ
+
+ZZDMTH0061ZZ
+
+<!-- section: math-env -->
+
+ZZDMTH0062ZZ
+
+ZZDMTH0063ZZ
+
+ZZDMTH0064ZZ
+
+ZZDMTH0065ZZ
+
+ZZDMTH0066ZZ
+
+ZZDMTH0067ZZ
+
+ZZDMTH0068ZZ
+
+ZZDMTH0069ZZ
+
+See equation ZZMTH0070ZZ and ZZMTH0071ZZ.
+
+<!-- section: math-bare -->
+
+Bare environment after a blank line:
+
+ZZDMTH0072ZZ
+
+Bare environment right after a text line:
+ZZDMTH0073ZZ
+
+Parenthesis delimiters: ZZMTH0074ZZ inline, and bracket display:
+
+ZZDMTH0075ZZ
+
+Doubled-backslash delimiters (classic notebook form): ZZMTH0076ZZ and
+
+ZZDMTH0077ZZ
+
+<!-- section: math-macros -->
+
+ZZDMTH0078ZZ
+
+Using the macros in the same block: ZZMTH0079ZZ, ZZMTH0080ZZ, ZZMTH0081ZZ.
+
+Defining a name that already exists: ZZMTH0082ZZ, then ZZMTH0083ZZ.
+
+Operator names: ZZMTH0084ZZ, ZZMTH0085ZZ, built-ins ZZMTH0086ZZ and ZZMTH0087ZZ.
+
+Fonts: ZZMTH0088ZZ, ZZMTH0089ZZ, ZZMTH0090ZZ, ZZMTH0091ZZ, ZZMTH0092ZZ, ZZMTH0093ZZ, ZZMTH0094ZZ, ZZMTH0095ZZ.
+
+<!-- section: math-constructs -->
+
+Macros from the previous section reused here: ZZMTH0096ZZ and ZZMTH0097ZZ.
+
+ZZDMTH0098ZZ
+
+ZZDMTH0099ZZ
+
+ZZDMTH0100ZZ
+
+ZZDMTH0101ZZ
+
+ZZDMTH0102ZZ
+
+ZZDMTH0103ZZ
+
+ZZDMTH0104ZZ
+
+<!-- section: math-conflicts -->
+
+Plain text a_1 * b_2 * c_3 is markdown, math ZZMTH0105ZZ must keep the stars.
+
+Two maths with underscores: ZZMTH0106ZZ and ZZMTH0107ZZ and ZZMTH0108ZZ.
+
+Stars: ZZMTH0109ZZ and ZZMTH0110ZZ next to *real italic*.
+
+Escapes inside math: ZZMTH0111ZZ, ZZMTH0112ZZ, ZZMTH0113ZZ, ZZMTH0114ZZ, ZZMTH0115ZZ, ZZMTH0116ZZ, ZZMTH0117ZZ.
+
+Comparison and ampersand: ZZMTH0118ZZ, ZZMTH0119ZZ, ZZMTH0120ZZ, ZZMTH0121ZZ, ZZMTH0122ZZ, ZZMTH0123ZZ.
+
+Percent comment inside display math:
+
+ZZDMTH0124ZZ
+
+A display math line that starts with a plus sign:
+
+ZZDMTH0125ZZ
+
+Unicode inside math: ZZMTH0126ZZ, ZZMTH0127ZZ, ZZMTH0128ZZ, ZZMTH0129ZZ.
+
+Invalid formula one: ZZMTH0130ZZ here.
+
+Invalid formula two: ZZMTH0131ZZ here.
+
+Invalid formula three: ZZMTH0132ZZ here.
+
+ZZDMTH0133ZZ
+
+HTML-like text inside math: ZZMTH0134ZZ and ZZMTH0135ZZ (kept last on purpose).
+
+<!-- section: mermaid -->
+
+```mermaid
+graph LR
+  A[Markdown] --> B{Math?}
+  B -->|yes| C[KaTeX or MathJax]
+  B -->|no| D[HTML]
+```
+
+math 0 1 1 fence
+tex 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+raw 46
+```math
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+```
+prepared 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+katex 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+math 0 0 0 dollar
+tex 9
+x^2 + y_1
+raw 11
+$x^2 + y_1$
+prepared 9
+x^2 + y_1
+katex 9
+x^2 + y_1
+math 0 0 0 backtick
+tex 12
+\sqrt{x^2+1}
+raw 16
+$`\sqrt{x^2+1}`$
+prepared 12
+\sqrt{x^2+1}
+katex 12
+\sqrt{x^2+1}
+math 0 1 1 dollars
+tex 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+raw 50
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+prepared 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+katex 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+math 0 1 1 dollars
+tex 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+raw 53
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+prepared 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+katex 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+math 0 1 1 dollars
+tex 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+raw 59
+$$
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+$$
+prepared 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+katex 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+math 0 1 0 bracket
+tex 8
+not link
+raw 12
+\[not link\]
+prepared 8
+not link
+katex 8
+not link
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 1
+y
+raw 3
+$y$
+prepared 1
+y
+katex 1
+y
+math 0 0 0 dollar
+tex 1
+z
+raw 3
+$z$
+prepared 1
+z
+katex 1
+z
+math 0 0 0 dollar
+tex 1
+w
+raw 3
+$w$
+prepared 1
+w
+katex 1
+w
+math 0 0 0 dollar
+tex 1
+v
+raw 3
+$v$
+prepared 1
+v
+katex 1
+v
+math 0 0 0 dollar
+tex 1
+u
+raw 3
+$u$
+prepared 1
+u
+katex 1
+u
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 1
+n
+raw 3
+$n$
+prepared 1
+n
+katex 1
+n
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 6
+\alpha
+raw 8
+$\alpha$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 0 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+math 0 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+math 0 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+math 0 0 0 backtick
+tex 10
+\sqrt{\$4}
+raw 14
+$`\sqrt{\$4}`$
+prepared 10
+\sqrt{\$4}
+katex 10
+\sqrt{\$4}
+math 0 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+math 0 0 0 backtick
+tex 15
+a_1 * b_2 * c_3
+raw 19
+$`a_1 * b_2 * c_3`$
+prepared 15
+a_1 * b_2 * c_3
+katex 15
+a_1 * b_2 * c_3
+math 0 0 0 backtick
+tex 5
+x < y
+raw 9
+$`x < y`$
+prepared 5
+x < y
+katex 5
+x < y
+math 0 0 0 backtick
+tex 7
+\{1,2\}
+raw 11
+$`\{1,2\}`$
+prepared 7
+\{1,2\}
+katex 7
+\{1,2\}
+math 0 0 0 dollar
+tex 9
+a +
+b = c
+raw 11
+$a +
+b = c$
+prepared 9
+a +
+b = c
+katex 9
+a +
+b = c
+math 0 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 0 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+math 0 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 0 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+math 0 0 0 dollar
+tex 8
+E = mc^2
+raw 10
+$E = mc^2$
+prepared 8
+E = mc^2
+katex 8
+E = mc^2
+math 0 0 0 backtick
+tex 6
+\alpha
+raw 10
+$`\alpha`$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 0 0 0 dollar
+tex 3
+a_1
+raw 5
+$a_1$
+prepared 3
+a_1
+katex 3
+a_1
+math 0 0 0 dollar
+tex 10
+\sum_i x_i
+raw 12
+$\sum_i x_i$
+prepared 10
+\sum_i x_i
+katex 10
+\sum_i x_i
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 0 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 1 1 dollars
+tex 14
+\int_0^1 x\,dx
+raw 24
+$$
+  \int_0^1 x\,dx
+  $$
+prepared 14
+\int_0^1 x\,dx
+katex 14
+\int_0^1 x\,dx
+math 0 0 0 dollar
+tex 6
+\alpha
+raw 8
+$\alpha$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 0 0 0 dollar
+tex 10
+\beta_{ij}
+raw 12
+$\beta_{ij}$
+prepared 10
+\beta_{ij}
+katex 10
+\beta_{ij}
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 0 0 dollar
+tex 1
+4
+raw 3
+$4$
+prepared 1
+4
+katex 1
+4
+math 0 0 0 dollar
+tex 11
+\frac{a}{b}
+raw 13
+$\frac{a}{b}$
+prepared 11
+\frac{a}{b}
+katex 11
+\frac{a}{b}
+math 0 0 0 dollar
+tex 15
+\lvert x \rvert
+raw 17
+$\lvert x \rvert$
+prepared 15
+\lvert x \rvert
+katex 15
+\lvert x \rvert
+math 0 0 0 dollar
+tex 3
+|x|
+raw 5
+$|x|$
+prepared 3
+|x|
+katex 3
+|x|
+math 0 1 0 dollars
+tex 1
+x
+raw 5
+$$x$$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 16
+e^{i\pi} + 1 = 0
+raw 18
+$e^{i\pi} + 1 = 0$
+prepared 16
+e^{i\pi} + 1 = 0
+katex 16
+e^{i\pi} + 1 = 0
+math 0 1 1 dollars
+tex 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+raw 59
+$$
+> \sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+> $$
+prepared 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+katex 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+math 0 0 0 dollar
+tex 16
+x \in \mathbb{R}
+raw 18
+$x \in \mathbb{R}$
+prepared 16
+x \in \mathbb{R}
+katex 16
+x \in \mathbb{R}
+math 0 1 1 dollars
+tex 15
+a^2 + b^2 = c^2
+raw 19
+$$a^2 + b^2 = c^2$$
+prepared 15
+a^2 + b^2 = c^2
+katex 15
+a^2 + b^2 = c^2
+math 0 0 0 dollar
+tex 8
+\sqrt{2}
+raw 10
+$\sqrt{2}$
+prepared 8
+\sqrt{2}
+katex 8
+\sqrt{2}
+math 0 1 1 dollars
+tex 8
+E = mc^2
+raw 12
+$$E = mc^2$$
+prepared 8
+E = mc^2
+katex 8
+E = mc^2
+math 0 1 1 dollars
+tex 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+raw 77
+$$
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+$$
+prepared 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+katex 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+math 0 1 0 dollars
+tex 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+raw 40
+$$x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$$
+prepared 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+katex 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+math 0 1 1 dollars
+tex 10
+y = mx + b
+raw 16
+$$
+y = mx + b
+$$
+prepared 10
+y = mx + b
+katex 10
+y = mx + b
+math 0 1 1 fence
+tex 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+raw 143
+```math
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+```
+prepared 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+katex 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+math 0 1 1 fence
+tex 14
+x = 1 \\ y = 2
+raw 26
+```math
+x = 1 \\ y = 2
+```
+prepared 14
+x = 1 \\ y = 2
+katex 14
+x = 1 \\ y = 2
+math 0 1 1 fence
+tex 8
+\sqrt{2}
+raw 20
+~~~math
+\sqrt{2}
+~~~
+prepared 8
+\sqrt{2}
+katex 8
+\sqrt{2}
+math 0 1 1 dollars
+tex 50
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+raw 56
+$$
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+$$
+prepared 69
+\begin{align*}
+a &= b + c  \tag{1} \\
+d &= e + f
+ \tag{2}\end{align*}
+katex 69
+\begin{align*}
+a &= b + c  \tag{1} \\
+d &= e + f
+ \tag{2}\end{align*}
+math 0 1 1 dollars
+tex 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+raw 50
+$$
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+$$
+prepared 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+katex 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+math 0 1 1 dollars
+tex 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+raw 82
+$$
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+$$
+prepared 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+katex 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+math 0 1 1 dollars
+tex 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+raw 56
+$$
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+$$
+prepared 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+katex 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+math 0 1 1 dollars
+tex 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+raw 85
+$$
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+$$
+prepared 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+katex 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+math 0 1 1 dollars
+tex 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+raw 201
+$$
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+$$
+prepared 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+katex 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+math 0 1 1 dollars
+tex 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+raw 80
+$$
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+$$
+prepared 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+katex 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+math 0 1 1 dollars
+tex 77
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+raw 83
+$$
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+$$
+prepared 63
+\begin{equation*}
+e^{i\pi} + 1 = 0 \tag{Euler} 
+\end{equation*}
+katex 63
+\begin{equation*}
+e^{i\pi} + 1 = 0 \tag{Euler} 
+\end{equation*}
+math 0 0 0 dollar
+tex 16
+\eqref{eq:euler}
+raw 18
+$\eqref{eq:euler}$
+prepared 14
+\text{(Euler)}
+katex 14
+\text{(Euler)}
+math 0 0 0 dollar
+tex 14
+\ref{eq:euler}
+raw 16
+$\ref{eq:euler}$
+prepared 12
+\text{Euler}
+katex 12
+\text{Euler}
+math 0 1 1 env
+tex 81
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+raw 81
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+prepared 100
+\begin{align*}
+\dot{x} &= \sigma (y - x)  \tag{3} \\
+\dot{y} &= \rho x - y - xz
+ \tag{4}\end{align*}
+katex 100
+\begin{align*}
+\dot{x} &= \sigma (y - x)  \tag{3} \\
+\dot{y} &= \rho x - y - xz
+ \tag{4}\end{align*}
+math 0 1 1 env
+tex 47
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+raw 47
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+prepared 57
+\begin{equation*}
+a^2 + b^2 = c^2
+ \tag{5}\end{equation*}
+katex 57
+\begin{equation*}
+a^2 + b^2 = c^2
+ \tag{5}\end{equation*}
+math 0 0 0 paren
+tex 9
+x^2 + y^2
+raw 13
+\(x^2 + y^2\)
+prepared 9
+x^2 + y^2
+katex 9
+x^2 + y^2
+math 0 1 1 bracket
+tex 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+raw 36
+\[
+\int_0^1 x^2\,dx = \frac{1}{3}
+\]
+prepared 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+katex 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+math 0 0 0 doubled
+tex 5
+a + b
+raw 11
+\\(a + b\\)
+prepared 5
+a + b
+katex 5
+a + b
+math 0 1 1 doubled
+tex 5
+c + d
+raw 13
+\\[
+c + d
+\\]
+prepared 5
+c + d
+katex 5
+c + d
+math 0 1 1 dollars
+tex 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+raw 115
+$$
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+$$
+prepared 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+katex 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+math 0 0 0 dollar
+tex 9
+x \in \RR
+raw 11
+$x \in \RR$
+prepared 9
+x \in \RR
+katex 9
+x \in \RR
+math 0 0 0 dollar
+tex 8
+\norm{v}
+raw 10
+$\norm{v}$
+prepared 8
+\norm{v}
+katex 8
+\norm{v}
+math 0 0 0 dollar
+tex 12
+\abs{-3} = 3
+raw 14
+$\abs{-3} = 3$
+prepared 12
+\abs{-3} = 3
+katex 12
+\abs{-3} = 3
+math 0 0 0 dollar
+tex 30
+\newcommand{\R}{\mathbf{R}} \R
+raw 32
+$\newcommand{\R}{\mathbf{R}} \R$
+prepared 30
+\newcommand{\R}{\mathbf{R}} \R
+katex 32
+\renewcommand{\R}{\mathbf{R}} \R
+math 0 0 0 dollar
+tex 32
+\renewcommand{\R}{\mathbf{R}} \R
+raw 34
+$\renewcommand{\R}{\mathbf{R}} \R$
+prepared 32
+\renewcommand{\R}{\mathbf{R}} \R
+katex 32
+\renewcommand{\R}{\mathbf{R}} \R
+math 0 0 0 dollar
+tex 30
+\operatorname{argmax}_{x} f(x)
+raw 32
+$\operatorname{argmax}_{x} f(x)$
+prepared 30
+\operatorname{argmax}_{x} f(x)
+katex 30
+\operatorname{argmax}_{x} f(x)
+math 0 0 0 dollar
+tex 20
+\operatorname{Tr}(A)
+raw 22
+$\operatorname{Tr}(A)$
+prepared 20
+\operatorname{Tr}(A)
+katex 20
+\operatorname{Tr}(A)
+math 0 0 0 dollar
+tex 10
+\max_i a_i
+raw 12
+$\max_i a_i$
+prepared 10
+\max_i a_i
+katex 10
+\max_i a_i
+math 0 0 0 dollar
+tex 6
+\sin x
+raw 8
+$\sin x$
+prepared 6
+\sin x
+katex 6
+\sin x
+math 0 0 0 dollar
+tex 21
+\mathbb{R} \mathbb{N}
+raw 23
+$\mathbb{R} \mathbb{N}$
+prepared 21
+\mathbb{R} \mathbb{N}
+katex 21
+\mathbb{R} \mathbb{N}
+math 0 0 0 dollar
+tex 23
+\mathcal{L} \mathcal{O}
+raw 25
+$\mathcal{L} \mathcal{O}$
+prepared 23
+\mathcal{L} \mathcal{O}
+katex 23
+\mathcal{L} \mathcal{O}
+math 0 0 0 dollar
+tex 25
+\mathfrak{g} \mathfrak{A}
+raw 27
+$\mathfrak{g} \mathfrak{A}$
+prepared 25
+\mathfrak{g} \mathfrak{A}
+katex 25
+\mathfrak{g} \mathfrak{A}
+math 0 0 0 dollar
+tex 11
+\mathrm{d}x
+raw 13
+$\mathrm{d}x$
+prepared 11
+\mathrm{d}x
+katex 11
+\mathrm{d}x
+math 0 0 0 dollar
+tex 10
+\mathbf{v}
+raw 12
+$\mathbf{v}$
+prepared 10
+\mathbf{v}
+katex 10
+\mathbf{v}
+math 0 0 0 dollar
+tex 19
+\boldsymbol{\alpha}
+raw 21
+$\boldsymbol{\alpha}$
+prepared 19
+\boldsymbol{\alpha}
+katex 19
+\boldsymbol{\alpha}
+math 0 0 0 dollar
+tex 30
+\text{with spaces inside text}
+raw 32
+$\text{with spaces inside text}$
+prepared 30
+\text{with spaces inside text}
+katex 30
+\text{with spaces inside text}
+math 0 0 0 dollar
+tex 15
+x \text{ if } y
+raw 17
+$x \text{ if } y$
+prepared 15
+x \text{ if } y
+katex 15
+x \text{ if } y
+math 0 0 0 dollar
+tex 5
+\RR^n
+raw 7
+$\RR^n$
+prepared 5
+\RR^n
+katex 5
+\RR^n
+math 0 0 0 dollar
+tex 10
+\norm{x}_2
+raw 12
+$\norm{x}_2$
+prepared 10
+\norm{x}_2
+katex 10
+\norm{x}_2
+math 0 1 1 dollars
+tex 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+raw 125
+$$
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+$$
+prepared 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+katex 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+math 0 1 1 dollars
+tex 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+raw 107
+$$
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+$$
+prepared 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+katex 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+math 0 1 1 dollars
+tex 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+raw 88
+$$
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+$$
+prepared 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+katex 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+math 0 1 1 dollars
+tex 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+raw 97
+$$
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+$$
+prepared 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+katex 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+math 0 1 1 dollars
+tex 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+raw 141
+$$
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+$$
+prepared 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+katex 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+math 0 1 1 dollars
+tex 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+raw 177
+$$
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+$$
+prepared 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+katex 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+math 0 1 1 dollars
+tex 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+raw 63
+$$
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+$$
+prepared 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+katex 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+math 0 0 0 dollar
+tex 15
+a_1 * b_2 * c_3
+raw 17
+$a_1 * b_2 * c_3$
+prepared 15
+a_1 * b_2 * c_3
+katex 15
+a_1 * b_2 * c_3
+math 0 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 0 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+math 0 0 0 dollar
+tex 5
+z_{1}
+raw 7
+$z_{1}$
+prepared 5
+z_{1}
+katex 5
+z_{1}
+math 0 0 0 dollar
+tex 5
+a*b*c
+raw 7
+$a*b*c$
+prepared 5
+a*b*c
+katex 5
+a*b*c
+math 0 0 0 dollar
+tex 5
+a * b
+raw 7
+$a * b$
+prepared 5
+a * b
+katex 5
+a * b
+math 0 0 0 dollar
+tex 8
+\{a, b\}
+raw 10
+$\{a, b\}$
+prepared 8
+\{a, b\}
+katex 8
+\{a, b\}
+math 0 0 0 dollar
+tex 6
+a \, b
+raw 8
+$a \, b$
+prepared 6
+a \, b
+katex 6
+a \, b
+math 0 0 0 dollar
+tex 4
+a\;b
+raw 6
+$a\;b$
+prepared 4
+a\;b
+katex 4
+a\;b
+math 0 0 0 dollar
+tex 5
+\|v\|
+raw 7
+$\|v\|$
+prepared 5
+\|v\|
+katex 5
+\|v\|
+math 0 0 0 dollar
+tex 6
+a \\ b
+raw 8
+$a \\ b$
+prepared 6
+a \\ b
+katex 6
+a \\ b
+math 0 0 0 dollar
+tex 8
+\#\%\&\_
+raw 10
+$\#\%\&\_$
+prepared 8
+\#\%\&\_
+katex 8
+\#\%\&\_
+math 0 0 0 dollar
+tex 2
+\$
+raw 4
+$\$$
+prepared 2
+\$
+katex 2
+\$
+math 0 0 0 dollar
+tex 3
+a<b
+raw 5
+$a<b$
+prepared 3
+a<b
+katex 3
+a<b
+math 0 0 0 dollar
+tex 5
+a < b
+raw 7
+$a < b$
+prepared 5
+a < b
+katex 5
+a < b
+math 0 0 0 dollar
+tex 3
+a>b
+raw 5
+$a>b$
+prepared 3
+a>b
+katex 3
+a>b
+math 0 0 0 dollar
+tex 7
+x \lt y
+raw 9
+$x \lt y$
+prepared 7
+x \lt y
+katex 7
+x \lt y
+math 0 0 0 dollar
+tex 6
+a \& b
+raw 8
+$a \& b$
+prepared 6
+a \& b
+katex 6
+a \& b
+math 0 0 0 dollar
+tex 9
+p \land q
+raw 11
+$p \land q$
+prepared 9
+p \land q
+katex 9
+p \land q
+math 0 1 1 dollars
+tex 29
+a + b % this is a comment
+= c
+raw 35
+$$
+a + b % this is a comment
+= c
+$$
+prepared 29
+a + b % this is a comment
+= c
+katex 29
+a + b % this is a comment
+= c
+math 0 1 1 dollars
+tex 15
+a % comment
++ c
+raw 21
+$$
+a % comment
++ c
+$$
+prepared 15
+a % comment
++ c
+katex 15
+a % comment
++ c
+math 0 0 0 dollar
+tex 12
+α + β = γ
+raw 14
+$α + β = γ$
+prepared 12
+α + β = γ
+katex 12
+α + β = γ
+math 0 0 0 dollar
+tex 7
+x ≤ y
+raw 9
+$x ≤ y$
+prepared 7
+x ≤ y
+katex 7
+x ≤ y
+math 0 0 0 dollar
+tex 19
+\text{café naïve}
+raw 21
+$\text{café naïve}$
+prepared 19
+\text{café naïve}
+katex 19
+\text{café naïve}
+math 0 0 0 dollar
+tex 10
+∀x∈ℝ
+raw 12
+$∀x∈ℝ$
+prepared 10
+∀x∈ℝ
+katex 10
+∀x∈ℝ
+math 0 0 0 dollar
+tex 9
+\frac{1}{
+raw 11
+$\frac{1}{$
+prepared 9
+\frac{1}{
+katex 9
+\frac{1}{
+math 0 0 0 dollar
+tex 12
+\badmacro{x}
+raw 14
+$\badmacro{x}$
+prepared 12
+\badmacro{x}
+katex 12
+\badmacro{x}
+math 0 0 0 dollar
+tex 2
+x^
+raw 4
+$x^$
+prepared 2
+x^
+katex 2
+x^
+math 0 1 1 dollars
+tex 34
+\begin{align}
+a &= b
+\end{aligned}
+raw 40
+$$
+\begin{align}
+a &= b
+\end{aligned}
+$$
+prepared 34
+\begin{align}
+a &= b
+\end{aligned}
+katex 34
+\begin{align}
+a &= b
+\end{aligned}
+math 0 0 0 dollar
+tex 5
+x<y>z
+raw 7
+$x<y>z$
+prepared 5
+x<y>z
+katex 5
+x<y>z
+math 0 0 0 dollar
+tex 7
+a <b> c
+raw 9
+$a <b> c$
+prepared 7
+a <b> c
+katex 7
+a <b> c
+end
+doc hero.md
+src 255
+# Install
+
+jupynvim draws notebooks
+inside Neovim.
+
+> [!NOTE]
+> Needs Ghostty 1.3 or kitty.
+
+- [x] Rust backend
+- [ ] Widgets
+
+| Terminal | Images |
+|----------|:------:|
+| Ghostty  | yes    |
+| WezTerm  | soon   |
+
+```lua
+require("jupynvim").setup()
+```
+
+text 255
+# Install
+
+jupynvim draws notebooks
+inside Neovim.
+
+> [!NOTE]
+> Needs Ghostty 1.3 or kitty.
+
+- [x] Rust backend
+- [ ] Widgets
+
+| Terminal | Images |
+|----------|:------:|
+| Ghostty  | yes    |
+| WezTerm  | soon   |
+
+```lua
+require("jupynvim").setup()
+```
+
+end
+doc gauss.md
+src 134
+The Gaussian integral:
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+
+and inline math stays text when it can: $x^2 + y_1$.
+
+text 91
+The Gaussian integral:
+
+ZZDMTH0001ZZ
+
+and inline math stays text when it can: ZZMTH0002ZZ.
+
+math 0 1 1 dollars
+tex 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+raw 55
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+prepared 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+katex 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+math 0 0 0 dollar
+tex 9
+x^2 + y_1
+raw 11
+$x^2 + y_1$
+prepared 9
+x^2 + y_1
+katex 9
+x^2 + y_1
+end
+doc md-fixture.ipynb#0
+src 365
+# Heading level 1
+## Heading level 2
+### Heading level 3
+#### Heading level 4
+##### Heading level 5
+###### Heading level 6
+####### Seven hashes is a paragraph
+#NoSpace is a paragraph on GitHub
+
+Setext heading level 1
+======================
+
+Setext heading level 2
+----------------------
+
+## Closing hashes are stripped ##
+### Heading with *italic* and `code` inside
+text 365
+# Heading level 1
+## Heading level 2
+### Heading level 3
+#### Heading level 4
+##### Heading level 5
+###### Heading level 6
+####### Seven hashes is a paragraph
+#NoSpace is a paragraph on GitHub
+
+Setext heading level 1
+======================
+
+Setext heading level 2
+----------------------
+
+## Closing hashes are stripped ##
+### Heading with *italic* and `code` inside
+end
+doc md-fixture.ipynb#1
+src 342
+This paragraph is written
+across three source lines
+that GitHub joins into one flowing paragraph.
+
+Hard break with two trailing spaces  
+next line after two spaces.
+
+Hard break with a backslash\
+next line after backslash.
+
+Single newline inside a paragraph is a soft break, so this line
+and this line render on the same visual line on GitHub.
+text 342
+This paragraph is written
+across three source lines
+that GitHub joins into one flowing paragraph.
+
+Hard break with two trailing spaces  
+next line after two spaces.
+
+Hard break with a backslash\
+next line after backslash.
+
+Single newline inside a paragraph is a soft break, so this line
+and this line render on the same visual line on GitHub.
+end
+doc md-fixture.ipynb#2
+src 530
+*italic star* and _italic underscore_
+
+**bold star** and __bold underscore__
+
+***bold italic star*** and ___bold italic underscore___
+
+**bold with *nested italic* inside** and *italic with **nested bold** inside*
+
+snake_case_name and __init__ and file_name_here.py stay literal
+
+**bold**text works but __bold__text does not
+
+un*frigging*believable works but un_frigging_believable does not
+
+~~strikethrough two tildes~~ and ~strikethrough one tilde~
+
+**unclosed bold and *unclosed italic
+
+a * b * c with spaced stars stays literal
+text 530
+*italic star* and _italic underscore_
+
+**bold star** and __bold underscore__
+
+***bold italic star*** and ___bold italic underscore___
+
+**bold with *nested italic* inside** and *italic with **nested bold** inside*
+
+snake_case_name and __init__ and file_name_here.py stay literal
+
+**bold**text works but __bold__text does not
+
+un*frigging*believable works but un_frigging_believable does not
+
+~~strikethrough two tildes~~ and ~strikethrough one tilde~
+
+**unclosed bold and *unclosed italic
+
+a * b * c with spaced stars stays literal
+end
+doc md-fixture.ipynb#3
+src 251
+Use `printf()` here.
+
+Backtick inside: `` a ` b `` and double: ``` a `` b ```
+
+Spaces are stripped: `` `foo` `` shows backticks
+
+Markers inside code are literal: `**not bold**` and `a_b_c` and `[x](y)`
+
+Code spanning
+lines `foo
+bar` joins with a space
+text 251
+Use `printf()` here.
+
+Backtick inside: `` a ` b `` and double: ``` a `` b ```
+
+Spaces are stripped: `` `foo` `` shows backticks
+
+Markers inside code are literal: `**not bold**` and `a_b_c` and `[x](y)`
+
+Code spanning
+lines `foo
+bar` joins with a space
+end
+doc md-fixture.ipynb#4
+src 585
+Inline link: [GitHub](https://github.com)
+
+Inline link with title: [GitHub home](https://github.com "GitHub home")
+
+Reference full [ref link][gh], collapsed [gh][], shortcut [gh], case-folded [Ref][GH]
+
+Autolink: <https://example.com/path?q=1> and email <user@example.com>
+
+Bare URLs: https://www.example.com/page and www.example.com and user@example.org
+
+Formatting in link text: [**bold link** and `code`](https://example.com)
+
+Relative link [the README](README.md) and anchor [to h1](#heading-level-1)
+
+Issue #1, mention @sheng-tse, commit 8c23c85
+
+[gh]: https://github.com "GitHub"
+text 585
+Inline link: [GitHub](https://github.com)
+
+Inline link with title: [GitHub home](https://github.com "GitHub home")
+
+Reference full [ref link][gh], collapsed [gh][], shortcut [gh], case-folded [Ref][GH]
+
+Autolink: <https://example.com/path?q=1> and email <user@example.com>
+
+Bare URLs: https://www.example.com/page and www.example.com and user@example.org
+
+Formatting in link text: [**bold link** and `code`](https://example.com)
+
+Relative link [the README](README.md) and anchor [to h1](#heading-level-1)
+
+Issue #1, mention @sheng-tse, commit 8c23c85
+
+[gh]: https://github.com "GitHub"
+end
+doc md-fixture.ipynb#5
+src 609
+Relative: ![Relative alt](docs/screenshot.png)
+
+Remote: ![Remote rocket](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png)
+
+Data URI: ![Data red](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAMCAIAAAD3UuoiAAAAUklEQVR4nI3CoRXCAABDwUwSXY3+uroajUaj0ejOlLEYIbl3ykHtofKg9lCB2kPlpPZQuag9VJ7UHiovag+VN7WHyofaQ+VL7aHyo/ZQuak9/AOPFC/Qz30IHQAAAABJRU5ErkJggg==)
+
+Linked image: [![Linked](https://github.githubassets.com/images/icons/emoji/unicode/2b50.png)](https://github.com)
+
+Text before ![inline img](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png "title") text after
+text 609
+Relative: ![Relative alt](docs/screenshot.png)
+
+Remote: ![Remote rocket](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png)
+
+Data URI: ![Data red](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAMCAIAAAD3UuoiAAAAUklEQVR4nI3CoRXCAABDwUwSXY3+uroajUaj0ejOlLEYIbl3ykHtofKg9lCB2kPlpPZQuag9VJ7UHiovag+VN7WHyofaQ+VL7aHyo/ZQuak9/AOPFC/Qz30IHQAAAABJRU5ErkJggg==)
+
+Linked image: [![Linked](https://github.githubassets.com/images/icons/emoji/unicode/2b50.png)](https://github.com)
+
+Text before ![inline img](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png "title") text after
+end
+doc md-fixture.ipynb#6
+src 160
+- Level one dash
+  * Level two star
+    + Level three plus
+    + Another level three
+  * Back to level two
+- Level one again
+* Changing marker starts a new list
+text 160
+- Level one dash
+  * Level two star
+    + Level three plus
+    + Another level three
+  * Back to level two
+- Level one again
+* Changing marker starts a new list
+end
+doc md-fixture.ipynb#7
+src 321
+3. Ordered starting at three
+4. Four
+5. Five
+
+1. All ones
+1. Still renders as 2
+1. Renders as 3
+
+8) Paren delimiter starts at eight
+9) Nine
+
+- Bullet with ordered inside
+  1. First nested ordered
+  2. Second nested ordered
+     - Bullet inside ordered inside bullet
+
+A paragraph line
+2. two does not interrupt a paragraph
+text 321
+3. Ordered starting at three
+4. Four
+5. Five
+
+1. All ones
+1. Still renders as 2
+1. Renders as 3
+
+8) Paren delimiter starts at eight
+9) Nine
+
+- Bullet with ordered inside
+  1. First nested ordered
+  2. Second nested ordered
+     - Bullet inside ordered inside bullet
+
+A paragraph line
+2. two does not interrupt a paragraph
+end
+doc md-fixture.ipynb#8
+src 193
+- [ ] Unchecked task
+- [x] Checked task with **bold**
+  - [ ] Nested unchecked
+  - [X] Nested checked uppercase X
+    - [ ] Third level task
+1. [ ] Ordered task item
+2. [x] Ordered checked task
+text 193
+- [ ] Unchecked task
+- [x] Checked task with **bold**
+  - [ ] Nested unchecked
+  - [X] Nested checked uppercase X
+    - [ ] Third level task
+1. [ ] Ordered task item
+2. [x] Ordered checked task
+end
+doc md-fixture.ipynb#9
+src 187
+Tight list:
+- tight a
+- tight b
+
+Loose list:
+- loose a
+
+- loose b
+
+- Item with a second paragraph
+
+  Second paragraph inside the item, indented.
+
+  ```python
+  print("code in list")
+  ```
+text 187
+Tight list:
+- tight a
+- tight b
+
+Loose list:
+- loose a
+
+- loose b
+
+- Item with a second paragraph
+
+  Second paragraph inside the item, indented.
+
+  ```python
+  print("code in list")
+  ```
+end
+doc md-fixture.ipynb#10
+src 246
+> Blockquote level one
+> continues here
+lazy continuation line without marker
+>
+> > Nested blockquote level two
+> > - list inside nested quote
+> > - second item
+> >
+> > ```bash
+> > echo "code in quote"
+> > ```
+>
+> Back to level one with **bold**.
+text 246
+> Blockquote level one
+> continues here
+lazy continuation line without marker
+>
+> > Nested blockquote level two
+> > - list inside nested quote
+> > - second item
+> >
+> > ```bash
+> > echo "code in quote"
+> > ```
+>
+> Back to level one with **bold**.
+end
+doc md-fixture.ipynb#11
+src 446
+> [!NOTE]
+> Useful information that users should know, even when skimming.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+> [!note]
+> Lowercase type name.
+>
+> Second paragraph in the alert.
+text 446
+> [!NOTE]
+> Useful information that users should know, even when skimming.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+> [!note]
+> Lowercase type name.
+>
+> Second paragraph in the alert.
+end
+doc md-fixture.ipynb#12
+src 668
+```python
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+```bash
+for f in *.ipynb; do echo "$f"; done
+```
+
+```json
+{"name": "jupynvim", "version": "0.4.6", "tags": ["nvim", "jupyter"]}
+```
+
+```rust
+fn main() { println!("hello {}", 42); }
+```
+
+```
+plain fence without a language
+```
+
+~~~python
+tilde_fence = True
+~~~
+
+````markdown
+```python
+nested_fence = True
+```
+````
+
+    indented code block line 1
+    indented code block line 2
+
+```python
+very_long_code_line = "this code line is deliberately longer than the window so we can see whether it wraps or scrolls horizontally like GitHub"
+```
+text 668
+```python
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+```bash
+for f in *.ipynb; do echo "$f"; done
+```
+
+```json
+{"name": "jupynvim", "version": "0.4.6", "tags": ["nvim", "jupyter"]}
+```
+
+```rust
+fn main() { println!("hello {}", 42); }
+```
+
+```
+plain fence without a language
+```
+
+~~~python
+tilde_fence = True
+~~~
+
+````markdown
+```python
+nested_fence = True
+```
+````
+
+    indented code block line 1
+    indented code block line 2
+
+```python
+very_long_code_line = "this code line is deliberately longer than the window so we can see whether it wraps or scrolls horizontally like GitHub"
+```
+end
+doc md-fixture.ipynb#13
+src 317
+```math
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+```
+
+Inline $x^2 + y_1$ and backtick form $`\sqrt{x^2+1}`$ in prose.
+
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+
+$$
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+$$
+
+Prices like $5 and $10 are not math.
+text 154
+ZZDMTH0001ZZ
+
+Inline ZZMTH0002ZZ and backtick form ZZMTH0003ZZ in prose.
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+Prices like \$5 and \$10 are not math.
+math 0 1 1 fence
+tex 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+raw 46
+```math
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+```
+prepared 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+katex 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+math 0 0 0 dollar
+tex 9
+x^2 + y_1
+raw 11
+$x^2 + y_1$
+prepared 9
+x^2 + y_1
+katex 9
+x^2 + y_1
+math 0 0 0 backtick
+tex 12
+\sqrt{x^2+1}
+raw 16
+$`\sqrt{x^2+1}`$
+prepared 12
+\sqrt{x^2+1}
+katex 12
+\sqrt{x^2+1}
+math 0 1 1 dollars
+tex 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+raw 50
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+prepared 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+katex 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+math 0 1 1 dollars
+tex 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+raw 53
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+prepared 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+katex 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+math 0 1 1 dollars
+tex 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+raw 59
+$$
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+$$
+prepared 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+katex 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+end
+doc md-fixture.ipynb#14
+src 203
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a | b | c |
+| **bold** | `code` | *it* |
+| escaped \| pipe | [link](https://x.com) | 1,234.56 |
+| ragged |
+
+Name | Value
+--- | ---
+no outer pipes | 1
+text 203
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a | b | c |
+| **bold** | `code` | *it* |
+| escaped \| pipe | [link](https://x.com) | 1,234.56 |
+| ragged |
+
+Name | Value
+--- | ---
+no outer pipes | 1
+end
+doc md-fixture.ipynb#15
+src 476
+| id | first_name | last_name | email_address | department | job_title | start_date | salary_usd | manager | office_location |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Alexandra | Montgomery | alexandra.montgomery@example.com | Engineering | Senior Software Engineer | 2019-03-14 | 185000 | Jordan Lee | San Francisco, CA |
+| 2 | Bartholomew | Fitzgerald | bart.fitzgerald@example.com | Marketing | Director of Brand | 2021-11-02 | 162500 | Priya Patel | New York, NY |
+text 476
+| id | first_name | last_name | email_address | department | job_title | start_date | salary_usd | manager | office_location |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Alexandra | Montgomery | alexandra.montgomery@example.com | Engineering | Senior Software Engineer | 2019-03-14 | 185000 | Jordan Lee | San Francisco, CA |
+| 2 | Bartholomew | Fitzgerald | bart.fitzgerald@example.com | Marketing | Director of Brand | 2021-11-02 | 162500 | Priya Patel | New York, NY |
+end
+doc md-fixture.ipynb#16
+src 54
+Above the rules
+
+---
+
+***
+
+___
+
+- - -
+
+Below the rules
+text 54
+Above the rules
+
+---
+
+***
+
+___
+
+- - -
+
+Below the rules
+end
+doc md-fixture.ipynb#17
+src 124
+Here is a footnote reference[^1] and a named one[^note].
+
+[^1]: The first footnote.
+[^note]: A named footnote with **bold**.
+text 124
+Here is a footnote reference[^1] and a named one[^note].
+
+[^1]: The first footnote.
+[^note]: A named footnote with **bold**.
+end
+doc md-fixture.ipynb#18
+src 578
+<details>
+<summary>Click to expand</summary>
+
+Hidden content with **markdown** inside.
+
+</details>
+
+Line one<br>line two after br.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.
+
+H<sub>2</sub>O and E = mc<sup>2</sup>
+
+<img width="100" src="https://github.githubassets.com/images/icons/emoji/unicode/1f680.png" alt="rocket">
+
+<!-- This comment is hidden on GitHub -->
+
+<p align="center">Centered paragraph</p>
+
+<ins>inserted</ins> <mark>marked</mark> <b>b tag</b> <i>i tag</i> <s>s tag</s> <code>code tag</code>
+
+<span style="color:red">styled span</span> <script>alert(1)</script>
+text 578
+<details>
+<summary>Click to expand</summary>
+
+Hidden content with **markdown** inside.
+
+</details>
+
+Line one<br>line two after br.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.
+
+H<sub>2</sub>O and E = mc<sup>2</sup>
+
+<img width="100" src="https://github.githubassets.com/images/icons/emoji/unicode/1f680.png" alt="rocket">
+
+<!-- This comment is hidden on GitHub -->
+
+<p align="center">Centered paragraph</p>
+
+<ins>inserted</ins> <mark>marked</mark> <b>b tag</b> <i>i tag</i> <s>s tag</s> <code>code tag</code>
+
+<span style="color:red">styled span</span> <script>alert(1)</script>
+end
+doc md-fixture.ipynb#19
+src 191
+:rocket: :+1: :tada: :smile: :heavy_check_mark: :not_an_emoji:
+
+\*not italic\* \# not heading \[not link\](x) \`not code\` \\ backslash
+
+&copy; &nbsp;x &amp; &lt;tag&gt; &#169; &#x1F600; &ne;
+text 191
+:rocket: :+1: :tada: :smile: :heavy_check_mark: :not_an_emoji:
+
+\*not italic\* \# not heading ZZDMTH0001ZZ(x) \`not code\` \\ backslash
+
+&copy; &nbsp;x &amp; &lt;tag&gt; &#169; &#x1F600; &ne;
+math 0 1 0 bracket
+tex 8
+not link
+raw 12
+\[not link\]
+prepared 8
+not link
+katex 8
+not link
+end
+doc md-fixture.ipynb#20
+src 211
+## Heading followed immediately by a list
+- item right after heading
+- second item
+### Heading followed immediately by code
+```python
+x = 1
+```
+Paragraph directly above a quote
+> quote directly below a paragraph
+text 211
+## Heading followed immediately by a list
+- item right after heading
+- second item
+### Heading followed immediately by code
+```python
+x = 1
+```
+Paragraph directly above a quote
+> quote directly below a paragraph
+end
+doc md-fixture.ipynb#21
+src 893
+This is a very long single source line that keeps going well past the right edge of a normal terminal window so that we can observe how the renderer wraps prose, whether it breaks at word boundaries, and whether the continuation rows keep any indentation or decoration that the first row had, which matters for lists and quotes.
+
+- A very long list item that also runs past the right edge of the window so we can see whether the wrapped continuation rows hang under the text of the item or fall back to the left margin like plain text does.
+
+> A very long blockquote line that runs past the right edge of the window so we can see whether the quote bar is repeated on each wrapped continuation row or only drawn on the first visual row.
+
+## A very long heading that runs past the right edge of the window to see whether the heading style and prefix glyph carry onto the wrapped continuation row
+text 893
+This is a very long single source line that keeps going well past the right edge of a normal terminal window so that we can observe how the renderer wraps prose, whether it breaks at word boundaries, and whether the continuation rows keep any indentation or decoration that the first row had, which matters for lists and quotes.
+
+- A very long list item that also runs past the right edge of the window so we can see whether the wrapped continuation rows hang under the text of the item or fall back to the left margin like plain text does.
+
+> A very long blockquote line that runs past the right edge of the window so we can see whether the quote bar is repeated on each wrapped continuation row or only drawn on the first visual row.
+
+## A very long heading that runs past the right edge of the window to see whether the heading style and prefix glyph carry onto the wrapped continuation row
+end
+doc md-fixture.ipynb#22
+src 873
+Inline $x^2$, then $x$, $y$; and ($z$) or [$w$] or "$v$" at the end $u$.
+
+Word-adjacent: the $x$-axis, the $n$th term, foo$x$bar, 2$x$3, plural $\alpha$s.
+
+Spaces inside the delimiters: $ x $ and $x $ and $ x$.
+
+Currency: it costs $5 and $10 per item, $1,000 total or $20.50 each.
+
+Currency then math on one line: to split $100 in half, we calculate $100/2$.
+
+Same with a span: to split <span>$</span>100 in half, we calculate $100/2$.
+
+Escaped dollars stay text: \$5 and \$10 each.
+
+An escaped dollar inside math: $\$4 + x$ and $`\sqrt{\$4}`$.
+
+Both on one line: \$5 and \$10, then $\$4 + x$.
+
+Backtick form: $`a_1 * b_2 * c_3`$ and $`x < y`$ and $`\{1,2\}`$.
+
+Code spans stay code: `$HOME` and `$x$` and `a $ b $ c`.
+
+Empty and doubled: $$ alone and $ $ single space.
+
+Inline math across a soft line break: $a +
+b = c$ continues here.
+
+Adjacent maths: $a$$b$ and $a$ $b$.
+text 1007
+Inline ZZMTH0001ZZ, then ZZMTH0002ZZ, ZZMTH0003ZZ; and (ZZMTH0004ZZ) or [ZZMTH0005ZZ] or "ZZMTH0006ZZ" at the end ZZMTH0007ZZ.
+
+Word-adjacent: the ZZMTH0008ZZ-axis, the ZZMTH0009ZZth term, fooZZMTH0010ZZbar, 2\$x\$3, plural ZZMTH0011ZZs.
+
+Spaces inside the delimiters: \$ x \$ and \$x \$ and \$ x\$.
+
+Currency: it costs \$5 and \$10 per item, \$1,000 total or \$20.50 each.
+
+Currency then math on one line: to split \$100 in half, we calculate ZZMTH0012ZZ.
+
+Same with a span: to split <span>\$</span>100 in half, we calculate ZZMTH0013ZZ.
+
+Escaped dollars stay text: \$5 and \$10 each.
+
+An escaped dollar inside math: ZZMTH0014ZZ and ZZMTH0015ZZ.
+
+Both on one line: \$5 and \$10, then ZZMTH0016ZZ.
+
+Backtick form: ZZMTH0017ZZ and ZZMTH0018ZZ and ZZMTH0019ZZ.
+
+Code spans stay code: `$HOME` and `$x$` and `a $ b $ c`.
+
+Empty and doubled: \$\$ alone and \$ \$ single space.
+
+Inline math across a soft line break: ZZMTH0020ZZ continues here.
+
+Adjacent maths: ZZMTH0021ZZZZMTH0022ZZ and ZZMTH0023ZZ ZZMTH0024ZZ.
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 1
+y
+raw 3
+$y$
+prepared 1
+y
+katex 1
+y
+math 0 0 0 dollar
+tex 1
+z
+raw 3
+$z$
+prepared 1
+z
+katex 1
+z
+math 0 0 0 dollar
+tex 1
+w
+raw 3
+$w$
+prepared 1
+w
+katex 1
+w
+math 0 0 0 dollar
+tex 1
+v
+raw 3
+$v$
+prepared 1
+v
+katex 1
+v
+math 0 0 0 dollar
+tex 1
+u
+raw 3
+$u$
+prepared 1
+u
+katex 1
+u
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 1
+n
+raw 3
+$n$
+prepared 1
+n
+katex 1
+n
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 6
+\alpha
+raw 8
+$\alpha$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 0 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+math 0 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+math 0 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+math 0 0 0 backtick
+tex 10
+\sqrt{\$4}
+raw 14
+$`\sqrt{\$4}`$
+prepared 10
+\sqrt{\$4}
+katex 10
+\sqrt{\$4}
+math 0 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+math 0 0 0 backtick
+tex 15
+a_1 * b_2 * c_3
+raw 19
+$`a_1 * b_2 * c_3`$
+prepared 15
+a_1 * b_2 * c_3
+katex 15
+a_1 * b_2 * c_3
+math 0 0 0 backtick
+tex 5
+x < y
+raw 9
+$`x < y`$
+prepared 5
+x < y
+katex 5
+x < y
+math 0 0 0 backtick
+tex 7
+\{1,2\}
+raw 11
+$`\{1,2\}`$
+prepared 7
+\{1,2\}
+katex 7
+\{1,2\}
+math 0 0 0 dollar
+tex 9
+a +
+b = c
+raw 11
+$a +
+b = c$
+prepared 9
+a +
+b = c
+katex 9
+a +
+b = c
+math 0 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 0 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+math 0 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 0 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+end
+doc md-fixture.ipynb#23
+src 823
+# Heading with $E = mc^2$ math
+
+## Heading with $`\alpha`$ backtick math
+
+*Italic with $a_1$ inside* and **bold with $\sum_i x_i$ inside** and ~~struck $x$~~.
+
+_underscore emphasis with $x_1$ and $y_1$ inside_
+
+[Link text with $x^2$](https://example.com) and footnote with math[^m].
+
+- List item with $x^2$
+- Item with display math:
+
+  $$
+  \int_0^1 x\,dx
+  $$
+
+  1. Nested ordered with $\alpha$
+     - Deeper with $\beta_{ij}$
+
+| Expression | Note |
+|---|---|
+| $x^2$ | $4$ |
+| $\frac{a}{b}$ | `code` |
+| $\lvert x \rvert$ | abs via lvert |
+| $|x|$ | pipe inside math |
+| $$x$$ | display in a cell |
+
+> Quote with $e^{i\pi} + 1 = 0$
+>
+> $$
+> \sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+> $$
+
+> [!NOTE]
+> Alert with inline $x \in \mathbb{R}$ and display:
+>
+> $$a^2 + b^2 = c^2$$
+
+[^m]: Footnote containing $\sqrt{2}$.
+text 804
+# Heading with ZZMTH0001ZZ math
+
+## Heading with ZZMTH0002ZZ backtick math
+
+*Italic with ZZMTH0003ZZ inside* and **bold with ZZMTH0004ZZ inside** and ~~struck ZZMTH0005ZZ~~.
+
+_underscore emphasis with ZZMTH0006ZZ and ZZMTH0007ZZ inside_
+
+[Link text with ZZMTH0008ZZ](https://example.com) and footnote with math[^m].
+
+- List item with ZZMTH0009ZZ
+- Item with display math:
+
+  ZZDMTH0010ZZ
+
+  1. Nested ordered with ZZMTH0011ZZ
+     - Deeper with ZZMTH0012ZZ
+
+| Expression | Note |
+|---|---|
+| ZZMTH0013ZZ | ZZMTH0014ZZ |
+| ZZMTH0015ZZ | `code` |
+| ZZMTH0016ZZ | abs via lvert |
+| ZZMTH0017ZZ | pipe inside math |
+| ZZDMTH0018ZZ | display in a cell |
+
+> Quote with ZZMTH0019ZZ
+>
+> ZZDMTH0020ZZ
+
+> [!NOTE]
+> Alert with inline ZZMTH0021ZZ and display:
+>
+> ZZDMTH0022ZZ
+
+[^m]: Footnote containing ZZMTH0023ZZ.
+math 0 0 0 dollar
+tex 8
+E = mc^2
+raw 10
+$E = mc^2$
+prepared 8
+E = mc^2
+katex 8
+E = mc^2
+math 0 0 0 backtick
+tex 6
+\alpha
+raw 10
+$`\alpha`$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 0 0 0 dollar
+tex 3
+a_1
+raw 5
+$a_1$
+prepared 3
+a_1
+katex 3
+a_1
+math 0 0 0 dollar
+tex 10
+\sum_i x_i
+raw 12
+$\sum_i x_i$
+prepared 10
+\sum_i x_i
+katex 10
+\sum_i x_i
+math 0 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 0 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 1 1 dollars
+tex 14
+\int_0^1 x\,dx
+raw 24
+$$
+  \int_0^1 x\,dx
+  $$
+prepared 14
+\int_0^1 x\,dx
+katex 14
+\int_0^1 x\,dx
+math 0 0 0 dollar
+tex 6
+\alpha
+raw 8
+$\alpha$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 0 0 0 dollar
+tex 10
+\beta_{ij}
+raw 12
+$\beta_{ij}$
+prepared 10
+\beta_{ij}
+katex 10
+\beta_{ij}
+math 0 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 0 0 0 dollar
+tex 1
+4
+raw 3
+$4$
+prepared 1
+4
+katex 1
+4
+math 0 0 0 dollar
+tex 11
+\frac{a}{b}
+raw 13
+$\frac{a}{b}$
+prepared 11
+\frac{a}{b}
+katex 11
+\frac{a}{b}
+math 0 0 0 dollar
+tex 15
+\lvert x \rvert
+raw 17
+$\lvert x \rvert$
+prepared 15
+\lvert x \rvert
+katex 15
+\lvert x \rvert
+math 0 0 0 dollar
+tex 3
+|x|
+raw 5
+$|x|$
+prepared 3
+|x|
+katex 3
+|x|
+math 0 1 0 dollars
+tex 1
+x
+raw 5
+$$x$$
+prepared 1
+x
+katex 1
+x
+math 0 0 0 dollar
+tex 16
+e^{i\pi} + 1 = 0
+raw 18
+$e^{i\pi} + 1 = 0$
+prepared 16
+e^{i\pi} + 1 = 0
+katex 16
+e^{i\pi} + 1 = 0
+math 0 1 1 dollars
+tex 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+raw 59
+$$
+> \sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+> $$
+prepared 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+katex 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+math 0 0 0 dollar
+tex 16
+x \in \mathbb{R}
+raw 18
+$x \in \mathbb{R}$
+prepared 16
+x \in \mathbb{R}
+katex 16
+x \in \mathbb{R}
+math 0 1 1 dollars
+tex 15
+a^2 + b^2 = c^2
+raw 19
+$$a^2 + b^2 = c^2$$
+prepared 15
+a^2 + b^2 = c^2
+katex 15
+a^2 + b^2 = c^2
+math 0 0 0 dollar
+tex 8
+\sqrt{2}
+raw 10
+$\sqrt{2}$
+prepared 8
+\sqrt{2}
+katex 8
+\sqrt{2}
+end
+doc md-fixture.ipynb#24
+src 516
+Display on one line:
+
+$$E = mc^2$$
+
+Display spanning lines:
+
+$$
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+$$
+
+Text before $$x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$$ text after in the same paragraph.
+
+A paragraph line
+$$
+y = mx + b
+$$
+directly continues without blank lines.
+
+$$
+a = b
+
+c = d
+$$
+
+```math
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+```
+
+```math
+x = 1 \\ y = 2
+```
+
+~~~math
+\sqrt{2}
+~~~
+text 270
+Display on one line:
+
+ZZDMTH0001ZZ
+
+Display spanning lines:
+
+ZZDMTH0002ZZ
+
+Text before ZZDMTH0003ZZ text after in the same paragraph.
+
+A paragraph line
+ZZDMTH0004ZZ
+directly continues without blank lines.
+
+\$\$
+a = b
+
+c = d
+\$\$
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+ZZDMTH0007ZZ
+math 0 1 1 dollars
+tex 8
+E = mc^2
+raw 12
+$$E = mc^2$$
+prepared 8
+E = mc^2
+katex 8
+E = mc^2
+math 0 1 1 dollars
+tex 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+raw 77
+$$
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+$$
+prepared 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+katex 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+math 0 1 0 dollars
+tex 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+raw 40
+$$x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$$
+prepared 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+katex 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+math 0 1 1 dollars
+tex 10
+y = mx + b
+raw 16
+$$
+y = mx + b
+$$
+prepared 10
+y = mx + b
+katex 10
+y = mx + b
+math 0 1 1 fence
+tex 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+raw 143
+```math
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+```
+prepared 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+katex 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+math 0 1 1 fence
+tex 14
+x = 1 \\ y = 2
+raw 26
+```math
+x = 1 \\ y = 2
+```
+prepared 14
+x = 1 \\ y = 2
+katex 14
+x = 1 \\ y = 2
+math 0 1 1 fence
+tex 8
+\sqrt{2}
+raw 20
+~~~math
+\sqrt{2}
+~~~
+prepared 8
+\sqrt{2}
+katex 8
+\sqrt{2}
+end
+doc md-fixture.ipynb#25
+src 762
+$$
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+$$
+
+$$
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+$$
+
+$$
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+$$
+
+$$
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+$$
+
+$$
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+$$
+
+$$
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+$$
+
+$$
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+$$
+
+$$
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+$$
+
+See equation $\eqref{eq:euler}$ and $\ref{eq:euler}$.
+text 153
+ZZDMTH0001ZZ
+
+ZZDMTH0002ZZ
+
+ZZDMTH0003ZZ
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+ZZDMTH0007ZZ
+
+ZZDMTH0008ZZ
+
+See equation ZZMTH0009ZZ and ZZMTH0010ZZ.
+math 0 1 1 dollars
+tex 50
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+raw 56
+$$
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+$$
+prepared 69
+\begin{align*}
+a &= b + c  \tag{1} \\
+d &= e + f
+ \tag{2}\end{align*}
+katex 69
+\begin{align*}
+a &= b + c  \tag{1} \\
+d &= e + f
+ \tag{2}\end{align*}
+math 0 1 1 dollars
+tex 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+raw 50
+$$
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+$$
+prepared 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+katex 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+math 0 1 1 dollars
+tex 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+raw 82
+$$
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+$$
+prepared 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+katex 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+math 0 1 1 dollars
+tex 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+raw 56
+$$
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+$$
+prepared 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+katex 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+math 0 1 1 dollars
+tex 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+raw 85
+$$
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+$$
+prepared 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+katex 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+math 0 1 1 dollars
+tex 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+raw 201
+$$
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+$$
+prepared 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+katex 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+math 0 1 1 dollars
+tex 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+raw 80
+$$
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+$$
+prepared 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+katex 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+math 0 1 1 dollars
+tex 77
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+raw 83
+$$
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+$$
+prepared 63
+\begin{equation*}
+e^{i\pi} + 1 = 0 \tag{Euler} 
+\end{equation*}
+katex 63
+\begin{equation*}
+e^{i\pi} + 1 = 0 \tag{Euler} 
+\end{equation*}
+math 0 0 0 dollar
+tex 16
+\eqref{eq:euler}
+raw 18
+$\eqref{eq:euler}$
+prepared 14
+\text{(Euler)}
+katex 14
+\text{(Euler)}
+math 0 0 0 dollar
+tex 14
+\ref{eq:euler}
+raw 16
+$\ref{eq:euler}$
+prepared 12
+\text{Euler}
+katex 12
+\text{Euler}
+end
+doc md-fixture.ipynb#26
+src 402
+Bare environment after a blank line:
+
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+
+Bare environment right after a text line:
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+
+Parenthesis delimiters: \(x^2 + y^2\) inline, and bracket display:
+
+\[
+\int_0^1 x^2\,dx = \frac{1}{3}
+\]
+
+Doubled-backslash delimiters (classic notebook form): \\(a + b\\) and
+
+\\[
+c + d
+\\]
+text 271
+Bare environment after a blank line:
+
+ZZDMTH0001ZZ
+
+Bare environment right after a text line:
+ZZDMTH0002ZZ
+
+Parenthesis delimiters: ZZMTH0003ZZ inline, and bracket display:
+
+ZZDMTH0004ZZ
+
+Doubled-backslash delimiters (classic notebook form): ZZMTH0005ZZ and
+
+ZZDMTH0006ZZ
+math 0 1 1 env
+tex 81
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+raw 81
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+prepared 100
+\begin{align*}
+\dot{x} &= \sigma (y - x)  \tag{1} \\
+\dot{y} &= \rho x - y - xz
+ \tag{2}\end{align*}
+katex 100
+\begin{align*}
+\dot{x} &= \sigma (y - x)  \tag{1} \\
+\dot{y} &= \rho x - y - xz
+ \tag{2}\end{align*}
+math 0 1 1 env
+tex 47
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+raw 47
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+prepared 57
+\begin{equation*}
+a^2 + b^2 = c^2
+ \tag{3}\end{equation*}
+katex 57
+\begin{equation*}
+a^2 + b^2 = c^2
+ \tag{3}\end{equation*}
+math 0 0 0 paren
+tex 9
+x^2 + y^2
+raw 13
+\(x^2 + y^2\)
+prepared 9
+x^2 + y^2
+katex 9
+x^2 + y^2
+math 0 1 1 bracket
+tex 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+raw 36
+\[
+\int_0^1 x^2\,dx = \frac{1}{3}
+\]
+prepared 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+katex 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+math 0 0 0 doubled
+tex 5
+a + b
+raw 11
+\\(a + b\\)
+prepared 5
+a + b
+katex 5
+a + b
+math 0 1 1 doubled
+tex 5
+c + d
+raw 13
+\\[
+c + d
+\\]
+prepared 5
+c + d
+katex 5
+c + d
+end
+doc md-fixture.ipynb#27
+src 612
+$$
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+$$
+
+Using the macros in the same block: $x \in \RR$, $\norm{v}$, $\abs{-3} = 3$.
+
+Defining a name that already exists: $\newcommand{\R}{\mathbf{R}} \R$, then $\renewcommand{\R}{\mathbf{R}} \R$.
+
+Operator names: $\operatorname{argmax}_{x} f(x)$, $\operatorname{Tr}(A)$, built-ins $\max_i a_i$ and $\sin x$.
+
+Fonts: $\mathbb{R} \mathbb{N}$, $\mathcal{L} \mathcal{O}$, $\mathfrak{g} \mathfrak{A}$, $\mathrm{d}x$, $\mathbf{v}$, $\boldsymbol{\alpha}$, $\text{with spaces inside text}$, $x \text{ if } y$.
+text 351
+ZZDMTH0001ZZ
+
+Using the macros in the same block: ZZMTH0002ZZ, ZZMTH0003ZZ, ZZMTH0004ZZ.
+
+Defining a name that already exists: ZZMTH0005ZZ, then ZZMTH0006ZZ.
+
+Operator names: ZZMTH0007ZZ, ZZMTH0008ZZ, built-ins ZZMTH0009ZZ and ZZMTH0010ZZ.
+
+Fonts: ZZMTH0011ZZ, ZZMTH0012ZZ, ZZMTH0013ZZ, ZZMTH0014ZZ, ZZMTH0015ZZ, ZZMTH0016ZZ, ZZMTH0017ZZ, ZZMTH0018ZZ.
+math 0 1 1 dollars
+tex 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+raw 115
+$$
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+$$
+prepared 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+katex 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+math 0 0 0 dollar
+tex 9
+x \in \RR
+raw 11
+$x \in \RR$
+prepared 9
+x \in \RR
+katex 9
+x \in \RR
+math 0 0 0 dollar
+tex 8
+\norm{v}
+raw 10
+$\norm{v}$
+prepared 8
+\norm{v}
+katex 8
+\norm{v}
+math 0 0 0 dollar
+tex 12
+\abs{-3} = 3
+raw 14
+$\abs{-3} = 3$
+prepared 12
+\abs{-3} = 3
+katex 12
+\abs{-3} = 3
+math 0 0 0 dollar
+tex 30
+\newcommand{\R}{\mathbf{R}} \R
+raw 32
+$\newcommand{\R}{\mathbf{R}} \R$
+prepared 30
+\newcommand{\R}{\mathbf{R}} \R
+katex 32
+\renewcommand{\R}{\mathbf{R}} \R
+math 0 0 0 dollar
+tex 32
+\renewcommand{\R}{\mathbf{R}} \R
+raw 34
+$\renewcommand{\R}{\mathbf{R}} \R$
+prepared 32
+\renewcommand{\R}{\mathbf{R}} \R
+katex 32
+\renewcommand{\R}{\mathbf{R}} \R
+math 0 0 0 dollar
+tex 30
+\operatorname{argmax}_{x} f(x)
+raw 32
+$\operatorname{argmax}_{x} f(x)$
+prepared 30
+\operatorname{argmax}_{x} f(x)
+katex 30
+\operatorname{argmax}_{x} f(x)
+math 0 0 0 dollar
+tex 20
+\operatorname{Tr}(A)
+raw 22
+$\operatorname{Tr}(A)$
+prepared 20
+\operatorname{Tr}(A)
+katex 20
+\operatorname{Tr}(A)
+math 0 0 0 dollar
+tex 10
+\max_i a_i
+raw 12
+$\max_i a_i$
+prepared 10
+\max_i a_i
+katex 10
+\max_i a_i
+math 0 0 0 dollar
+tex 6
+\sin x
+raw 8
+$\sin x$
+prepared 6
+\sin x
+katex 6
+\sin x
+math 0 0 0 dollar
+tex 21
+\mathbb{R} \mathbb{N}
+raw 23
+$\mathbb{R} \mathbb{N}$
+prepared 21
+\mathbb{R} \mathbb{N}
+katex 21
+\mathbb{R} \mathbb{N}
+math 0 0 0 dollar
+tex 23
+\mathcal{L} \mathcal{O}
+raw 25
+$\mathcal{L} \mathcal{O}$
+prepared 23
+\mathcal{L} \mathcal{O}
+katex 23
+\mathcal{L} \mathcal{O}
+math 0 0 0 dollar
+tex 25
+\mathfrak{g} \mathfrak{A}
+raw 27
+$\mathfrak{g} \mathfrak{A}$
+prepared 25
+\mathfrak{g} \mathfrak{A}
+katex 25
+\mathfrak{g} \mathfrak{A}
+math 0 0 0 dollar
+tex 11
+\mathrm{d}x
+raw 13
+$\mathrm{d}x$
+prepared 11
+\mathrm{d}x
+katex 11
+\mathrm{d}x
+math 0 0 0 dollar
+tex 10
+\mathbf{v}
+raw 12
+$\mathbf{v}$
+prepared 10
+\mathbf{v}
+katex 10
+\mathbf{v}
+math 0 0 0 dollar
+tex 19
+\boldsymbol{\alpha}
+raw 21
+$\boldsymbol{\alpha}$
+prepared 19
+\boldsymbol{\alpha}
+katex 19
+\boldsymbol{\alpha}
+math 0 0 0 dollar
+tex 30
+\text{with spaces inside text}
+raw 32
+$\text{with spaces inside text}$
+prepared 30
+\text{with spaces inside text}
+katex 30
+\text{with spaces inside text}
+math 0 0 0 dollar
+tex 15
+x \text{ if } y
+raw 17
+$x \text{ if } y$
+prepared 15
+x \text{ if } y
+katex 15
+x \text{ if } y
+end
+doc md-fixture.ipynb#28
+src 883
+Macros from the previous section reused here: $\RR^n$ and $\norm{x}_2$.
+
+$$
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+$$
+
+$$
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+$$
+
+$$
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+$$
+
+$$
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+$$
+
+$$
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+$$
+
+$$
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+$$
+
+$$
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+$$
+text 172
+Macros from the previous section reused here: ZZMTH0001ZZ and ZZMTH0002ZZ.
+
+ZZDMTH0003ZZ
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+ZZDMTH0007ZZ
+
+ZZDMTH0008ZZ
+
+ZZDMTH0009ZZ
+math 0 0 0 dollar
+tex 5
+\RR^n
+raw 7
+$\RR^n$
+prepared 5
+\RR^n
+katex 5
+\RR^n
+math 0 0 0 dollar
+tex 10
+\norm{x}_2
+raw 12
+$\norm{x}_2$
+prepared 10
+\norm{x}_2
+katex 10
+\norm{x}_2
+math 0 1 1 dollars
+tex 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+raw 125
+$$
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+$$
+prepared 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+katex 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+math 0 1 1 dollars
+tex 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+raw 107
+$$
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+$$
+prepared 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+katex 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+math 0 1 1 dollars
+tex 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+raw 88
+$$
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+$$
+prepared 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+katex 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+math 0 1 1 dollars
+tex 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+raw 97
+$$
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+$$
+prepared 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+katex 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+math 0 1 1 dollars
+tex 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+raw 141
+$$
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+$$
+prepared 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+katex 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+math 0 1 1 dollars
+tex 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+raw 177
+$$
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+$$
+prepared 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+katex 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+math 0 1 1 dollars
+tex 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+raw 63
+$$
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+$$
+prepared 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+katex 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+end
+doc md-fixture.ipynb#29
+src 835
+Plain text a_1 * b_2 * c_3 is markdown, math $a_1 * b_2 * c_3$ must keep the stars.
+
+Two maths with underscores: $x_1$ and $y_1$ and $z_{1}$.
+
+Stars: $a*b*c$ and $a * b$ next to *real italic*.
+
+Escapes inside math: $\{a, b\}$, $a \, b$, $a\;b$, $\|v\|$, $a \\ b$, $\#\%\&\_$, $\$$.
+
+Comparison and ampersand: $a<b$, $a < b$, $a>b$, $x \lt y$, $a \& b$, $p \land q$.
+
+Percent comment inside display math:
+
+$$
+a + b % this is a comment
+= c
+$$
+
+A display math line that starts with a plus sign:
+
+$$
+a % comment
++ c
+$$
+
+Unicode inside math: $α + β = γ$, $x ≤ y$, $\text{café naïve}$, $∀x∈ℝ$.
+
+Invalid formula one: $\frac{1}{$ here.
+
+Invalid formula two: $\badmacro{x}$ here.
+
+Invalid formula three: $x^$ here.
+
+$$
+\begin{align}
+a &= b
+\end{aligned}
+$$
+
+HTML-like text inside math: $x<y>z$ and $a <b> c$ (kept last on purpose).
+text 836
+Plain text a_1 * b_2 * c_3 is markdown, math ZZMTH0001ZZ must keep the stars.
+
+Two maths with underscores: ZZMTH0002ZZ and ZZMTH0003ZZ and ZZMTH0004ZZ.
+
+Stars: ZZMTH0005ZZ and ZZMTH0006ZZ next to *real italic*.
+
+Escapes inside math: ZZMTH0007ZZ, ZZMTH0008ZZ, ZZMTH0009ZZ, ZZMTH0010ZZ, ZZMTH0011ZZ, ZZMTH0012ZZ, ZZMTH0013ZZ.
+
+Comparison and ampersand: ZZMTH0014ZZ, ZZMTH0015ZZ, ZZMTH0016ZZ, ZZMTH0017ZZ, ZZMTH0018ZZ, ZZMTH0019ZZ.
+
+Percent comment inside display math:
+
+ZZDMTH0020ZZ
+
+A display math line that starts with a plus sign:
+
+ZZDMTH0021ZZ
+
+Unicode inside math: ZZMTH0022ZZ, ZZMTH0023ZZ, ZZMTH0024ZZ, ZZMTH0025ZZ.
+
+Invalid formula one: ZZMTH0026ZZ here.
+
+Invalid formula two: ZZMTH0027ZZ here.
+
+Invalid formula three: ZZMTH0028ZZ here.
+
+ZZDMTH0029ZZ
+
+HTML-like text inside math: ZZMTH0030ZZ and ZZMTH0031ZZ (kept last on purpose).
+math 0 0 0 dollar
+tex 15
+a_1 * b_2 * c_3
+raw 17
+$a_1 * b_2 * c_3$
+prepared 15
+a_1 * b_2 * c_3
+katex 15
+a_1 * b_2 * c_3
+math 0 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 0 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+math 0 0 0 dollar
+tex 5
+z_{1}
+raw 7
+$z_{1}$
+prepared 5
+z_{1}
+katex 5
+z_{1}
+math 0 0 0 dollar
+tex 5
+a*b*c
+raw 7
+$a*b*c$
+prepared 5
+a*b*c
+katex 5
+a*b*c
+math 0 0 0 dollar
+tex 5
+a * b
+raw 7
+$a * b$
+prepared 5
+a * b
+katex 5
+a * b
+math 0 0 0 dollar
+tex 8
+\{a, b\}
+raw 10
+$\{a, b\}$
+prepared 8
+\{a, b\}
+katex 8
+\{a, b\}
+math 0 0 0 dollar
+tex 6
+a \, b
+raw 8
+$a \, b$
+prepared 6
+a \, b
+katex 6
+a \, b
+math 0 0 0 dollar
+tex 4
+a\;b
+raw 6
+$a\;b$
+prepared 4
+a\;b
+katex 4
+a\;b
+math 0 0 0 dollar
+tex 5
+\|v\|
+raw 7
+$\|v\|$
+prepared 5
+\|v\|
+katex 5
+\|v\|
+math 0 0 0 dollar
+tex 6
+a \\ b
+raw 8
+$a \\ b$
+prepared 6
+a \\ b
+katex 6
+a \\ b
+math 0 0 0 dollar
+tex 8
+\#\%\&\_
+raw 10
+$\#\%\&\_$
+prepared 8
+\#\%\&\_
+katex 8
+\#\%\&\_
+math 0 0 0 dollar
+tex 2
+\$
+raw 4
+$\$$
+prepared 2
+\$
+katex 2
+\$
+math 0 0 0 dollar
+tex 3
+a<b
+raw 5
+$a<b$
+prepared 3
+a<b
+katex 3
+a<b
+math 0 0 0 dollar
+tex 5
+a < b
+raw 7
+$a < b$
+prepared 5
+a < b
+katex 5
+a < b
+math 0 0 0 dollar
+tex 3
+a>b
+raw 5
+$a>b$
+prepared 3
+a>b
+katex 3
+a>b
+math 0 0 0 dollar
+tex 7
+x \lt y
+raw 9
+$x \lt y$
+prepared 7
+x \lt y
+katex 7
+x \lt y
+math 0 0 0 dollar
+tex 6
+a \& b
+raw 8
+$a \& b$
+prepared 6
+a \& b
+katex 6
+a \& b
+math 0 0 0 dollar
+tex 9
+p \land q
+raw 11
+$p \land q$
+prepared 9
+p \land q
+katex 9
+p \land q
+math 0 1 1 dollars
+tex 29
+a + b % this is a comment
+= c
+raw 35
+$$
+a + b % this is a comment
+= c
+$$
+prepared 29
+a + b % this is a comment
+= c
+katex 29
+a + b % this is a comment
+= c
+math 0 1 1 dollars
+tex 15
+a % comment
++ c
+raw 21
+$$
+a % comment
++ c
+$$
+prepared 15
+a % comment
++ c
+katex 15
+a % comment
++ c
+math 0 0 0 dollar
+tex 12
+α + β = γ
+raw 14
+$α + β = γ$
+prepared 12
+α + β = γ
+katex 12
+α + β = γ
+math 0 0 0 dollar
+tex 7
+x ≤ y
+raw 9
+$x ≤ y$
+prepared 7
+x ≤ y
+katex 7
+x ≤ y
+math 0 0 0 dollar
+tex 19
+\text{café naïve}
+raw 21
+$\text{café naïve}$
+prepared 19
+\text{café naïve}
+katex 19
+\text{café naïve}
+math 0 0 0 dollar
+tex 10
+∀x∈ℝ
+raw 12
+$∀x∈ℝ$
+prepared 10
+∀x∈ℝ
+katex 10
+∀x∈ℝ
+math 0 0 0 dollar
+tex 9
+\frac{1}{
+raw 11
+$\frac{1}{$
+prepared 9
+\frac{1}{
+katex 9
+\frac{1}{
+math 0 0 0 dollar
+tex 12
+\badmacro{x}
+raw 14
+$\badmacro{x}$
+prepared 12
+\badmacro{x}
+katex 12
+\badmacro{x}
+math 0 0 0 dollar
+tex 2
+x^
+raw 4
+$x^$
+prepared 2
+x^
+katex 2
+x^
+math 0 1 1 dollars
+tex 34
+\begin{align}
+a &= b
+\end{aligned}
+raw 40
+$$
+\begin{align}
+a &= b
+\end{aligned}
+$$
+prepared 34
+\begin{align}
+a &= b
+\end{aligned}
+katex 34
+\begin{align}
+a &= b
+\end{aligned}
+math 0 0 0 dollar
+tex 5
+x<y>z
+raw 7
+$x<y>z$
+prepared 5
+x<y>z
+katex 5
+x<y>z
+math 0 0 0 dollar
+tex 7
+a <b> c
+raw 9
+$a <b> c$
+prepared 7
+a <b> c
+katex 7
+a <b> c
+end
+doc md-fixture.ipynb#30
+src 103
+```mermaid
+graph LR
+  A[Markdown] --> B{Math?}
+  B -->|yes| C[KaTeX or MathJax]
+  B -->|no| D[HTML]
+```
+text 103
+```mermaid
+graph LR
+  A[Markdown] --> B{Math?}
+  B -->|yes| C[KaTeX or MathJax]
+  B -->|no| D[HTML]
+```
+end
+doc md-fixture.ipynb
+src 365
+# Heading level 1
+## Heading level 2
+### Heading level 3
+#### Heading level 4
+##### Heading level 5
+###### Heading level 6
+####### Seven hashes is a paragraph
+#NoSpace is a paragraph on GitHub
+
+Setext heading level 1
+======================
+
+Setext heading level 2
+----------------------
+
+## Closing hashes are stripped ##
+### Heading with *italic* and `code` inside
+src 342
+This paragraph is written
+across three source lines
+that GitHub joins into one flowing paragraph.
+
+Hard break with two trailing spaces  
+next line after two spaces.
+
+Hard break with a backslash\
+next line after backslash.
+
+Single newline inside a paragraph is a soft break, so this line
+and this line render on the same visual line on GitHub.
+src 530
+*italic star* and _italic underscore_
+
+**bold star** and __bold underscore__
+
+***bold italic star*** and ___bold italic underscore___
+
+**bold with *nested italic* inside** and *italic with **nested bold** inside*
+
+snake_case_name and __init__ and file_name_here.py stay literal
+
+**bold**text works but __bold__text does not
+
+un*frigging*believable works but un_frigging_believable does not
+
+~~strikethrough two tildes~~ and ~strikethrough one tilde~
+
+**unclosed bold and *unclosed italic
+
+a * b * c with spaced stars stays literal
+src 251
+Use `printf()` here.
+
+Backtick inside: `` a ` b `` and double: ``` a `` b ```
+
+Spaces are stripped: `` `foo` `` shows backticks
+
+Markers inside code are literal: `**not bold**` and `a_b_c` and `[x](y)`
+
+Code spanning
+lines `foo
+bar` joins with a space
+src 585
+Inline link: [GitHub](https://github.com)
+
+Inline link with title: [GitHub home](https://github.com "GitHub home")
+
+Reference full [ref link][gh], collapsed [gh][], shortcut [gh], case-folded [Ref][GH]
+
+Autolink: <https://example.com/path?q=1> and email <user@example.com>
+
+Bare URLs: https://www.example.com/page and www.example.com and user@example.org
+
+Formatting in link text: [**bold link** and `code`](https://example.com)
+
+Relative link [the README](README.md) and anchor [to h1](#heading-level-1)
+
+Issue #1, mention @sheng-tse, commit 8c23c85
+
+[gh]: https://github.com "GitHub"
+src 609
+Relative: ![Relative alt](docs/screenshot.png)
+
+Remote: ![Remote rocket](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png)
+
+Data URI: ![Data red](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAMCAIAAAD3UuoiAAAAUklEQVR4nI3CoRXCAABDwUwSXY3+uroajUaj0ejOlLEYIbl3ykHtofKg9lCB2kPlpPZQuag9VJ7UHiovag+VN7WHyofaQ+VL7aHyo/ZQuak9/AOPFC/Qz30IHQAAAABJRU5ErkJggg==)
+
+Linked image: [![Linked](https://github.githubassets.com/images/icons/emoji/unicode/2b50.png)](https://github.com)
+
+Text before ![inline img](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png "title") text after
+src 160
+- Level one dash
+  * Level two star
+    + Level three plus
+    + Another level three
+  * Back to level two
+- Level one again
+* Changing marker starts a new list
+src 321
+3. Ordered starting at three
+4. Four
+5. Five
+
+1. All ones
+1. Still renders as 2
+1. Renders as 3
+
+8) Paren delimiter starts at eight
+9) Nine
+
+- Bullet with ordered inside
+  1. First nested ordered
+  2. Second nested ordered
+     - Bullet inside ordered inside bullet
+
+A paragraph line
+2. two does not interrupt a paragraph
+src 193
+- [ ] Unchecked task
+- [x] Checked task with **bold**
+  - [ ] Nested unchecked
+  - [X] Nested checked uppercase X
+    - [ ] Third level task
+1. [ ] Ordered task item
+2. [x] Ordered checked task
+src 187
+Tight list:
+- tight a
+- tight b
+
+Loose list:
+- loose a
+
+- loose b
+
+- Item with a second paragraph
+
+  Second paragraph inside the item, indented.
+
+  ```python
+  print("code in list")
+  ```
+src 246
+> Blockquote level one
+> continues here
+lazy continuation line without marker
+>
+> > Nested blockquote level two
+> > - list inside nested quote
+> > - second item
+> >
+> > ```bash
+> > echo "code in quote"
+> > ```
+>
+> Back to level one with **bold**.
+src 446
+> [!NOTE]
+> Useful information that users should know, even when skimming.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+> [!note]
+> Lowercase type name.
+>
+> Second paragraph in the alert.
+src 668
+```python
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+```bash
+for f in *.ipynb; do echo "$f"; done
+```
+
+```json
+{"name": "jupynvim", "version": "0.4.6", "tags": ["nvim", "jupyter"]}
+```
+
+```rust
+fn main() { println!("hello {}", 42); }
+```
+
+```
+plain fence without a language
+```
+
+~~~python
+tilde_fence = True
+~~~
+
+````markdown
+```python
+nested_fence = True
+```
+````
+
+    indented code block line 1
+    indented code block line 2
+
+```python
+very_long_code_line = "this code line is deliberately longer than the window so we can see whether it wraps or scrolls horizontally like GitHub"
+```
+src 317
+```math
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+```
+
+Inline $x^2 + y_1$ and backtick form $`\sqrt{x^2+1}`$ in prose.
+
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+
+$$
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+$$
+
+Prices like $5 and $10 are not math.
+src 203
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a | b | c |
+| **bold** | `code` | *it* |
+| escaped \| pipe | [link](https://x.com) | 1,234.56 |
+| ragged |
+
+Name | Value
+--- | ---
+no outer pipes | 1
+src 476
+| id | first_name | last_name | email_address | department | job_title | start_date | salary_usd | manager | office_location |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Alexandra | Montgomery | alexandra.montgomery@example.com | Engineering | Senior Software Engineer | 2019-03-14 | 185000 | Jordan Lee | San Francisco, CA |
+| 2 | Bartholomew | Fitzgerald | bart.fitzgerald@example.com | Marketing | Director of Brand | 2021-11-02 | 162500 | Priya Patel | New York, NY |
+src 54
+Above the rules
+
+---
+
+***
+
+___
+
+- - -
+
+Below the rules
+src 124
+Here is a footnote reference[^1] and a named one[^note].
+
+[^1]: The first footnote.
+[^note]: A named footnote with **bold**.
+src 578
+<details>
+<summary>Click to expand</summary>
+
+Hidden content with **markdown** inside.
+
+</details>
+
+Line one<br>line two after br.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.
+
+H<sub>2</sub>O and E = mc<sup>2</sup>
+
+<img width="100" src="https://github.githubassets.com/images/icons/emoji/unicode/1f680.png" alt="rocket">
+
+<!-- This comment is hidden on GitHub -->
+
+<p align="center">Centered paragraph</p>
+
+<ins>inserted</ins> <mark>marked</mark> <b>b tag</b> <i>i tag</i> <s>s tag</s> <code>code tag</code>
+
+<span style="color:red">styled span</span> <script>alert(1)</script>
+src 191
+:rocket: :+1: :tada: :smile: :heavy_check_mark: :not_an_emoji:
+
+\*not italic\* \# not heading \[not link\](x) \`not code\` \\ backslash
+
+&copy; &nbsp;x &amp; &lt;tag&gt; &#169; &#x1F600; &ne;
+src 211
+## Heading followed immediately by a list
+- item right after heading
+- second item
+### Heading followed immediately by code
+```python
+x = 1
+```
+Paragraph directly above a quote
+> quote directly below a paragraph
+src 893
+This is a very long single source line that keeps going well past the right edge of a normal terminal window so that we can observe how the renderer wraps prose, whether it breaks at word boundaries, and whether the continuation rows keep any indentation or decoration that the first row had, which matters for lists and quotes.
+
+- A very long list item that also runs past the right edge of the window so we can see whether the wrapped continuation rows hang under the text of the item or fall back to the left margin like plain text does.
+
+> A very long blockquote line that runs past the right edge of the window so we can see whether the quote bar is repeated on each wrapped continuation row or only drawn on the first visual row.
+
+## A very long heading that runs past the right edge of the window to see whether the heading style and prefix glyph carry onto the wrapped continuation row
+src 873
+Inline $x^2$, then $x$, $y$; and ($z$) or [$w$] or "$v$" at the end $u$.
+
+Word-adjacent: the $x$-axis, the $n$th term, foo$x$bar, 2$x$3, plural $\alpha$s.
+
+Spaces inside the delimiters: $ x $ and $x $ and $ x$.
+
+Currency: it costs $5 and $10 per item, $1,000 total or $20.50 each.
+
+Currency then math on one line: to split $100 in half, we calculate $100/2$.
+
+Same with a span: to split <span>$</span>100 in half, we calculate $100/2$.
+
+Escaped dollars stay text: \$5 and \$10 each.
+
+An escaped dollar inside math: $\$4 + x$ and $`\sqrt{\$4}`$.
+
+Both on one line: \$5 and \$10, then $\$4 + x$.
+
+Backtick form: $`a_1 * b_2 * c_3`$ and $`x < y`$ and $`\{1,2\}`$.
+
+Code spans stay code: `$HOME` and `$x$` and `a $ b $ c`.
+
+Empty and doubled: $$ alone and $ $ single space.
+
+Inline math across a soft line break: $a +
+b = c$ continues here.
+
+Adjacent maths: $a$$b$ and $a$ $b$.
+src 823
+# Heading with $E = mc^2$ math
+
+## Heading with $`\alpha`$ backtick math
+
+*Italic with $a_1$ inside* and **bold with $\sum_i x_i$ inside** and ~~struck $x$~~.
+
+_underscore emphasis with $x_1$ and $y_1$ inside_
+
+[Link text with $x^2$](https://example.com) and footnote with math[^m].
+
+- List item with $x^2$
+- Item with display math:
+
+  $$
+  \int_0^1 x\,dx
+  $$
+
+  1. Nested ordered with $\alpha$
+     - Deeper with $\beta_{ij}$
+
+| Expression | Note |
+|---|---|
+| $x^2$ | $4$ |
+| $\frac{a}{b}$ | `code` |
+| $\lvert x \rvert$ | abs via lvert |
+| $|x|$ | pipe inside math |
+| $$x$$ | display in a cell |
+
+> Quote with $e^{i\pi} + 1 = 0$
+>
+> $$
+> \sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+> $$
+
+> [!NOTE]
+> Alert with inline $x \in \mathbb{R}$ and display:
+>
+> $$a^2 + b^2 = c^2$$
+
+[^m]: Footnote containing $\sqrt{2}$.
+src 516
+Display on one line:
+
+$$E = mc^2$$
+
+Display spanning lines:
+
+$$
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+$$
+
+Text before $$x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$$ text after in the same paragraph.
+
+A paragraph line
+$$
+y = mx + b
+$$
+directly continues without blank lines.
+
+$$
+a = b
+
+c = d
+$$
+
+```math
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+```
+
+```math
+x = 1 \\ y = 2
+```
+
+~~~math
+\sqrt{2}
+~~~
+src 762
+$$
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+$$
+
+$$
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+$$
+
+$$
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+$$
+
+$$
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+$$
+
+$$
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+$$
+
+$$
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+$$
+
+$$
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+$$
+
+$$
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+$$
+
+See equation $\eqref{eq:euler}$ and $\ref{eq:euler}$.
+src 402
+Bare environment after a blank line:
+
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+
+Bare environment right after a text line:
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+
+Parenthesis delimiters: \(x^2 + y^2\) inline, and bracket display:
+
+\[
+\int_0^1 x^2\,dx = \frac{1}{3}
+\]
+
+Doubled-backslash delimiters (classic notebook form): \\(a + b\\) and
+
+\\[
+c + d
+\\]
+src 612
+$$
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+$$
+
+Using the macros in the same block: $x \in \RR$, $\norm{v}$, $\abs{-3} = 3$.
+
+Defining a name that already exists: $\newcommand{\R}{\mathbf{R}} \R$, then $\renewcommand{\R}{\mathbf{R}} \R$.
+
+Operator names: $\operatorname{argmax}_{x} f(x)$, $\operatorname{Tr}(A)$, built-ins $\max_i a_i$ and $\sin x$.
+
+Fonts: $\mathbb{R} \mathbb{N}$, $\mathcal{L} \mathcal{O}$, $\mathfrak{g} \mathfrak{A}$, $\mathrm{d}x$, $\mathbf{v}$, $\boldsymbol{\alpha}$, $\text{with spaces inside text}$, $x \text{ if } y$.
+src 883
+Macros from the previous section reused here: $\RR^n$ and $\norm{x}_2$.
+
+$$
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+$$
+
+$$
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+$$
+
+$$
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+$$
+
+$$
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+$$
+
+$$
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+$$
+
+$$
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+$$
+
+$$
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+$$
+src 835
+Plain text a_1 * b_2 * c_3 is markdown, math $a_1 * b_2 * c_3$ must keep the stars.
+
+Two maths with underscores: $x_1$ and $y_1$ and $z_{1}$.
+
+Stars: $a*b*c$ and $a * b$ next to *real italic*.
+
+Escapes inside math: $\{a, b\}$, $a \, b$, $a\;b$, $\|v\|$, $a \\ b$, $\#\%\&\_$, $\$$.
+
+Comparison and ampersand: $a<b$, $a < b$, $a>b$, $x \lt y$, $a \& b$, $p \land q$.
+
+Percent comment inside display math:
+
+$$
+a + b % this is a comment
+= c
+$$
+
+A display math line that starts with a plus sign:
+
+$$
+a % comment
++ c
+$$
+
+Unicode inside math: $α + β = γ$, $x ≤ y$, $\text{café naïve}$, $∀x∈ℝ$.
+
+Invalid formula one: $\frac{1}{$ here.
+
+Invalid formula two: $\badmacro{x}$ here.
+
+Invalid formula three: $x^$ here.
+
+$$
+\begin{align}
+a &= b
+\end{aligned}
+$$
+
+HTML-like text inside math: $x<y>z$ and $a <b> c$ (kept last on purpose).
+src 103
+```mermaid
+graph LR
+  A[Markdown] --> B{Math?}
+  B -->|yes| C[KaTeX or MathJax]
+  B -->|no| D[HTML]
+```
+text 365
+# Heading level 1
+## Heading level 2
+### Heading level 3
+#### Heading level 4
+##### Heading level 5
+###### Heading level 6
+####### Seven hashes is a paragraph
+#NoSpace is a paragraph on GitHub
+
+Setext heading level 1
+======================
+
+Setext heading level 2
+----------------------
+
+## Closing hashes are stripped ##
+### Heading with *italic* and `code` inside
+text 342
+This paragraph is written
+across three source lines
+that GitHub joins into one flowing paragraph.
+
+Hard break with two trailing spaces  
+next line after two spaces.
+
+Hard break with a backslash\
+next line after backslash.
+
+Single newline inside a paragraph is a soft break, so this line
+and this line render on the same visual line on GitHub.
+text 530
+*italic star* and _italic underscore_
+
+**bold star** and __bold underscore__
+
+***bold italic star*** and ___bold italic underscore___
+
+**bold with *nested italic* inside** and *italic with **nested bold** inside*
+
+snake_case_name and __init__ and file_name_here.py stay literal
+
+**bold**text works but __bold__text does not
+
+un*frigging*believable works but un_frigging_believable does not
+
+~~strikethrough two tildes~~ and ~strikethrough one tilde~
+
+**unclosed bold and *unclosed italic
+
+a * b * c with spaced stars stays literal
+text 251
+Use `printf()` here.
+
+Backtick inside: `` a ` b `` and double: ``` a `` b ```
+
+Spaces are stripped: `` `foo` `` shows backticks
+
+Markers inside code are literal: `**not bold**` and `a_b_c` and `[x](y)`
+
+Code spanning
+lines `foo
+bar` joins with a space
+text 585
+Inline link: [GitHub](https://github.com)
+
+Inline link with title: [GitHub home](https://github.com "GitHub home")
+
+Reference full [ref link][gh], collapsed [gh][], shortcut [gh], case-folded [Ref][GH]
+
+Autolink: <https://example.com/path?q=1> and email <user@example.com>
+
+Bare URLs: https://www.example.com/page and www.example.com and user@example.org
+
+Formatting in link text: [**bold link** and `code`](https://example.com)
+
+Relative link [the README](README.md) and anchor [to h1](#heading-level-1)
+
+Issue #1, mention @sheng-tse, commit 8c23c85
+
+[gh]: https://github.com "GitHub"
+text 609
+Relative: ![Relative alt](docs/screenshot.png)
+
+Remote: ![Remote rocket](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png)
+
+Data URI: ![Data red](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAMCAIAAAD3UuoiAAAAUklEQVR4nI3CoRXCAABDwUwSXY3+uroajUaj0ejOlLEYIbl3ykHtofKg9lCB2kPlpPZQuag9VJ7UHiovag+VN7WHyofaQ+VL7aHyo/ZQuak9/AOPFC/Qz30IHQAAAABJRU5ErkJggg==)
+
+Linked image: [![Linked](https://github.githubassets.com/images/icons/emoji/unicode/2b50.png)](https://github.com)
+
+Text before ![inline img](https://github.githubassets.com/images/icons/emoji/unicode/1f680.png "title") text after
+text 160
+- Level one dash
+  * Level two star
+    + Level three plus
+    + Another level three
+  * Back to level two
+- Level one again
+* Changing marker starts a new list
+text 321
+3. Ordered starting at three
+4. Four
+5. Five
+
+1. All ones
+1. Still renders as 2
+1. Renders as 3
+
+8) Paren delimiter starts at eight
+9) Nine
+
+- Bullet with ordered inside
+  1. First nested ordered
+  2. Second nested ordered
+     - Bullet inside ordered inside bullet
+
+A paragraph line
+2. two does not interrupt a paragraph
+text 193
+- [ ] Unchecked task
+- [x] Checked task with **bold**
+  - [ ] Nested unchecked
+  - [X] Nested checked uppercase X
+    - [ ] Third level task
+1. [ ] Ordered task item
+2. [x] Ordered checked task
+text 187
+Tight list:
+- tight a
+- tight b
+
+Loose list:
+- loose a
+
+- loose b
+
+- Item with a second paragraph
+
+  Second paragraph inside the item, indented.
+
+  ```python
+  print("code in list")
+  ```
+text 246
+> Blockquote level one
+> continues here
+lazy continuation line without marker
+>
+> > Nested blockquote level two
+> > - list inside nested quote
+> > - second item
+> >
+> > ```bash
+> > echo "code in quote"
+> > ```
+>
+> Back to level one with **bold**.
+text 446
+> [!NOTE]
+> Useful information that users should know, even when skimming.
+
+> [!TIP]
+> Helpful advice for doing things better or more easily.
+
+> [!IMPORTANT]
+> Key information users need to know to achieve their goal.
+
+> [!WARNING]
+> Urgent info that needs immediate user attention to avoid problems.
+
+> [!CAUTION]
+> Advises about risks or negative outcomes of certain actions.
+
+> [!note]
+> Lowercase type name.
+>
+> Second paragraph in the alert.
+text 668
+```python
+def fib(n: int) -> int:
+    """Return the n-th Fibonacci number."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+```bash
+for f in *.ipynb; do echo "$f"; done
+```
+
+```json
+{"name": "jupynvim", "version": "0.4.6", "tags": ["nvim", "jupyter"]}
+```
+
+```rust
+fn main() { println!("hello {}", 42); }
+```
+
+```
+plain fence without a language
+```
+
+~~~python
+tilde_fence = True
+~~~
+
+````markdown
+```python
+nested_fence = True
+```
+````
+
+    indented code block line 1
+    indented code block line 2
+
+```python
+very_long_code_line = "this code line is deliberately longer than the window so we can see whether it wraps or scrolls horizontally like GitHub"
+```
+text 154
+ZZDMTH0001ZZ
+
+Inline ZZMTH0002ZZ and backtick form ZZMTH0003ZZ in prose.
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+Prices like \$5 and \$10 are not math.
+text 203
+| Left | Center | Right |
+|:-----|:------:|------:|
+| a | b | c |
+| **bold** | `code` | *it* |
+| escaped \| pipe | [link](https://x.com) | 1,234.56 |
+| ragged |
+
+Name | Value
+--- | ---
+no outer pipes | 1
+text 476
+| id | first_name | last_name | email_address | department | job_title | start_date | salary_usd | manager | office_location |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Alexandra | Montgomery | alexandra.montgomery@example.com | Engineering | Senior Software Engineer | 2019-03-14 | 185000 | Jordan Lee | San Francisco, CA |
+| 2 | Bartholomew | Fitzgerald | bart.fitzgerald@example.com | Marketing | Director of Brand | 2021-11-02 | 162500 | Priya Patel | New York, NY |
+text 54
+Above the rules
+
+---
+
+***
+
+___
+
+- - -
+
+Below the rules
+text 124
+Here is a footnote reference[^1] and a named one[^note].
+
+[^1]: The first footnote.
+[^note]: A named footnote with **bold**.
+text 578
+<details>
+<summary>Click to expand</summary>
+
+Hidden content with **markdown** inside.
+
+</details>
+
+Line one<br>line two after br.
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.
+
+H<sub>2</sub>O and E = mc<sup>2</sup>
+
+<img width="100" src="https://github.githubassets.com/images/icons/emoji/unicode/1f680.png" alt="rocket">
+
+<!-- This comment is hidden on GitHub -->
+
+<p align="center">Centered paragraph</p>
+
+<ins>inserted</ins> <mark>marked</mark> <b>b tag</b> <i>i tag</i> <s>s tag</s> <code>code tag</code>
+
+<span style="color:red">styled span</span> <script>alert(1)</script>
+text 191
+:rocket: :+1: :tada: :smile: :heavy_check_mark: :not_an_emoji:
+
+\*not italic\* \# not heading ZZDMTH0001ZZ(x) \`not code\` \\ backslash
+
+&copy; &nbsp;x &amp; &lt;tag&gt; &#169; &#x1F600; &ne;
+text 211
+## Heading followed immediately by a list
+- item right after heading
+- second item
+### Heading followed immediately by code
+```python
+x = 1
+```
+Paragraph directly above a quote
+> quote directly below a paragraph
+text 893
+This is a very long single source line that keeps going well past the right edge of a normal terminal window so that we can observe how the renderer wraps prose, whether it breaks at word boundaries, and whether the continuation rows keep any indentation or decoration that the first row had, which matters for lists and quotes.
+
+- A very long list item that also runs past the right edge of the window so we can see whether the wrapped continuation rows hang under the text of the item or fall back to the left margin like plain text does.
+
+> A very long blockquote line that runs past the right edge of the window so we can see whether the quote bar is repeated on each wrapped continuation row or only drawn on the first visual row.
+
+## A very long heading that runs past the right edge of the window to see whether the heading style and prefix glyph carry onto the wrapped continuation row
+text 1007
+Inline ZZMTH0001ZZ, then ZZMTH0002ZZ, ZZMTH0003ZZ; and (ZZMTH0004ZZ) or [ZZMTH0005ZZ] or "ZZMTH0006ZZ" at the end ZZMTH0007ZZ.
+
+Word-adjacent: the ZZMTH0008ZZ-axis, the ZZMTH0009ZZth term, fooZZMTH0010ZZbar, 2\$x\$3, plural ZZMTH0011ZZs.
+
+Spaces inside the delimiters: \$ x \$ and \$x \$ and \$ x\$.
+
+Currency: it costs \$5 and \$10 per item, \$1,000 total or \$20.50 each.
+
+Currency then math on one line: to split \$100 in half, we calculate ZZMTH0012ZZ.
+
+Same with a span: to split <span>\$</span>100 in half, we calculate ZZMTH0013ZZ.
+
+Escaped dollars stay text: \$5 and \$10 each.
+
+An escaped dollar inside math: ZZMTH0014ZZ and ZZMTH0015ZZ.
+
+Both on one line: \$5 and \$10, then ZZMTH0016ZZ.
+
+Backtick form: ZZMTH0017ZZ and ZZMTH0018ZZ and ZZMTH0019ZZ.
+
+Code spans stay code: `$HOME` and `$x$` and `a $ b $ c`.
+
+Empty and doubled: \$\$ alone and \$ \$ single space.
+
+Inline math across a soft line break: ZZMTH0020ZZ continues here.
+
+Adjacent maths: ZZMTH0021ZZZZMTH0022ZZ and ZZMTH0023ZZ ZZMTH0024ZZ.
+text 804
+# Heading with ZZMTH0001ZZ math
+
+## Heading with ZZMTH0002ZZ backtick math
+
+*Italic with ZZMTH0003ZZ inside* and **bold with ZZMTH0004ZZ inside** and ~~struck ZZMTH0005ZZ~~.
+
+_underscore emphasis with ZZMTH0006ZZ and ZZMTH0007ZZ inside_
+
+[Link text with ZZMTH0008ZZ](https://example.com) and footnote with math[^m].
+
+- List item with ZZMTH0009ZZ
+- Item with display math:
+
+  ZZDMTH0010ZZ
+
+  1. Nested ordered with ZZMTH0011ZZ
+     - Deeper with ZZMTH0012ZZ
+
+| Expression | Note |
+|---|---|
+| ZZMTH0013ZZ | ZZMTH0014ZZ |
+| ZZMTH0015ZZ | `code` |
+| ZZMTH0016ZZ | abs via lvert |
+| ZZMTH0017ZZ | pipe inside math |
+| ZZDMTH0018ZZ | display in a cell |
+
+> Quote with ZZMTH0019ZZ
+>
+> ZZDMTH0020ZZ
+
+> [!NOTE]
+> Alert with inline ZZMTH0021ZZ and display:
+>
+> ZZDMTH0022ZZ
+
+[^m]: Footnote containing ZZMTH0023ZZ.
+text 270
+Display on one line:
+
+ZZDMTH0001ZZ
+
+Display spanning lines:
+
+ZZDMTH0002ZZ
+
+Text before ZZDMTH0003ZZ text after in the same paragraph.
+
+A paragraph line
+ZZDMTH0004ZZ
+directly continues without blank lines.
+
+\$\$
+a = b
+
+c = d
+\$\$
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+ZZDMTH0007ZZ
+text 153
+ZZDMTH0001ZZ
+
+ZZDMTH0002ZZ
+
+ZZDMTH0003ZZ
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+ZZDMTH0007ZZ
+
+ZZDMTH0008ZZ
+
+See equation ZZMTH0009ZZ and ZZMTH0010ZZ.
+text 271
+Bare environment after a blank line:
+
+ZZDMTH0001ZZ
+
+Bare environment right after a text line:
+ZZDMTH0002ZZ
+
+Parenthesis delimiters: ZZMTH0003ZZ inline, and bracket display:
+
+ZZDMTH0004ZZ
+
+Doubled-backslash delimiters (classic notebook form): ZZMTH0005ZZ and
+
+ZZDMTH0006ZZ
+text 351
+ZZDMTH0001ZZ
+
+Using the macros in the same block: ZZMTH0002ZZ, ZZMTH0003ZZ, ZZMTH0004ZZ.
+
+Defining a name that already exists: ZZMTH0005ZZ, then ZZMTH0006ZZ.
+
+Operator names: ZZMTH0007ZZ, ZZMTH0008ZZ, built-ins ZZMTH0009ZZ and ZZMTH0010ZZ.
+
+Fonts: ZZMTH0011ZZ, ZZMTH0012ZZ, ZZMTH0013ZZ, ZZMTH0014ZZ, ZZMTH0015ZZ, ZZMTH0016ZZ, ZZMTH0017ZZ, ZZMTH0018ZZ.
+text 172
+Macros from the previous section reused here: ZZMTH0001ZZ and ZZMTH0002ZZ.
+
+ZZDMTH0003ZZ
+
+ZZDMTH0004ZZ
+
+ZZDMTH0005ZZ
+
+ZZDMTH0006ZZ
+
+ZZDMTH0007ZZ
+
+ZZDMTH0008ZZ
+
+ZZDMTH0009ZZ
+text 836
+Plain text a_1 * b_2 * c_3 is markdown, math ZZMTH0001ZZ must keep the stars.
+
+Two maths with underscores: ZZMTH0002ZZ and ZZMTH0003ZZ and ZZMTH0004ZZ.
+
+Stars: ZZMTH0005ZZ and ZZMTH0006ZZ next to *real italic*.
+
+Escapes inside math: ZZMTH0007ZZ, ZZMTH0008ZZ, ZZMTH0009ZZ, ZZMTH0010ZZ, ZZMTH0011ZZ, ZZMTH0012ZZ, ZZMTH0013ZZ.
+
+Comparison and ampersand: ZZMTH0014ZZ, ZZMTH0015ZZ, ZZMTH0016ZZ, ZZMTH0017ZZ, ZZMTH0018ZZ, ZZMTH0019ZZ.
+
+Percent comment inside display math:
+
+ZZDMTH0020ZZ
+
+A display math line that starts with a plus sign:
+
+ZZDMTH0021ZZ
+
+Unicode inside math: ZZMTH0022ZZ, ZZMTH0023ZZ, ZZMTH0024ZZ, ZZMTH0025ZZ.
+
+Invalid formula one: ZZMTH0026ZZ here.
+
+Invalid formula two: ZZMTH0027ZZ here.
+
+Invalid formula three: ZZMTH0028ZZ here.
+
+ZZDMTH0029ZZ
+
+HTML-like text inside math: ZZMTH0030ZZ and ZZMTH0031ZZ (kept last on purpose).
+text 103
+```mermaid
+graph LR
+  A[Markdown] --> B{Math?}
+  B -->|yes| C[KaTeX or MathJax]
+  B -->|no| D[HTML]
+```
+math 13 1 1 fence
+tex 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+raw 46
+```math
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+```
+prepared 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+katex 34
+\frac{a}{b} = \sum_{i=1}^{n} x_i^2
+math 13 0 0 dollar
+tex 9
+x^2 + y_1
+raw 11
+$x^2 + y_1$
+prepared 9
+x^2 + y_1
+katex 9
+x^2 + y_1
+math 13 0 0 backtick
+tex 12
+\sqrt{x^2+1}
+raw 16
+$`\sqrt{x^2+1}`$
+prepared 12
+\sqrt{x^2+1}
+katex 12
+\sqrt{x^2+1}
+math 13 1 1 dollars
+tex 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+raw 50
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+prepared 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+katex 44
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+math 13 1 1 dollars
+tex 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+raw 53
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+prepared 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+katex 49
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+math 13 1 1 dollars
+tex 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+raw 59
+$$
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+$$
+prepared 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+katex 53
+\frac{1}{n}\sum_{i=1}^{n}\left(x_i - \bar{x}\right)^2
+math 19 1 0 bracket
+tex 8
+not link
+raw 12
+\[not link\]
+prepared 8
+not link
+katex 8
+not link
+math 22 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 22 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 22 0 0 dollar
+tex 1
+y
+raw 3
+$y$
+prepared 1
+y
+katex 1
+y
+math 22 0 0 dollar
+tex 1
+z
+raw 3
+$z$
+prepared 1
+z
+katex 1
+z
+math 22 0 0 dollar
+tex 1
+w
+raw 3
+$w$
+prepared 1
+w
+katex 1
+w
+math 22 0 0 dollar
+tex 1
+v
+raw 3
+$v$
+prepared 1
+v
+katex 1
+v
+math 22 0 0 dollar
+tex 1
+u
+raw 3
+$u$
+prepared 1
+u
+katex 1
+u
+math 22 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 22 0 0 dollar
+tex 1
+n
+raw 3
+$n$
+prepared 1
+n
+katex 1
+n
+math 22 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 22 0 0 dollar
+tex 6
+\alpha
+raw 8
+$\alpha$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 22 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+math 22 0 0 dollar
+tex 5
+100/2
+raw 7
+$100/2$
+prepared 5
+100/2
+katex 5
+100/2
+math 22 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+math 22 0 0 backtick
+tex 10
+\sqrt{\$4}
+raw 14
+$`\sqrt{\$4}`$
+prepared 10
+\sqrt{\$4}
+katex 10
+\sqrt{\$4}
+math 22 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+math 22 0 0 backtick
+tex 15
+a_1 * b_2 * c_3
+raw 19
+$`a_1 * b_2 * c_3`$
+prepared 15
+a_1 * b_2 * c_3
+katex 15
+a_1 * b_2 * c_3
+math 22 0 0 backtick
+tex 5
+x < y
+raw 9
+$`x < y`$
+prepared 5
+x < y
+katex 5
+x < y
+math 22 0 0 backtick
+tex 7
+\{1,2\}
+raw 11
+$`\{1,2\}`$
+prepared 7
+\{1,2\}
+katex 7
+\{1,2\}
+math 22 0 0 dollar
+tex 9
+a +
+b = c
+raw 11
+$a +
+b = c$
+prepared 9
+a +
+b = c
+katex 9
+a +
+b = c
+math 22 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 22 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+math 22 0 0 dollar
+tex 1
+a
+raw 3
+$a$
+prepared 1
+a
+katex 1
+a
+math 22 0 0 dollar
+tex 1
+b
+raw 3
+$b$
+prepared 1
+b
+katex 1
+b
+math 23 0 0 dollar
+tex 8
+E = mc^2
+raw 10
+$E = mc^2$
+prepared 8
+E = mc^2
+katex 8
+E = mc^2
+math 23 0 0 backtick
+tex 6
+\alpha
+raw 10
+$`\alpha`$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 23 0 0 dollar
+tex 3
+a_1
+raw 5
+$a_1$
+prepared 3
+a_1
+katex 3
+a_1
+math 23 0 0 dollar
+tex 10
+\sum_i x_i
+raw 12
+$\sum_i x_i$
+prepared 10
+\sum_i x_i
+katex 10
+\sum_i x_i
+math 23 0 0 dollar
+tex 1
+x
+raw 3
+$x$
+prepared 1
+x
+katex 1
+x
+math 23 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 23 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+math 23 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 23 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 23 1 1 dollars
+tex 14
+\int_0^1 x\,dx
+raw 24
+$$
+  \int_0^1 x\,dx
+  $$
+prepared 14
+\int_0^1 x\,dx
+katex 14
+\int_0^1 x\,dx
+math 23 0 0 dollar
+tex 6
+\alpha
+raw 8
+$\alpha$
+prepared 6
+\alpha
+katex 6
+\alpha
+math 23 0 0 dollar
+tex 10
+\beta_{ij}
+raw 12
+$\beta_{ij}$
+prepared 10
+\beta_{ij}
+katex 10
+\beta_{ij}
+math 23 0 0 dollar
+tex 3
+x^2
+raw 5
+$x^2$
+prepared 3
+x^2
+katex 3
+x^2
+math 23 0 0 dollar
+tex 1
+4
+raw 3
+$4$
+prepared 1
+4
+katex 1
+4
+math 23 0 0 dollar
+tex 11
+\frac{a}{b}
+raw 13
+$\frac{a}{b}$
+prepared 11
+\frac{a}{b}
+katex 11
+\frac{a}{b}
+math 23 0 0 dollar
+tex 15
+\lvert x \rvert
+raw 17
+$\lvert x \rvert$
+prepared 15
+\lvert x \rvert
+katex 15
+\lvert x \rvert
+math 23 0 0 dollar
+tex 3
+|x|
+raw 5
+$|x|$
+prepared 3
+|x|
+katex 3
+|x|
+math 23 1 0 dollars
+tex 1
+x
+raw 5
+$$x$$
+prepared 1
+x
+katex 1
+x
+math 23 0 0 dollar
+tex 16
+e^{i\pi} + 1 = 0
+raw 18
+$e^{i\pi} + 1 = 0$
+prepared 16
+e^{i\pi} + 1 = 0
+katex 16
+e^{i\pi} + 1 = 0
+math 23 1 1 dollars
+tex 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+raw 59
+$$
+> \sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+> $$
+prepared 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+katex 49
+\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}
+math 23 0 0 dollar
+tex 16
+x \in \mathbb{R}
+raw 18
+$x \in \mathbb{R}$
+prepared 16
+x \in \mathbb{R}
+katex 16
+x \in \mathbb{R}
+math 23 1 1 dollars
+tex 15
+a^2 + b^2 = c^2
+raw 19
+$$a^2 + b^2 = c^2$$
+prepared 15
+a^2 + b^2 = c^2
+katex 15
+a^2 + b^2 = c^2
+math 23 0 0 dollar
+tex 8
+\sqrt{2}
+raw 10
+$\sqrt{2}$
+prepared 8
+\sqrt{2}
+katex 8
+\sqrt{2}
+math 24 1 1 dollars
+tex 8
+E = mc^2
+raw 12
+$$E = mc^2$$
+prepared 8
+E = mc^2
+katex 8
+E = mc^2
+math 24 1 1 dollars
+tex 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+raw 77
+$$
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+$$
+prepared 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+katex 71
+f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi)\, e^{2 \pi i \xi x} \, d\xi
+math 24 1 0 dollars
+tex 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+raw 40
+$$x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$$
+prepared 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+katex 36
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+math 24 1 1 dollars
+tex 10
+y = mx + b
+raw 16
+$$
+y = mx + b
+$$
+prepared 10
+y = mx + b
+katex 10
+y = mx + b
+math 24 1 1 fence
+tex 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+raw 143
+```math
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+```
+prepared 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+katex 131
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J}
+\end{aligned}
+math 24 1 1 fence
+tex 14
+x = 1 \\ y = 2
+raw 26
+```math
+x = 1 \\ y = 2
+```
+prepared 14
+x = 1 \\ y = 2
+katex 14
+x = 1 \\ y = 2
+math 24 1 1 fence
+tex 8
+\sqrt{2}
+raw 20
+~~~math
+\sqrt{2}
+~~~
+prepared 8
+\sqrt{2}
+katex 8
+\sqrt{2}
+math 25 1 1 dollars
+tex 50
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+raw 56
+$$
+\begin{align}
+a &= b + c \\
+d &= e + f
+\end{align}
+$$
+prepared 69
+\begin{align*}
+a &= b + c  \tag{1} \\
+d &= e + f
+ \tag{2}\end{align*}
+katex 69
+\begin{align*}
+a &= b + c  \tag{1} \\
+d &= e + f
+ \tag{2}\end{align*}
+math 25 1 1 dollars
+tex 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+raw 50
+$$
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+$$
+prepared 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+katex 44
+\begin{align*}
+x &= 1 \\
+y &= 2
+\end{align*}
+math 25 1 1 dollars
+tex 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+raw 82
+$$
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+$$
+prepared 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+katex 76
+\left\{
+\begin{aligned}
+u_t &= \Delta u \\
+u(0) &= u_0
+\end{aligned}
+\right.
+math 25 1 1 dollars
+tex 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+raw 56
+$$
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+$$
+prepared 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+katex 50
+\begin{gathered}
+a = b \\
+c = d + e
+\end{gathered}
+math 25 1 1 dollars
+tex 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+raw 85
+$$
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+$$
+prepared 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+katex 79
+|x| = \begin{cases} x & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+math 25 1 1 dollars
+tex 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+raw 201
+$$
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+$$
+prepared 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+katex 195
+\begin{matrix} a & b \\ c & d \end{matrix}
+\quad
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+math 25 1 1 dollars
+tex 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+raw 80
+$$
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+$$
+prepared 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+katex 74
+\left[\begin{array}{c|cc} 1 & 2 & 3 \\ \hline 4 & 5 & 6 \end{array}\right]
+math 25 1 1 dollars
+tex 77
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+raw 83
+$$
+\begin{equation}
+e^{i\pi} + 1 = 0 \tag{Euler} \label{eq:euler}
+\end{equation}
+$$
+prepared 63
+\begin{equation*}
+e^{i\pi} + 1 = 0 \tag{Euler} 
+\end{equation*}
+katex 63
+\begin{equation*}
+e^{i\pi} + 1 = 0 \tag{Euler} 
+\end{equation*}
+math 25 0 0 dollar
+tex 16
+\eqref{eq:euler}
+raw 18
+$\eqref{eq:euler}$
+prepared 14
+\text{(Euler)}
+katex 14
+\text{(Euler)}
+math 25 0 0 dollar
+tex 14
+\ref{eq:euler}
+raw 16
+$\ref{eq:euler}$
+prepared 12
+\text{Euler}
+katex 12
+\text{Euler}
+math 26 1 1 env
+tex 81
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+raw 81
+\begin{align}
+\dot{x} &= \sigma (y - x) \\
+\dot{y} &= \rho x - y - xz
+\end{align}
+prepared 100
+\begin{align*}
+\dot{x} &= \sigma (y - x)  \tag{3} \\
+\dot{y} &= \rho x - y - xz
+ \tag{4}\end{align*}
+katex 100
+\begin{align*}
+\dot{x} &= \sigma (y - x)  \tag{3} \\
+\dot{y} &= \rho x - y - xz
+ \tag{4}\end{align*}
+math 26 1 1 env
+tex 47
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+raw 47
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+prepared 57
+\begin{equation*}
+a^2 + b^2 = c^2
+ \tag{5}\end{equation*}
+katex 57
+\begin{equation*}
+a^2 + b^2 = c^2
+ \tag{5}\end{equation*}
+math 26 0 0 paren
+tex 9
+x^2 + y^2
+raw 13
+\(x^2 + y^2\)
+prepared 9
+x^2 + y^2
+katex 9
+x^2 + y^2
+math 26 1 1 bracket
+tex 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+raw 36
+\[
+\int_0^1 x^2\,dx = \frac{1}{3}
+\]
+prepared 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+katex 30
+\int_0^1 x^2\,dx = \frac{1}{3}
+math 26 0 0 doubled
+tex 5
+a + b
+raw 11
+\\(a + b\\)
+prepared 5
+a + b
+katex 5
+a + b
+math 26 1 1 doubled
+tex 5
+c + d
+raw 13
+\\[
+c + d
+\\]
+prepared 5
+c + d
+katex 5
+c + d
+math 27 1 1 dollars
+tex 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+raw 115
+$$
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+$$
+prepared 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+katex 109
+\newcommand{\RR}{\mathbb{R}}
+\def\norm#1{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+math 27 0 0 dollar
+tex 9
+x \in \RR
+raw 11
+$x \in \RR$
+prepared 9
+x \in \RR
+katex 9
+x \in \RR
+math 27 0 0 dollar
+tex 8
+\norm{v}
+raw 10
+$\norm{v}$
+prepared 8
+\norm{v}
+katex 8
+\norm{v}
+math 27 0 0 dollar
+tex 12
+\abs{-3} = 3
+raw 14
+$\abs{-3} = 3$
+prepared 12
+\abs{-3} = 3
+katex 12
+\abs{-3} = 3
+math 27 0 0 dollar
+tex 30
+\newcommand{\R}{\mathbf{R}} \R
+raw 32
+$\newcommand{\R}{\mathbf{R}} \R$
+prepared 30
+\newcommand{\R}{\mathbf{R}} \R
+katex 32
+\renewcommand{\R}{\mathbf{R}} \R
+math 27 0 0 dollar
+tex 32
+\renewcommand{\R}{\mathbf{R}} \R
+raw 34
+$\renewcommand{\R}{\mathbf{R}} \R$
+prepared 32
+\renewcommand{\R}{\mathbf{R}} \R
+katex 32
+\renewcommand{\R}{\mathbf{R}} \R
+math 27 0 0 dollar
+tex 30
+\operatorname{argmax}_{x} f(x)
+raw 32
+$\operatorname{argmax}_{x} f(x)$
+prepared 30
+\operatorname{argmax}_{x} f(x)
+katex 30
+\operatorname{argmax}_{x} f(x)
+math 27 0 0 dollar
+tex 20
+\operatorname{Tr}(A)
+raw 22
+$\operatorname{Tr}(A)$
+prepared 20
+\operatorname{Tr}(A)
+katex 20
+\operatorname{Tr}(A)
+math 27 0 0 dollar
+tex 10
+\max_i a_i
+raw 12
+$\max_i a_i$
+prepared 10
+\max_i a_i
+katex 10
+\max_i a_i
+math 27 0 0 dollar
+tex 6
+\sin x
+raw 8
+$\sin x$
+prepared 6
+\sin x
+katex 6
+\sin x
+math 27 0 0 dollar
+tex 21
+\mathbb{R} \mathbb{N}
+raw 23
+$\mathbb{R} \mathbb{N}$
+prepared 21
+\mathbb{R} \mathbb{N}
+katex 21
+\mathbb{R} \mathbb{N}
+math 27 0 0 dollar
+tex 23
+\mathcal{L} \mathcal{O}
+raw 25
+$\mathcal{L} \mathcal{O}$
+prepared 23
+\mathcal{L} \mathcal{O}
+katex 23
+\mathcal{L} \mathcal{O}
+math 27 0 0 dollar
+tex 25
+\mathfrak{g} \mathfrak{A}
+raw 27
+$\mathfrak{g} \mathfrak{A}$
+prepared 25
+\mathfrak{g} \mathfrak{A}
+katex 25
+\mathfrak{g} \mathfrak{A}
+math 27 0 0 dollar
+tex 11
+\mathrm{d}x
+raw 13
+$\mathrm{d}x$
+prepared 11
+\mathrm{d}x
+katex 11
+\mathrm{d}x
+math 27 0 0 dollar
+tex 10
+\mathbf{v}
+raw 12
+$\mathbf{v}$
+prepared 10
+\mathbf{v}
+katex 10
+\mathbf{v}
+math 27 0 0 dollar
+tex 19
+\boldsymbol{\alpha}
+raw 21
+$\boldsymbol{\alpha}$
+prepared 19
+\boldsymbol{\alpha}
+katex 19
+\boldsymbol{\alpha}
+math 27 0 0 dollar
+tex 30
+\text{with spaces inside text}
+raw 32
+$\text{with spaces inside text}$
+prepared 30
+\text{with spaces inside text}
+katex 30
+\text{with spaces inside text}
+math 27 0 0 dollar
+tex 15
+x \text{ if } y
+raw 17
+$x \text{ if } y$
+prepared 15
+x \text{ if } y
+katex 15
+x \text{ if } y
+math 28 0 0 dollar
+tex 5
+\RR^n
+raw 7
+$\RR^n$
+prepared 5
+\RR^n
+katex 5
+\RR^n
+math 28 0 0 dollar
+tex 10
+\norm{x}_2
+raw 12
+$\norm{x}_2$
+prepared 10
+\norm{x}_2
+katex 10
+\norm{x}_2
+math 28 1 1 dollars
+tex 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+raw 125
+$$
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+$$
+prepared 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+katex 119
+\frac{1}{1 + \frac{1}{1 + \frac{1}{x}}} \quad \dfrac{a}{b} \quad \tfrac{a}{b} \quad \sqrt[3]{x} \quad \sqrt[n]{1 + x^2}
+math 28 1 1 dollars
+tex 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+raw 107
+$$
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+$$
+prepared 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+katex 101
+\left( \sum_{k=1}^{n} \frac{x_k}{\sqrt{1 + x_k^2}} \right)^{2} \left[ \int_0^1 \frac{dt}{1+t} \right]
+math 28 1 1 dollars
+tex 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+raw 88
+$$
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+$$
+prepared 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+katex 82
+\overbrace{a + b + c}^{\text{three terms}} = \underbrace{x + y}_{\text{two terms}}
+math 28 1 1 dollars
+tex 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+raw 97
+$$
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+$$
+prepared 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+katex 91
+\boxed{E = mc^2} \quad \color{red}{x + y} \quad {\color{blue} z} \quad \textcolor{green}{w}
+math 28 1 1 dollars
+tex 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+raw 141
+$$
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+$$
+prepared 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+katex 135
+\underset{x \to 0}{\lim} f(x) \quad \overset{?}{=} \quad A \xrightarrow{f} B \xleftarrow[g]{h} C \quad \binom{n}{k} \quad \tbinom{n}{k}
+math 28 1 1 dollars
+tex 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+raw 177
+$$
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+$$
+prepared 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+katex 171
+\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n \quad \sum_{i=1}^{n} i \quad \prod_{p \text{ prime}} \frac{1}{1-p^{-s}} \quad \int_{a}^{b} f \quad \iint_D \quad \oint_C
+math 28 1 1 dollars
+tex 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+raw 63
+$$
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+$$
+prepared 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+katex 57
+\begin{CD}
+A @>f>> B \\
+@VgVV @VVhV \\
+C @>>k> D
+\end{CD}
+math 29 0 0 dollar
+tex 15
+a_1 * b_2 * c_3
+raw 17
+$a_1 * b_2 * c_3$
+prepared 15
+a_1 * b_2 * c_3
+katex 15
+a_1 * b_2 * c_3
+math 29 0 0 dollar
+tex 3
+x_1
+raw 5
+$x_1$
+prepared 3
+x_1
+katex 3
+x_1
+math 29 0 0 dollar
+tex 3
+y_1
+raw 5
+$y_1$
+prepared 3
+y_1
+katex 3
+y_1
+math 29 0 0 dollar
+tex 5
+z_{1}
+raw 7
+$z_{1}$
+prepared 5
+z_{1}
+katex 5
+z_{1}
+math 29 0 0 dollar
+tex 5
+a*b*c
+raw 7
+$a*b*c$
+prepared 5
+a*b*c
+katex 5
+a*b*c
+math 29 0 0 dollar
+tex 5
+a * b
+raw 7
+$a * b$
+prepared 5
+a * b
+katex 5
+a * b
+math 29 0 0 dollar
+tex 8
+\{a, b\}
+raw 10
+$\{a, b\}$
+prepared 8
+\{a, b\}
+katex 8
+\{a, b\}
+math 29 0 0 dollar
+tex 6
+a \, b
+raw 8
+$a \, b$
+prepared 6
+a \, b
+katex 6
+a \, b
+math 29 0 0 dollar
+tex 4
+a\;b
+raw 6
+$a\;b$
+prepared 4
+a\;b
+katex 4
+a\;b
+math 29 0 0 dollar
+tex 5
+\|v\|
+raw 7
+$\|v\|$
+prepared 5
+\|v\|
+katex 5
+\|v\|
+math 29 0 0 dollar
+tex 6
+a \\ b
+raw 8
+$a \\ b$
+prepared 6
+a \\ b
+katex 6
+a \\ b
+math 29 0 0 dollar
+tex 8
+\#\%\&\_
+raw 10
+$\#\%\&\_$
+prepared 8
+\#\%\&\_
+katex 8
+\#\%\&\_
+math 29 0 0 dollar
+tex 2
+\$
+raw 4
+$\$$
+prepared 2
+\$
+katex 2
+\$
+math 29 0 0 dollar
+tex 3
+a<b
+raw 5
+$a<b$
+prepared 3
+a<b
+katex 3
+a<b
+math 29 0 0 dollar
+tex 5
+a < b
+raw 7
+$a < b$
+prepared 5
+a < b
+katex 5
+a < b
+math 29 0 0 dollar
+tex 3
+a>b
+raw 5
+$a>b$
+prepared 3
+a>b
+katex 3
+a>b
+math 29 0 0 dollar
+tex 7
+x \lt y
+raw 9
+$x \lt y$
+prepared 7
+x \lt y
+katex 7
+x \lt y
+math 29 0 0 dollar
+tex 6
+a \& b
+raw 8
+$a \& b$
+prepared 6
+a \& b
+katex 6
+a \& b
+math 29 0 0 dollar
+tex 9
+p \land q
+raw 11
+$p \land q$
+prepared 9
+p \land q
+katex 9
+p \land q
+math 29 1 1 dollars
+tex 29
+a + b % this is a comment
+= c
+raw 35
+$$
+a + b % this is a comment
+= c
+$$
+prepared 29
+a + b % this is a comment
+= c
+katex 29
+a + b % this is a comment
+= c
+math 29 1 1 dollars
+tex 15
+a % comment
++ c
+raw 21
+$$
+a % comment
++ c
+$$
+prepared 15
+a % comment
++ c
+katex 15
+a % comment
++ c
+math 29 0 0 dollar
+tex 12
+α + β = γ
+raw 14
+$α + β = γ$
+prepared 12
+α + β = γ
+katex 12
+α + β = γ
+math 29 0 0 dollar
+tex 7
+x ≤ y
+raw 9
+$x ≤ y$
+prepared 7
+x ≤ y
+katex 7
+x ≤ y
+math 29 0 0 dollar
+tex 19
+\text{café naïve}
+raw 21
+$\text{café naïve}$
+prepared 19
+\text{café naïve}
+katex 19
+\text{café naïve}
+math 29 0 0 dollar
+tex 10
+∀x∈ℝ
+raw 12
+$∀x∈ℝ$
+prepared 10
+∀x∈ℝ
+katex 10
+∀x∈ℝ
+math 29 0 0 dollar
+tex 9
+\frac{1}{
+raw 11
+$\frac{1}{$
+prepared 9
+\frac{1}{
+katex 9
+\frac{1}{
+math 29 0 0 dollar
+tex 12
+\badmacro{x}
+raw 14
+$\badmacro{x}$
+prepared 12
+\badmacro{x}
+katex 12
+\badmacro{x}
+math 29 0 0 dollar
+tex 2
+x^
+raw 4
+$x^$
+prepared 2
+x^
+katex 2
+x^
+math 29 1 1 dollars
+tex 34
+\begin{align}
+a &= b
+\end{aligned}
+raw 40
+$$
+\begin{align}
+a &= b
+\end{aligned}
+$$
+prepared 34
+\begin{align}
+a &= b
+\end{aligned}
+katex 34
+\begin{align}
+a &= b
+\end{aligned}
+math 29 0 0 dollar
+tex 5
+x<y>z
+raw 7
+$x<y>z$
+prepared 5
+x<y>z
+katex 5
+x<y>z
+math 29 0 0 dollar
+tex 7
+a <b> c
+raw 9
+$a <b> c$
+prepared 7
+a <b> c
+katex 7
+a <b> c
+end
+doc hero.ipynb#0
+src 254
+# Install
+
+jupynvim draws notebooks
+inside Neovim.
+
+> [!NOTE]
+> Needs Ghostty 1.3 or kitty.
+
+- [x] Rust backend
+- [ ] Widgets
+
+| Terminal | Images |
+|----------|:------:|
+| Ghostty  | yes    |
+| WezTerm  | soon   |
+
+```lua
+require("jupynvim").setup()
+```
+text 254
+# Install
+
+jupynvim draws notebooks
+inside Neovim.
+
+> [!NOTE]
+> Needs Ghostty 1.3 or kitty.
+
+- [x] Rust backend
+- [ ] Widgets
+
+| Terminal | Images |
+|----------|:------:|
+| Ghostty  | yes    |
+| WezTerm  | soon   |
+
+```lua
+require("jupynvim").setup()
+```
+end
+doc hero.ipynb
+src 254
+# Install
+
+jupynvim draws notebooks
+inside Neovim.
+
+> [!NOTE]
+> Needs Ghostty 1.3 or kitty.
+
+- [x] Rust backend
+- [ ] Widgets
+
+| Terminal | Images |
+|----------|:------:|
+| Ghostty  | yes    |
+| WezTerm  | soon   |
+
+```lua
+require("jupynvim").setup()
+```
+text 254
+# Install
+
+jupynvim draws notebooks
+inside Neovim.
+
+> [!NOTE]
+> Needs Ghostty 1.3 or kitty.
+
+- [x] Rust backend
+- [ ] Widgets
+
+| Terminal | Images |
+|----------|:------:|
+| Ghostty  | yes    |
+| WezTerm  | soon   |
+
+```lua
+require("jupynvim").setup()
+```
+end
+doc gauss.ipynb#0
+src 133
+The Gaussian integral:
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+
+and inline math stays text when it can: $x^2 + y_1$.
+text 90
+The Gaussian integral:
+
+ZZDMTH0001ZZ
+
+and inline math stays text when it can: ZZMTH0002ZZ.
+math 0 1 1 dollars
+tex 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+raw 55
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+prepared 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+katex 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+math 0 0 0 dollar
+tex 9
+x^2 + y_1
+raw 11
+$x^2 + y_1$
+prepared 9
+x^2 + y_1
+katex 9
+x^2 + y_1
+end
+doc gauss.ipynb
+src 133
+The Gaussian integral:
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+
+and inline math stays text when it can: $x^2 + y_1$.
+text 90
+The Gaussian integral:
+
+ZZDMTH0001ZZ
+
+and inline math stays text when it can: ZZMTH0002ZZ.
+math 0 1 1 dollars
+tex 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+raw 55
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+$$
+prepared 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+katex 49
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+math 0 0 0 dollar
+tex 9
+x^2 + y_1
+raw 11
+$x^2 + y_1$
+prepared 9
+x^2 + y_1
+katex 9
+x^2 + y_1
+end
+count 39

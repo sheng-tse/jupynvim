@@ -1,0 +1,4631 @@
+JNVMATH 2
+doc envs-1-0
+src 16
+\tag{T}\begin{*}
+text 16
+\tag{T}\begin{*}
+end
+doc envs-1-1
+src 64
+\end{a*}\begin{a*b*}\begin{x}\end{x}\end{x}\begin{x}\begin{a*b*}
+text 60
+\end{a*}\begin{a*b*}ZZDMTH0001ZZ\end{x}\begin{x}\begin{a*b*}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-2
+src 84
+\begin{ab**}\end{x}\begin{x}\end{y}
+
+x\end{a*b*}\begin{y}\(\begin{align}\begin{ab**}
+text 84
+\begin{ab**}\end{x}\begin{x}\end{y}
+
+x\end{a*b*}\begin{y}\(\begin{align}\begin{ab**}
+end
+doc envs-1-3
+src 30
+> \end{ab**}\label{a}\label{a}
+text 30
+> \end{ab**}\label{a}\label{a}
+end
+doc envs-1-4
+src 122
+> \begin{a**}\begin{a**}\end{*a*}x\tag{T}\begin{*a*}\begin{a*b*}\begin{a*b*}\end{ab**}\end{a*}\begin{y}
+> 
+> \begin{align}
+text 53
+> \begin{a**}ZZDMTH0001ZZ\begin{y}
+> 
+> \begin{align}
+math 0 1 0 env
+tex 81
+\begin{a**}\end{*a*}x\tag{T}\begin{*a*}\begin{a*b*}\begin{a*b*}\end{ab**}\end{a*}
+raw 81
+\begin{a**}\end{*a*}x\tag{T}\begin{*a*}\begin{a*b*}\begin{a*b*}\end{ab**}\end{a*}
+prepared 81
+\begin{a**}\end{*a*}x\tag{T}\begin{*a*}\begin{a*b*}\begin{a*b*}\end{ab**}\end{a*}
+katex 81
+\begin{a**}\end{*a*}x\tag{T}\begin{*a*}\begin{a*b*}\begin{a*b*}\end{ab**}\end{a*}
+end
+doc envs-1-5
+src 33
+> \(\end{y}\begin{x}\end{ab**} b 
+text 33
+> \(\end{y}\begin{x}\end{ab**} b 
+end
+doc envs-1-6
+src 37
+
+
+\tag{T} a \begin{x} }\begin{align}{
+text 37
+
+
+\tag{T} a \begin{x} }\begin{align}{
+end
+doc envs-1-7
+src 27
+> \begin{a*b*}\end{align} }
+text 27
+> \begin{a*b*}\end{align} }
+end
+doc envs-1-8
+src 74
+\end{align}\begin{align}\tag{T}\begin{x*}\begin{x}> \begin{y} $$\end{ab**}
+text 76
+\end{align}\begin{align}\tag{T}\begin{x*}\begin{x}> \begin{y} \$\$\end{ab**}
+end
+doc envs-1-9
+src 22
+{\begin{x}\)\begin{x*}
+text 22
+{\begin{x}\)\begin{x*}
+end
+doc envs-1-10
+src 77
+\end{x*} a \(\end{ab**}\begin{x}x
+
+
+
+\end{*a*}\begin{y}\begin{ab**}\begin{a*}
+text 77
+\end{x*} a \(\end{ab**}\begin{x}x
+
+
+
+\end{*a*}\begin{y}\begin{ab**}\begin{a*}
+end
+doc envs-1-11
+src 69
+\begin{*a*} a  b \end{*}\end{x*}x\begin{*a*}\(\begin{x}
+
+\begin{ab**}
+text 69
+\begin{*a*} a  b \end{*}\end{x*}x\begin{*a*}\(\begin{x}
+
+\begin{ab**}
+end
+doc envs-1-12
+src 15
+> \begin{a*b*}`
+text 15
+> \begin{a*b*}`
+end
+doc envs-1-13
+src 62
+ a \label{a}\begin{y}\end{*}\end{y}\begin{ab**}\end{x}\end{*}}
+text 51
+ a \label{a}ZZDMTH0001ZZ\begin{ab**}\end{x}\end{*}}
+math 0 1 0 env
+tex 23
+\begin{y}\end{*}\end{y}
+raw 23
+\begin{y}\end{*}\end{y}
+prepared 23
+\begin{y}\end{*}\end{y}
+katex 23
+\begin{y}\end{*}\end{y}
+end
+doc envs-1-14
+src 65
+> \end{x}\begin{a**} b \begin{x}\begin{y} }$\end{a*b*}\begin{y}\)
+text 66
+> \end{x}\begin{a**} b \begin{x}\begin{y} }\$\end{a*b*}\begin{y}\)
+end
+doc envs-1-15
+src 61
+\begin{*a*}\begin{x}\end{x*}\)\end{x} a \tag{T}\begin{ab**}\)
+src 51
+\(}\end{x}
+
+\begin{a**}\end{*a*}\end{ab**}\end{y}\)
+text 47
+\begin{*a*}ZZDMTH0001ZZ a \tag{T}\begin{ab**}\)
+text 51
+\(}\end{x}
+
+\begin{a**}\end{*a*}\end{ab**}\end{y}\)
+math 0 1 0 env
+tex 26
+\begin{x}\end{x*}\)\end{x}
+raw 26
+\begin{x}\end{x*}\)\end{x}
+prepared 26
+\begin{x}\end{x*}\)\end{x}
+katex 26
+\begin{x}\end{x*}\)\end{x}
+end
+doc envs-1-16
+src 16
+> {\begin{x*} a 
+text 16
+> {\begin{x*} a 
+end
+doc envs-1-17
+src 25
+\end{a*b*}x{$\begin{a*b*}
+src 83
+\tag{T}
+\)\end{a**}\end{a**}\begin{a*b*}\begin{x}\end{a*b*} \label{a}\end{x}\end{*}
+text 26
+\end{a*b*}x{\$\begin{a*b*}
+text 59
+\tag{T}
+\)\end{a**}\end{a**}\begin{a*b*}ZZDMTH0001ZZ\end{*}
+math 1 1 0 env
+tex 36
+\begin{x}\end{a*b*} \label{a}\end{x}
+raw 36
+\begin{x}\end{a*b*} \label{a}\end{x}
+prepared 27
+\begin{x}\end{a*b*} \end{x}
+katex 27
+\begin{x}\end{a*b*} \end{x}
+end
+doc envs-1-18
+src 114
+\end{a*}\begin{a*b*}\begin{*}\begin{*}\end{*}\begin{y}\begin{align}\begin{ab**}\end{y}\end{x}\(\begin{a*}\begin{y}
+text 81
+\end{a*}\begin{a*b*}\begin{*}ZZDMTH0001ZZZZDMTH0002ZZ\end{x}\(\begin{a*}\begin{y}
+math 0 1 0 env
+tex 16
+\begin{*}\end{*}
+raw 16
+\begin{*}\end{*}
+prepared 16
+\begin{*}\end{*}
+katex 16
+\begin{*}\end{*}
+math 0 1 0 env
+tex 41
+\begin{y}\begin{align}\begin{ab**}\end{y}
+raw 41
+\begin{y}\begin{align}\begin{ab**}\end{y}
+prepared 41
+\begin{y}\begin{align}\begin{ab**}\end{y}
+katex 41
+\begin{y}\begin{align}\begin{ab**}\end{y}
+end
+doc envs-1-19
+src 50
+\end{*}\end{a*b*}\end{x}`\end{x}\end{y}\tag{T}$$$$
+text 59
+\end{*}\end{a*b*}\end{x}`\end{x}\end{y}\tag{T}ZZMTH0001ZZ\$
+math 0 0 0 dollar
+tex 1
+$
+raw 3
+$$$
+prepared 1
+$
+katex 1
+$
+end
+doc envs-1-20
+src 76
+> \end{y}> {
+> \begin{x}$$\end{a*b*}\end{ab**}{\begin{a**}\end{x*}$$\end{x*}
+src 67
+
+$x\begin{x*}> \end{a*}\end{x}\tag{T}\begin{*a*}\begin{y}\end{ab**}
+text 44
+> \end{y}> {
+> \begin{x}ZZDMTH0001ZZ\end{x*}
+text 68
+
+\$x\begin{x*}> \end{a*}\end{x}\tag{T}\begin{*a*}\begin{y}\end{ab**}
+math 0 1 0 dollars
+tex 40
+\end{a*b*}\end{ab**}{\begin{a**}\end{x*}
+raw 44
+$$\end{a*b*}\end{ab**}{\begin{a**}\end{x*}$$
+prepared 40
+\end{a*b*}\end{ab**}{\begin{a**}\end{x*}
+katex 40
+\end{a*b*}\end{ab**}{\begin{a**}\end{x*}
+end
+doc envs-1-21
+src 73
+\label{a} b \end{align}\begin{a*}\begin{x}\end{a*b*}\begin{ab**}\begin{x}
+text 73
+\label{a} b \end{align}\begin{a*}\begin{x}\end{a*b*}\begin{ab**}\begin{x}
+end
+doc envs-1-22
+src 34
+> \end{*} b > \begin{x} \label{a}}
+text 34
+> \end{*} b > \begin{x} \label{a}}
+end
+doc envs-1-23
+src 52
+\begin{a**} a \begin{y}{\begin{ab**}\end{x}\begin{x}
+text 52
+\begin{a**} a \begin{y}{\begin{ab**}\end{x}\begin{x}
+end
+doc envs-1-24
+src 22
+\begin{x*}\begin{ab**}
+text 22
+\begin{x*}\begin{ab**}
+end
+doc envs-1-25
+src 84
+\begin{a**}\)\end{x}
+\label{a}\begin{a*b*}}\begin{y}\begin{*}\end{x}\begin{x}\end{*}
+text 64
+\begin{a**}\)\end{x}
+\label{a}\begin{a*b*}}\begin{y}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 32
+\begin{*}\end{x}\begin{x}\end{*}
+raw 32
+\begin{*}\end{x}\begin{x}\end{*}
+prepared 32
+\begin{*}\end{x}\begin{x}\end{*}
+katex 32
+\begin{*}\end{x}\begin{x}\end{*}
+end
+doc envs-1-26
+src 28
+> \end{x}\end{x}\tag{T}
+> \(
+src 32
+\begin{y}\begin{a*b*}`\begin{x*}
+text 28
+> \end{x}\end{x}\tag{T}
+> \(
+text 32
+\begin{y}\begin{a*b*}`\begin{x*}
+end
+doc envs-1-27
+src 43
+\end{x}\\\begin{a*b*}\end{a*b*}`\begin{*a*}
+text 43
+\end{x}\\\begin{a*b*}\end{a*b*}`\begin{*a*}
+end
+doc envs-1-28
+src 73
+ a \end{x} b x\begin{x*}\end{align} b \begin{align}{\end{a*}\\\begin{*a*}
+text 73
+ a \end{x} b x\begin{x*}\end{align} b \begin{align}{\end{a*}\\\begin{*a*}
+end
+doc envs-1-29
+src 30
+\end{y}\end{ab**} \end{x}`\\ {
+src 43
+\label{a} b $$\end{y}\end{a*b*}\begin{a*}\(
+text 30
+\end{y}\end{ab**} \end{x}`\\ {
+text 45
+\label{a} b \$\$\end{y}\end{a*b*}\begin{a*}\(
+end
+doc envs-1-30
+src 27
+\begin{y}{\label{a} a $\(x
+
+src 51
+\begin{x*}\begin{x}\end{x}x\begin{a*b*}\(> \end{a*}
+text 28
+\begin{y}{\label{a} a \$\(x
+
+text 47
+\begin{x*}ZZDMTH0001ZZx\begin{a*b*}\(> \end{a*}
+math 1 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-31
+src 66
+\end{y}\begin{*}\begin{y}\begin{*}\end{x} a \begin{a**}\begin{y}\(
+src 62
+ \\\begin{align}\end{align} a \begin{*a*}\end{align}\\\end{x}`
+text 66
+\end{y}\begin{*}\begin{y}\begin{*}\end{x} a \begin{a**}\begin{y}\(
+text 50
+ \\ZZDMTH0001ZZ a \begin{*a*}\end{align}\\\end{x}`
+math 1 1 0 env
+tex 24
+\begin{align}\end{align}
+raw 24
+\begin{align}\end{align}
+prepared 34
+\begin{align*} \tag{1}\end{align*}
+katex 34
+\begin{align*} \tag{1}\end{align*}
+end
+doc envs-1-32
+src 32
+\end{*a*}\end{a*b*} b \end{y} b 
+src 48
+x\begin{*}\begin{ab**}\end{x}\end{x*}{\end{x}
+
+$
+text 32
+\end{*a*}\end{a*b*} b \end{y} b 
+text 49
+x\begin{*}\begin{ab**}\end{x}\end{x*}{\end{x}
+
+\$
+end
+doc envs-1-33
+src 23
+\end{x}`
+
+\end{align}\)
+text 23
+\end{x}`
+
+\end{align}\)
+end
+doc envs-1-34
+src 65
+\begin{ab**}\\\end{x} 
+
+
+ a \end{align}\end{x}\begin{a*b*}\end{x}
+text 65
+\begin{ab**}\\\end{x} 
+
+
+ a \end{align}\end{x}\begin{a*b*}\end{x}
+end
+doc envs-1-35
+src 30
+\begin{a**}{\end{x*}\begin{x*}
+text 30
+\begin{a**}{\end{x*}\begin{x*}
+end
+doc envs-1-36
+src 41
+\)\end{*a*}\end{y}\)`\label{a}}$\begin{x}
+text 42
+\)\end{*a*}\end{y}\)`\label{a}}\$\begin{x}
+end
+doc envs-1-37
+src 11
+\end{x}\\\(
+text 11
+\end{x}\\\(
+end
+doc envs-1-38
+src 15
+\begin{x}
+
+\(
+
+
+src 24
+\) a {\begin{*}\begin{x}
+text 15
+\begin{x}
+
+\(
+
+
+text 24
+\) a {\begin{*}\begin{x}
+end
+doc envs-1-39
+src 22
+\end{align}\end{ab**} 
+text 22
+\end{align}\end{ab**} 
+end
+doc envs-1-40
+src 40
+$\(\end{x}\end{a*}\end{a*}\tag{T}\end{x}
+text 41
+\$\(\end{x}\end{a*}\end{a*}\tag{T}\end{x}
+end
+doc envs-1-41
+src 12
+> \label{a}`
+text 12
+> \label{a}`
+end
+doc envs-1-42
+src 16
+\begin{x}\end{x}
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-43
+src 80
+x\begin{a*}`\end{x}\end{y}$$\begin{x}\begin{a*}\begin{*}\end{y}\begin{y}\end{a*}
+text 51
+x\begin{a*}`\end{x}\end{y}\$\$\begin{x}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 43
+\begin{a*}\begin{*}\end{y}\begin{y}\end{a*}
+raw 43
+\begin{a*}\begin{*}\end{y}\begin{y}\end{a*}
+prepared 43
+\begin{a*}\begin{*}\end{y}\begin{y}\end{a*}
+katex 43
+\begin{a*}\begin{*}\end{y}\begin{y}\end{a*}
+end
+doc envs-1-44
+src 24
+\end{a*b*}\end{y}\\ } b 
+text 24
+\end{a*b*}\end{y}\\ } b 
+end
+doc envs-1-45
+src 70
+$$\end{a**}\end{a*}\begin{a*b*}\end{a*}\begin{a*b*}\end{*a*}\end{*} b 
+src 88
+\end{a**}\begin{x*}}\begin{x}\end{*}\begin{ab**}\begin{a*}\begin{align}\end{y}\begin{x}x
+text 72
+\$\$\end{a**}\end{a*}\begin{a*b*}\end{a*}\begin{a*b*}\end{*a*}\end{*} b 
+text 88
+\end{a**}\begin{x*}}\begin{x}\end{*}\begin{ab**}\begin{a*}\begin{align}\end{y}\begin{x}x
+end
+doc envs-1-46
+src 80
+> \begin{*a*}\begin{x}\end{x}\end{*}\end{x*}\end{a*}\end{y}\begin{y}\end{*a*}> x
+text 76
+> \begin{*a*}ZZDMTH0001ZZ\end{*}\end{x*}\end{a*}\end{y}\begin{y}\end{*a*}> x
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-47
+src 20
+> \begin{y}\end{*a*}
+text 20
+> \begin{y}\end{*a*}
+end
+doc envs-1-48
+src 23
+$\label{a}{`\begin{*a*}
+text 24
+\$\label{a}{`\begin{*a*}
+end
+doc envs-1-49
+src 40
+\begin{x}\begin{x}{$\end{a**}\\\begin{x}
+text 41
+\begin{x}\begin{x}{\$\end{a**}\\\begin{x}
+end
+doc envs-1-50
+src 82
+\end{x}\end{y}
+
+\tag{T}\end{x}\begin{a*}\end{a**}\end{ab**}\begin{a**}\end{x}\(\)}
+src 56
+\label{a}\begin{y}\begin{*a*}\)\)\end{a*b*}> > \begin{*}
+text 89
+\end{x}\end{y}
+
+\tag{T}\end{x}\begin{a*}\end{a**}\end{ab**}\begin{a**}\end{x}ZZMTH0001ZZ}
+text 56
+\label{a}\begin{y}\begin{*a*}\)\)\end{a*b*}> > \begin{*}
+math 0 0 0 paren
+tex 0
+
+raw 4
+\(\)
+prepared 0
+
+katex 0
+
+end
+doc envs-1-51
+src 67
+\\x  a x\begin{a*} \)\end{align}\end{a*b*}\begin{a*}\begin{align}\(
+text 67
+\\x  a x\begin{a*} \)\end{align}\end{a*b*}\begin{a*}\begin{align}\(
+end
+doc envs-1-52
+src 22
+$\begin{a**}\end{ab**}
+src 83
+> \begin{y}\end{a*b*}\begin{a*}\end{align}\begin{*a*} $\end{a**}\end{a**}\end{ab**}
+text 23
+\$\begin{a**}\end{ab**}
+text 84
+> \begin{y}\end{a*b*}\begin{a*}\end{align}\begin{*a*} \$\end{a**}\end{a**}\end{ab**}
+end
+doc envs-1-53
+src 78
+> \end{align}\begin{x}\end{y}> \end{ab**}x\\\begin{a*}\end{x}\end{a*}  \end{x}
+src 88
+\end{ab**}\end{y} a x\begin{x}\begin{ab**}\begin{*}$\end{x}\begin{a*b*}\tag{T}\end{ab**}
+text 42
+> \end{align}ZZDMTH0001ZZ\end{a*}  \end{x}
+text 62
+\end{ab**}\end{y} a xZZDMTH0001ZZ\begin{a*b*}\tag{T}\end{ab**}
+math 0 1 0 env
+tex 48
+\begin{x}\end{y}> \end{ab**}x\\\begin{a*}\end{x}
+raw 48
+\begin{x}\end{y}> \end{ab**}x\\\begin{a*}\end{x}
+prepared 48
+\begin{x}\end{y}> \end{ab**}x\\\begin{a*}\end{x}
+katex 48
+\begin{x}\end{y}> \end{ab**}x\\\begin{a*}\end{x}
+math 1 1 0 env
+tex 38
+\begin{x}\begin{ab**}\begin{*}$\end{x}
+raw 38
+\begin{x}\begin{ab**}\begin{*}$\end{x}
+prepared 38
+\begin{x}\begin{ab**}\begin{*}$\end{x}
+katex 38
+\begin{x}\begin{ab**}\begin{*}$\end{x}
+end
+doc envs-1-54
+src 36
+> {$\end{y}\end{a**}\end{y}\begin{y}
+text 37
+> {\$\end{y}\end{a**}\end{y}\begin{y}
+end
+doc envs-1-55
+src 51
+\end{a*}\begin{a*b*}  $$$$\begin{y}\\\\ b \end{x}$$
+src 4
+> \(
+text 46
+\end{a*}\begin{a*b*}  ZZMTH0001ZZZZMTH0002ZZ\$
+text 4
+> \(
+math 0 0 0 dollar
+tex 1
+$
+raw 3
+$$$
+prepared 1
+$
+katex 1
+$
+math 0 0 0 dollar
+tex 23
+\begin{y}\\\\ b \end{x}
+raw 25
+$\begin{y}\\\\ b \end{x}$
+prepared 23
+\begin{y}\\\\ b \end{x}
+katex 23
+\begin{y}\\\\ b \end{x}
+end
+doc envs-1-56
+src 49
+\end{a*}\)\begin{*a*}> \begin{*a*}\end{x}\end{x*}
+text 49
+\end{a*}\)\begin{*a*}> \begin{*a*}\end{x}\end{x*}
+end
+doc envs-1-57
+src 31
+\begin{ab**}\begin{x*}\end{*a*}
+text 31
+\begin{ab**}\begin{x*}\end{*a*}
+end
+doc envs-1-58
+src 34
+\end{*a*}\(\end{a*b*}\)\end{x}
+
+\)
+text 31
+\end{*a*}ZZMTH0001ZZ\end{x}
+
+\)
+math 0 0 0 paren
+tex 10
+\end{a*b*}
+raw 14
+\(\end{a*b*}\)
+prepared 10
+\end{a*b*}
+katex 10
+\end{a*b*}
+end
+doc envs-1-59
+src 28
+ b }\begin{a*b*}\end{ab**}$$
+text 30
+ b }\begin{a*b*}\end{ab**}\$\$
+end
+doc envs-1-60
+src 53
+{\end{y}x
+
+> \begin{*a*}
+\begin{*}\end{a*b*}\begin{*}
+src 33
+> \begin{align}\end{a**}\label{a}
+text 53
+{\end{y}x
+
+> \begin{*a*}
+\begin{*}\end{a*b*}\begin{*}
+text 33
+> \begin{align}\end{a**}\label{a}
+end
+doc envs-1-61
+src 58
+\end{align}\end{a**}\begin{*}\begin{x*}\)\end{x*}\begin{x}
+src 18
+ b  b \begin{a*b*}
+text 50
+\end{align}\end{a**}\begin{*}ZZDMTH0001ZZ\begin{x}
+text 18
+ b  b \begin{a*b*}
+math 0 1 0 env
+tex 20
+\begin{x*}\)\end{x*}
+raw 20
+\begin{x*}\)\end{x*}
+prepared 20
+\begin{x*}\)\end{x*}
+katex 20
+\begin{x*}\)\end{x*}
+end
+doc envs-1-62
+src 26
+\end{x*}$\\$\)\label{a}`\\
+text 33
+\end{x*}ZZMTH0001ZZ\)\label{a}`\\
+math 0 0 0 dollar
+tex 2
+\\
+raw 4
+$\\$
+prepared 2
+\\
+katex 2
+\\
+end
+doc envs-1-63
+src 79
+ a \begin{a**}\tag{T}\tag{T}\begin{*}> $\)\begin{*}\tag{T}\begin{ab**}\begin{x}
+src 59
+\end{x*}x\end{x} b 
+\end{align}x\end{a*}\end{x}\begin{a*b*}
+text 80
+ a \begin{a**}\tag{T}\tag{T}\begin{*}> \$\)\begin{*}\tag{T}\begin{ab**}\begin{x}
+text 59
+\end{x*}x\end{x} b 
+\end{align}x\end{a*}\end{x}\begin{a*b*}
+end
+doc envs-1-64
+src 59
+\end{*a*}{\end{a**}\\\end{*a*}\end{y}x\begin{*}\begin{a*b*}
+text 59
+\end{*a*}{\end{a**}\\\end{*a*}\end{y}x\begin{*}\begin{a*b*}
+end
+doc envs-1-65
+src 55
+`\begin{a*}\end{a**}\begin{x}\end{y}
+\begin{*a*}\end{y}
+text 55
+`\begin{a*}\end{a**}\begin{x}\end{y}
+\begin{*a*}\end{y}
+end
+doc envs-1-66
+src 71
+\end{x}\begin{*}\begin{a*}\end{x}\begin{x}\end{x}\begin{ab**}\end{ab**}
+text 57
+\end{x}\begin{*}\begin{a*}\end{x}ZZDMTH0001ZZZZDMTH0002ZZ
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+math 0 1 0 env
+tex 22
+\begin{ab**}\end{ab**}
+raw 22
+\begin{ab**}\end{ab**}
+prepared 22
+\begin{ab**}\end{ab**}
+katex 22
+\begin{ab**}\end{ab**}
+end
+doc envs-1-67
+src 13
+\end{x} b }\)
+src 32
+\end{x} a \begin{y}
+
+ b \tag{T}$
+text 13
+\end{x} b }\)
+text 33
+\end{x} a \begin{y}
+
+ b \tag{T}\$
+end
+doc envs-1-68
+src 70
+
+
+\end{y} \begin{a*b*}\begin{a*b*}}\begin{*}x\begin{align}\end{x*} a 
+
+text 70
+
+
+\end{y} \begin{a*b*}\begin{a*b*}}\begin{*}x\begin{align}\end{x*} a 
+
+end
+doc envs-1-69
+src 88
+\begin{y}\label{a}\begin{a*}\end{y}\end{y}\begin{x}\begin{x*}$\end{a*}\(\begin{*}\end{x}
+text 31
+ZZDMTH0001ZZ\end{y}ZZDMTH0002ZZ
+math 0 1 0 env
+tex 35
+\begin{y}\label{a}\begin{a*}\end{y}
+raw 35
+\begin{y}\label{a}\begin{a*}\end{y}
+prepared 26
+\begin{y}\begin{a*}\end{y}
+katex 26
+\begin{y}\begin{a*}\end{y}
+math 0 1 0 env
+tex 46
+\begin{x}\begin{x*}$\end{a*}\(\begin{*}\end{x}
+raw 46
+\begin{x}\begin{x*}$\end{a*}\(\begin{*}\end{x}
+prepared 46
+\begin{x}\begin{x*}$\end{a*}\(\begin{*}\end{x}
+katex 46
+\begin{x}\begin{x*}$\end{a*}\(\begin{*}\end{x}
+end
+doc envs-1-70
+src 28
+\begin{a*}
+\end{a*}\label{a}
+text 21
+ZZDMTH0001ZZ\label{a}
+math 0 1 0 env
+tex 19
+\begin{a*}
+\end{a*}
+raw 19
+\begin{a*}
+\end{a*}
+prepared 19
+\begin{a*}
+\end{a*}
+katex 19
+\begin{a*}
+\end{a*}
+end
+doc envs-1-71
+src 61
+> \label{a}\tag{T} b x\\\end{ab**}\tag{T}\begin{x*}\begin{x*}
+text 61
+> \label{a}\tag{T} b x\\\end{ab**}\tag{T}\begin{x*}\begin{x*}
+end
+doc envs-1-72
+src 59
+> \begin{a*b*}\end{x*}\end{*} a  b \tag{T}\end{a*}\begin{*}
+src 17
+> 
+> }\begin{*a*}
+text 59
+> \begin{a*b*}\end{x*}\end{*} a  b \tag{T}\end{a*}\begin{*}
+text 17
+> 
+> }\begin{*a*}
+end
+doc envs-1-73
+src 21
+\begin{x}\begin{ab**}
+text 21
+\begin{x}\begin{ab**}
+end
+doc envs-1-74
+src 26
+\end{x}\end{y}\end{a*} a 
+
+text 26
+\end{x}\end{y}\end{a*} a 
+
+end
+doc envs-1-75
+src 45
+\end{y}> \end{x}\end{y}\begin{*a*}\begin{a**}
+text 45
+\end{y}> \end{x}\end{y}\begin{*a*}\begin{a**}
+end
+doc envs-1-76
+src 19
+>  a \\\label{a} b 
+text 19
+>  a \\\label{a} b 
+end
+doc envs-1-77
+src 90
+\begin{x}\begin{align}\end{x*}\end{a*}\begin{align}\\\(\end{a*}\begin{align}\end{y}\end{y}
+text 90
+\begin{x}\begin{align}\end{x*}\end{a*}\begin{align}\\\(\end{a*}\begin{align}\end{y}\end{y}
+end
+doc envs-1-78
+src 49
+> { b  \begin{a*b*} > \end{x}\begin{a*}\end{y}\) 
+text 49
+> { b  \begin{a*b*} > \end{x}\begin{a*}\end{y}\) 
+end
+doc envs-1-79
+src 61
+\begin{a*}}\begin{y}\begin{x}\begin{x*}\(\end{y}  a \end{*a*}
+text 36
+\begin{a*}}ZZDMTH0001ZZ  a \end{*a*}
+math 0 1 0 env
+tex 37
+\begin{y}\begin{x}\begin{x*}\(\end{y}
+raw 37
+\begin{y}\begin{x}\begin{x*}\(\end{y}
+prepared 37
+\begin{y}\begin{x}\begin{x*}\(\end{y}
+katex 37
+\begin{y}\begin{x}\begin{x*}\(\end{y}
+end
+doc envs-1-80
+src 32
+{\begin{align}\label{a}\end{a**}
+src 79
+\begin{a**}\begin{y}\end{x}\begin{a**}$$\begin{*}\end{align}\)\end{y}\end{a*b*}
+text 32
+{\begin{align}\label{a}\end{a**}
+text 33
+\begin{a**}ZZDMTH0001ZZ\end{a*b*}
+math 1 1 0 env
+tex 58
+\begin{y}\end{x}\begin{a**}$$\begin{*}\end{align}\)\end{y}
+raw 58
+\begin{y}\end{x}\begin{a**}$$\begin{*}\end{align}\)\end{y}
+prepared 58
+\begin{y}\end{x}\begin{a**}$$\begin{*}\end{align}\)\end{y}
+katex 58
+\begin{y}\end{x}\begin{a**}$$\begin{*}\end{align}\)\end{y}
+end
+doc envs-1-81
+src 39
+\end{x}\begin{x}}\(\end{x}}\begin{ab**}
+src 31
+\label{a}$$\end{*a*}$\begin{x}{
+text 32
+\end{x}ZZDMTH0001ZZ}\begin{ab**}
+text 30
+\label{a}ZZMTH0001ZZ\begin{x}{
+math 0 1 0 env
+tex 19
+\begin{x}}\(\end{x}
+raw 19
+\begin{x}}\(\end{x}
+prepared 19
+\begin{x}}\(\end{x}
+katex 19
+\begin{x}}\(\end{x}
+math 1 0 0 dollar
+tex 10
+$\end{*a*}
+raw 12
+$$\end{*a*}$
+prepared 10
+$\end{*a*}
+katex 10
+$\end{*a*}
+end
+doc envs-1-82
+src 69
+\end{x}\begin{align}}\\\begin{y}\begin{x} b \end{a*b*}\end{a*}\end{y}
+text 35
+\end{x}\begin{align}}\\ZZDMTH0001ZZ
+math 0 1 0 env
+tex 46
+\begin{y}\begin{x} b \end{a*b*}\end{a*}\end{y}
+raw 46
+\begin{y}\begin{x} b \end{a*b*}\end{a*}\end{y}
+prepared 46
+\begin{y}\begin{x} b \end{a*b*}\end{a*}\end{y}
+katex 46
+\begin{y}\begin{x} b \end{a*b*}\end{a*}\end{y}
+end
+doc envs-1-83
+src 70
+\(\begin{x}\end{a*b*}\begin{x}> \begin{a*b*}\begin{align}
+
+\(\begin{*}
+src 65
+\end{a**}
+
+\end{a**}\begin{a*}\begin{y}\\\end{ab**}$$\begin{*} a 
+text 70
+\(\begin{x}\end{a*b*}\begin{x}> \begin{a*b*}\begin{align}
+
+\(\begin{*}
+text 67
+\end{a**}
+
+\end{a**}\begin{a*}\begin{y}\\\end{ab**}\$\$\begin{*} a 
+end
+doc envs-1-84
+src 4
+\(\\
+text 4
+\(\\
+end
+doc envs-1-85
+src 44
+\end{x}
+
+ a \begin{x}
+
+\begin{a*b*}\end{a**}
+text 44
+\end{x}
+
+ a \begin{x}
+
+\begin{a*b*}\end{a**}
+end
+doc envs-1-86
+src 50
+\begin{x}\end{*}\begin{x*}\)\begin{y}\\\begin{x}
+
+
+text 50
+\begin{x}\end{*}\begin{x*}\)\begin{y}\\\begin{x}
+
+
+end
+doc envs-1-87
+src 74
+> \end{x}{\end{a*b*}\begin{x}$$\end{y}\begin{y}\end{y} b \end{x}\begin{x*}
+text 42
+> \end{x}{\end{a*b*}ZZDMTH0001ZZ\begin{x*}
+math 0 1 0 env
+tex 44
+\begin{x}$$\end{y}\begin{y}\end{y} b \end{x}
+raw 44
+\begin{x}$$\end{y}\begin{y}\end{y} b \end{x}
+prepared 44
+\begin{x}$$\end{y}\begin{y}\end{y} b \end{x}
+katex 44
+\begin{x}$$\end{y}\begin{y}\end{y} b \end{x}
+end
+doc envs-1-88
+src 88
+\begin{a*b*} b \begin{*}\begin{a*b*}\end{x}$$`\end{a*}\begin{x*}\begin{a**}\end{align}\(
+src 70
+\end{ab**}x\\\end{*}\begin{x}\end{a*}\end{a*b*}\end{x*} b \begin{ab**}
+text 90
+\begin{a*b*} b \begin{*}\begin{a*b*}\end{x}\$\$`\end{a*}\begin{x*}\begin{a**}\end{align}\(
+text 70
+\end{ab**}x\\\end{*}\begin{x}\end{a*}\end{a*b*}\end{x*} b \begin{ab**}
+end
+doc envs-1-89
+src 10
+\begin{y}{
+src 92
+ a \begin{x}{$$\end{a**}\end{align}\begin{y}\begin{ab**} b \end{*a*} a \begin{y}\begin{a*b*}
+text 10
+\begin{y}{
+text 94
+ a \begin{x}{\$\$\end{a**}\end{align}\begin{y}\begin{ab**} b \end{*a*} a \begin{y}\begin{a*b*}
+end
+doc envs-1-90
+src 66
+ \end{a*} \tag{T}\tag{T}\end{a*b*}\begin{y}`\begin{y}$$
+\end{ab**}
+src 93
+\\\end{a*}\end{a*b*}\begin{x*}\end{y}\begin{x}\end{*}\begin{align}\end{x}
+\begin{*a*}\end{x*}
+text 68
+ \end{a*} \tag{T}\tag{T}\end{a*b*}\begin{y}`\begin{y}\$\$
+\end{ab**}
+text 32
+\\\end{a*}\end{a*b*}ZZDMTH0001ZZ
+math 1 1 0 env
+tex 73
+\begin{x*}\end{y}\begin{x}\end{*}\begin{align}\end{x}
+\begin{*a*}\end{x*}
+raw 73
+\begin{x*}\end{y}\begin{x}\end{*}\begin{align}\end{x}
+\begin{*a*}\end{x*}
+prepared 73
+\begin{x*}\end{y}\begin{x}\end{*}\begin{align}\end{x}
+\begin{*a*}\end{x*}
+katex 73
+\begin{x*}\end{y}\begin{x}\end{*}\begin{align}\end{x}
+\begin{*a*}\end{x*}
+end
+doc envs-1-91
+src 72
+\end{x}}\end{y}\end{x}\)\begin{x}\begin{a**}\end{x*}\begin{x}\begin{*a*}
+src 81
+> \end{ab**}\end{align}\begin{*}\end{a**}\end{ab**}\begin{align}\end{a*}\begin{x}
+text 72
+\end{x}}\end{y}\end{x}\)\begin{x}\begin{a**}\end{x*}\begin{x}\begin{*a*}
+text 81
+> \end{ab**}\end{align}\begin{*}\end{a**}\end{ab**}\begin{align}\end{a*}\begin{x}
+end
+doc envs-1-92
+src 19
+\end{*} a \end{a**}
+src 75
+ x\end{ab**}\begin{x}\end{a*}\tag{T}\begin{*}\end{y}
+
+\begin{x*}\end{x}
+ a 
+text 19
+\end{*} a \end{a**}
+text 75
+ x\end{ab**}\begin{x}\end{a*}\tag{T}\begin{*}\end{y}
+
+\begin{x*}\end{x}
+ a 
+end
+doc envs-1-93
+src 50
+\end{x*} a \end{x}\begin{a*}$\begin{a*b*}{\end{a*}
+src 54
+> \end{a*}\begin{a**} b \begin{x}{\end{y}\begin{*a*}\(
+text 30
+\end{x*} a \end{x}ZZDMTH0001ZZ
+text 54
+> \end{a*}\begin{a**} b \begin{x}{\end{y}\begin{*a*}\(
+math 0 1 0 env
+tex 32
+\begin{a*}$\begin{a*b*}{\end{a*}
+raw 32
+\begin{a*}$\begin{a*b*}{\end{a*}
+prepared 32
+\begin{a*}$\begin{a*b*}{\end{a*}
+katex 32
+\begin{a*}$\begin{a*b*}{\end{a*}
+end
+doc envs-1-94
+src 30
+\begin{align}{\end{a**}\end{x}
+text 30
+\begin{align}{\end{a**}\end{x}
+end
+doc envs-1-95
+src 61
+\begin{x}\end{y}\end{a*b*}\tag{T}$$\begin{*a*}\)\begin{a*}\){
+text 63
+\begin{x}\end{y}\end{a*b*}\tag{T}\$\$\begin{*a*}\)\begin{a*}\){
+end
+doc envs-1-96
+src 64
+\end{a*b*}\(\end{a*b*}x\end{x}\begin{*a*}\begin{a*b*}
+
+\end{*a*}
+src 3
+$$x
+text 64
+\end{a*b*}\(\end{a*b*}x\end{x}\begin{*a*}\begin{a*b*}
+
+\end{*a*}
+text 5
+\$\$x
+end
+doc envs-1-97
+src 89
+\end{a*b*}$\begin{align}\begin{a*}\end{x}\end{y} \end{y}\end{y} \end{*a*}\begin{*}\end{y}
+text 90
+\end{a*b*}\$\begin{align}\begin{a*}\end{x}\end{y} \end{y}\end{y} \end{*a*}\begin{*}\end{y}
+end
+doc envs-1-98
+src 43
+{
+\begin{x} $\begin{y}\end{align}{\begin{x}
+text 44
+{
+\begin{x} \$\begin{y}\end{align}{\begin{x}
+end
+doc envs-1-99
+src 28
+`\begin{align}x\\\end{*a*}
+
+
+text 28
+`\begin{align}x\\\end{*a*}
+
+
+end
+doc envs-1-100
+src 26
+\end{a*}\begin{x}\end{x}
+
+
+text 22
+\end{a*}ZZDMTH0001ZZ
+
+
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-101
+src 21
+\)\end{ab**}\tag{T}\(
+text 21
+\)\end{ab**}\tag{T}\(
+end
+doc envs-1-102
+src 12
+\end{ab**}`{
+text 12
+\end{ab**}`{
+end
+doc envs-1-103
+src 32
+> \begin{x*}\end{a*b*}\begin{x}}
+text 32
+> \begin{x*}\end{a*b*}\begin{x}}
+end
+doc envs-1-104
+src 36
+\end{x*}\end{a*b*}\begin{x*}\end{x*}
+text 30
+\end{x*}\end{a*b*}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 18
+\begin{x*}\end{x*}
+raw 18
+\begin{x*}\end{x*}
+prepared 18
+\begin{x*}\end{x*}
+katex 18
+\begin{x*}\end{x*}
+end
+doc envs-1-105
+src 76
+\begin{y}\begin{*}\end{*a*}\end{*} b \end{a*b*}\begin{y}\end{y}x\begin{*a*}`
+text 59
+\begin{y}ZZDMTH0001ZZ b \end{a*b*}ZZDMTH0002ZZx\begin{*a*}`
+math 0 1 0 env
+tex 25
+\begin{*}\end{*a*}\end{*}
+raw 25
+\begin{*}\end{*a*}\end{*}
+prepared 25
+\begin{*}\end{*a*}\end{*}
+katex 25
+\begin{*}\end{*a*}\end{*}
+math 0 1 0 env
+tex 16
+\begin{y}\end{y}
+raw 16
+\begin{y}\end{y}
+prepared 16
+\begin{y}\end{y}
+katex 16
+\begin{y}\end{y}
+end
+doc envs-1-106
+src 83
+`\)\begin{y}\begin{a**}
+
+ \end{ab**} a \begin{x}\end{ab**}\label{a}\end{a*}\end{x*}
+text 83
+`\)\begin{y}\begin{a**}
+
+ \end{ab**} a \begin{x}\end{ab**}\label{a}\end{a*}\end{x*}
+end
+doc envs-1-107
+src 70
+\begin{*} b \end{x}\begin{x*}\begin{*}
+\end{a**}\begin{a*}\)\begin{*} 
+src 20
+> \end{x}\\\label{a}
+text 70
+\begin{*} b \end{x}\begin{x*}\begin{*}
+\end{a**}\begin{a*}\)\begin{*} 
+text 20
+> \end{x}\\\label{a}
+end
+doc envs-1-108
+src 67
+\end{ab**}x\begin{a**}\end{x}\begin{x*}\begin{y}\label{a}\begin{a*}
+text 67
+\end{ab**}x\begin{a**}\end{x}\begin{x*}\begin{y}\label{a}\begin{a*}
+end
+doc envs-1-109
+src 51
+\begin{align}\end{align}\label{a}\begin{x}\end{*}> 
+text 39
+ZZDMTH0001ZZ\label{a}\begin{x}\end{*}> 
+math 0 1 0 env
+tex 24
+\begin{align}\end{align}
+raw 24
+\begin{align}\end{align}
+prepared 34
+\begin{align*} \tag{1}\end{align*}
+katex 34
+\begin{align*} \tag{1}\end{align*}
+end
+doc envs-1-110
+src 10
+\end{x}$$`
+src 3
+`
+`
+text 12
+\end{x}\$\$`
+text 3
+`
+`
+end
+doc envs-1-111
+src 88
+\label{a}\end{*a*}\end{*}\end{y}\end{a*}\end{a*}\begin{ab**}\begin{y}}\begin{x*}\end{x}{
+src 3
+{\(
+text 88
+\label{a}\end{*a*}\end{*}\end{y}\end{a*}\end{a*}\begin{ab**}\begin{y}}\begin{x*}\end{x}{
+text 3
+{\(
+end
+doc envs-1-112
+src 84
+\begin{x}\end{*}\begin{x}}\end{y}\begin{y}\begin{a*b*} b }\begin{x}\end{a**}\end{y}x
+text 46
+\begin{x}\end{*}\begin{x}}\end{y}ZZDMTH0001ZZx
+math 0 1 0 env
+tex 50
+\begin{y}\begin{a*b*} b }\begin{x}\end{a**}\end{y}
+raw 50
+\begin{y}\begin{a*b*} b }\begin{x}\end{a**}\end{y}
+prepared 50
+\begin{y}\begin{a*b*} b }\begin{x}\end{a**}\end{y}
+katex 50
+\begin{y}\begin{a*b*} b }\begin{x}\end{a**}\end{y}
+end
+doc envs-1-113
+src 60
+> \begin{x*}\begin{y}\begin{x*}
+> 
+> \begin{x}\begin{y}x
+> x
+text 60
+> \begin{x*}\begin{y}\begin{x*}
+> 
+> \begin{x}\begin{y}x
+> x
+end
+doc envs-1-114
+src 61
+> > $  b \begin{ab**}  \end{y}}\end{x}\begin{*a*}\begin{ab**}
+src 37
+}\end{x*} $$\begin{align}\begin{a*b*}
+text 62
+> > \$  b \begin{ab**}  \end{y}}\end{x}\begin{*a*}\begin{ab**}
+text 39
+}\end{x*} \$\$\begin{align}\begin{a*b*}
+end
+doc envs-1-115
+src 18
+\end{ab**}\end{x}
+
+text 18
+\end{ab**}\end{x}
+
+end
+doc envs-1-116
+src 12
+  \begin{a*}
+text 12
+  \begin{a*}
+end
+doc envs-1-117
+src 17
+\end{*a*}\end{x*}
+src 45
+\end{ab**}\end{a*}{\begin{y}\begin{ab**}\\ a 
+text 17
+\end{*a*}\end{x*}
+text 45
+\end{ab**}\end{a*}{\begin{y}\begin{ab**}\\ a 
+end
+doc envs-1-118
+src 38
+
+
+\end{x}\begin{x}\end{x*}\begin{y} b 
+text 38
+
+
+\end{x}\begin{x}\end{x*}\begin{y} b 
+end
+doc envs-1-119
+src 83
+\end{*a*}\end{*a*}`\end{x}\begin{x}\begin{*a*}\end{*}\begin{x}\\\begin{y}
+\label{a}
+src 47
+\end{x*}\end{x}\end{x*}\begin{x*}\end{y}\end{x}
+text 83
+\end{*a*}\end{*a*}`\end{x}\begin{x}\begin{*a*}\end{*}\begin{x}\\\begin{y}
+\label{a}
+text 47
+\end{x*}\end{x}\end{x*}\begin{x*}\end{y}\end{x}
+end
+doc envs-1-120
+src 30
+\begin{a*b*}\label{a}\begin{*}
+text 30
+\begin{a*b*}\label{a}\begin{*}
+end
+doc envs-1-121
+src 69
+> 
+> 
+> \begin{x}
+> \end{align} \(\end{y}\begin{a*b*}> \tag{T}\end{x}
+text 20
+> 
+> 
+> ZZDMTH0001ZZ
+math 0 1 1 env
+tex 59
+\begin{x}
+\end{align} \(\end{y}\begin{a*b*}> \tag{T}\end{x}
+raw 61
+\begin{x}
+> \end{align} \(\end{y}\begin{a*b*}> \tag{T}\end{x}
+prepared 59
+\begin{x}
+\end{align} \(\end{y}\begin{a*b*}> \tag{T}\end{x}
+katex 59
+\begin{x}
+\end{align} \(\end{y}\begin{a*b*}> \tag{T}\end{x}
+end
+doc envs-1-122
+src 73
+\(\begin{y}\begin{y}\end{a**}\end{*a*}\begin{*}\end{a*}\begin{y}\end{*a*}
+text 73
+\(\begin{y}\begin{y}\end{a**}\end{*a*}\begin{*}\end{a*}\begin{y}\end{*a*}
+end
+doc envs-1-123
+src 75
+\begin{align}\begin{x}\\\\\begin{align}\begin{x} b {\end{y}\end{*a*}\end{x}
+text 51
+\begin{align}\begin{x}\\\\\begin{align}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 36
+\begin{x} b {\end{y}\end{*a*}\end{x}
+raw 36
+\begin{x} b {\end{y}\end{*a*}\end{x}
+prepared 36
+\begin{x} b {\end{y}\end{*a*}\end{x}
+katex 36
+\begin{x} b {\end{y}\end{*a*}\end{x}
+end
+doc envs-1-124
+src 21
+$\begin{*a*}\begin{y}
+text 22
+\$\begin{*a*}\begin{y}
+end
+doc envs-1-125
+src 41
+}\end{y}\begin{a**}> \end{a*b*}\begin{x*}
+src 46
+\(\begin{a*b*}\end{y}x}\begin{*a*}> \end{a*b*}
+text 41
+}\end{y}\begin{a**}> \end{a*b*}\begin{x*}
+text 46
+\(\begin{a*b*}\end{y}x}\begin{*a*}> \end{a*b*}
+end
+doc envs-1-126
+src 56
+\end{x}\end{ab**} a > 
+
+\begin{ab**}\end{*a*}$\begin{a*}
+text 57
+\end{x}\end{ab**} a > 
+
+\begin{ab**}\end{*a*}\$\begin{a*}
+end
+doc envs-1-127
+src 52
+\end{a*}\begin{a*b*}\\\(\end{a*}\\\begin{x}\)\end{x}
+text 40
+\end{a*}\begin{a*b*}\\ZZMTH0001ZZ\end{x}
+math 0 0 0 paren
+tex 19
+\end{a*}\\\begin{x}
+raw 23
+\(\end{a*}\\\begin{x}\)
+prepared 19
+\end{a*}\\\begin{x}
+katex 19
+\end{a*}\\\begin{x}
+end
+doc envs-1-128
+src 16
+\end{a**}\end{*}
+text 16
+\end{a**}\end{*}
+end
+doc envs-1-129
+src 8
+\end{x}
+
+src 44
+\begin{ab**}\begin{*}\tag{T}\end{y}\end{x}
+
+
+text 8
+\end{x}
+
+text 44
+\begin{ab**}\begin{*}\tag{T}\end{y}\end{x}
+
+
+end
+doc envs-1-130
+src 31
+\end{y}\end{ab**}\)\label{a}}> 
+text 31
+\end{y}\end{ab**}\)\label{a}}> 
+end
+doc envs-1-131
+src 97
+\tag{T}x a \begin{a*b*}x\begin{y}\begin{x}\begin{align}\end{*a*}\begin{ab**}{\end{y}\begin{align}
+text 49
+\tag{T}x a \begin{a*b*}xZZDMTH0001ZZ\begin{align}
+math 0 1 0 env
+tex 60
+\begin{y}\begin{x}\begin{align}\end{*a*}\begin{ab**}{\end{y}
+raw 60
+\begin{y}\begin{x}\begin{align}\end{*a*}\begin{ab**}{\end{y}
+prepared 60
+\begin{y}\begin{x}\begin{align}\end{*a*}\begin{ab**}{\end{y}
+katex 60
+\begin{y}\begin{x}\begin{align}\end{*a*}\begin{ab**}{\end{y}
+end
+doc envs-1-132
+src 45
+\begin{a*b*}$$ b \end{a*b*}\begin{x}\begin{x}
+text 47
+\begin{a*b*}\$\$ b \end{a*b*}\begin{x}\begin{x}
+end
+doc envs-1-133
+src 31
+> > \begin{x}\(\end{y}\end{*a*}
+text 31
+> > \begin{x}\(\end{y}\end{*a*}
+end
+doc envs-1-134
+src 43
+\begin{ab**}\end{y}\end{a**} b $$\end{ab**}
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 env
+tex 43
+\begin{ab**}\end{y}\end{a**} b $$\end{ab**}
+raw 43
+\begin{ab**}\end{y}\end{a**} b $$\end{ab**}
+prepared 43
+\begin{ab**}\end{y}\end{a**} b $$\end{ab**}
+katex 43
+\begin{ab**}\end{y}\end{a**} b $$\end{ab**}
+end
+doc envs-1-135
+src 64
+\begin{ab**}\end{ab**}\end{align}\begin{y}\begin{*} a \begin{x} 
+text 54
+ZZDMTH0001ZZ\end{align}\begin{y}\begin{*} a \begin{x} 
+math 0 1 0 env
+tex 22
+\begin{ab**}\end{ab**}
+raw 22
+\begin{ab**}\end{ab**}
+prepared 22
+\begin{ab**}\end{ab**}
+katex 22
+\begin{ab**}\end{ab**}
+end
+doc envs-1-136
+src 33
+ a `\end{ab**}\begin{a**}\end{*}{
+src 2
+ x
+text 33
+ a `\end{ab**}\begin{a**}\end{*}{
+text 2
+ x
+end
+doc envs-1-137
+src 30
+} b  a \(\end{*}\begin{x} b 
+
+
+text 30
+} b  a \(\end{*}\begin{x} b 
+
+
+end
+doc envs-1-138
+src 25
+> \begin{x}\)\begin{ab**}
+src 13
+\begin{*a*}\(
+text 25
+> \begin{x}\)\begin{ab**}
+text 13
+\begin{*a*}\(
+end
+doc envs-1-139
+src 48
+  b 
+\end{x}\begin{a*b*} b $\end{x}\begin{align}
+text 49
+  b 
+\end{x}\begin{a*b*} b \$\end{x}\begin{align}
+end
+doc envs-1-140
+src 92
+\begin{*a*}\begin{align}\begin{*}\end{*a*}\label{a}\tag{T}\end{y}\end{x}\end{x}\begin{align}
+text 92
+\begin{*a*}\begin{align}\begin{*}\end{*a*}\label{a}\tag{T}\end{y}\end{x}\end{x}\begin{align}
+end
+doc envs-1-141
+src 57
+> \begin{*}\end{y}\begin{a**}\end{*} a \label{a}\begin{x}
+text 35
+> ZZDMTH0001ZZ a \label{a}\begin{x}
+math 0 1 0 env
+tex 34
+\begin{*}\end{y}\begin{a**}\end{*}
+raw 34
+\begin{*}\end{y}\begin{a**}\end{*}
+prepared 34
+\begin{*}\end{y}\begin{a**}\end{*}
+katex 34
+\begin{*}\end{y}\begin{a**}\end{*}
+end
+doc envs-1-142
+src 41
+}
+
+ a \end{x}\label{a}\label{a}}\begin{x}
+text 41
+}
+
+ a \end{x}\label{a}\label{a}}\begin{x}
+end
+doc envs-1-143
+src 32
+\label{a} a $$\end{*}\end{a*}}$$
+text 24
+\label{a} a ZZDMTH0001ZZ
+math 0 1 0 dollars
+tex 16
+\end{*}\end{a*}}
+raw 20
+$$\end{*}\end{a*}}$$
+prepared 16
+\end{*}\end{a*}}
+katex 16
+\end{*}\end{a*}}
+end
+doc envs-1-144
+src 36
+> \end{a**}
+> 
+> \end{a**}> \end{x*}
+text 36
+> \end{a**}
+> 
+> \end{a**}> \end{x*}
+end
+doc envs-1-145
+src 58
+\begin{x*}\end{x*}\tag{T}}\begin{align}$\begin{y}\begin{x}
+text 53
+ZZDMTH0001ZZ\tag{T}}\begin{align}\$\begin{y}\begin{x}
+math 0 1 0 env
+tex 18
+\begin{x*}\end{x*}
+raw 18
+\begin{x*}\end{x*}
+prepared 18
+\begin{x*}\end{x*}
+katex 18
+\begin{x*}\end{x*}
+end
+doc envs-1-146
+src 40
+> \begin{ab**}\end{a**}\begin{x*}\end{x}
+text 40
+> \begin{ab**}\end{a**}\begin{x*}\end{x}
+end
+doc envs-1-147
+src 92
+\end{x}\(\end{x}`\begin{x}\begin{align}\begin{x}\tag{T}\end{y}\tag{T}\(\end{align}\begin{x*}
+text 48
+\end{x}\(\end{x}`\begin{x}ZZDMTH0001ZZ\begin{x*}
+math 0 1 0 env
+tex 56
+\begin{align}\begin{x}\tag{T}\end{y}\tag{T}\(\end{align}
+raw 56
+\begin{align}\begin{x}\tag{T}\end{y}\tag{T}\(\end{align}
+prepared 58
+\begin{align*}\begin{x}\tag{T}\end{y}\tag{T}\(\end{align*}
+katex 58
+\begin{align*}\begin{x}\tag{T}\end{y}\tag{T}\(\end{align*}
+end
+doc envs-1-148
+src 11
+> \end{x}$`
+src 46
+\end{x*}\end{x}\begin{ab**}\begin{x*}\begin{x}
+text 12
+> \end{x}\$`
+text 46
+\end{x*}\end{x}\begin{ab**}\begin{x*}\begin{x}
+end
+doc envs-1-149
+src 46
+\end{y}\end{x*}\end{y}$$\begin{a*}\begin{ab**}
+text 48
+\end{y}\end{x*}\end{y}\$\$\begin{a*}\begin{ab**}
+end
+doc envs-1-150
+src 70
+\label{a}\end{y}{{\end{*}\end{y}\)\begin{a*b*} a \begin{y}\end{ab**}\(
+text 70
+\label{a}\end{y}{{\end{*}\end{y}\)\begin{a*b*} a \begin{y}\end{ab**}\(
+end
+doc envs-1-151
+src 96
+ 
+
+\end{y}\end{*a*}\begin{x}\end{a**}\begin{x*}\begin{y}\end{a*}\end{x*}\end{ab**}
+
+\begin{a*b*}
+text 73
+ 
+
+\end{y}\end{*a*}\begin{x}\end{a**}ZZDMTH0001ZZ\end{ab**}
+
+\begin{a*b*}
+math 0 1 0 env
+tex 35
+\begin{x*}\begin{y}\end{a*}\end{x*}
+raw 35
+\begin{x*}\begin{y}\end{a*}\end{x*}
+prepared 35
+\begin{x*}\begin{y}\end{a*}\end{x*}
+katex 35
+\begin{x*}\begin{y}\end{a*}\end{x*}
+end
+doc envs-1-152
+src 88
+> \end{*a*}\end{y}\begin{y}\begin{a*b*}\begin{x}\end{x} \begin{align}\end{a*}\begin{*a*}
+text 84
+> \end{*a*}\end{y}\begin{y}\begin{a*b*}ZZDMTH0001ZZ \begin{align}\end{a*}\begin{*a*}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-153
+src 62
+\end{a*b*}\begin{x}\begin{y}\end{ab**}\end{x}`\end{y}\begin{*}
+text 39
+\end{a*b*}ZZDMTH0001ZZ`\end{y}\begin{*}
+math 0 1 0 env
+tex 35
+\begin{x}\begin{y}\end{ab**}\end{x}
+raw 35
+\begin{x}\begin{y}\end{ab**}\end{x}
+prepared 35
+\begin{x}\begin{y}\end{ab**}\end{x}
+katex 35
+\begin{x}\begin{y}\end{ab**}\end{x}
+end
+doc envs-1-154
+src 103
+\begin{x}\end{a**}\end{x}\begin{ab**}\begin{a*}\end{x}\end{a**}\begin{y}\end{*}\begin{*a*}\begin{a**}> 
+text 90
+ZZDMTH0001ZZ\begin{ab**}\begin{a*}\end{x}\end{a**}\begin{y}\end{*}\begin{*a*}\begin{a**}> 
+math 0 1 0 env
+tex 25
+\begin{x}\end{a**}\end{x}
+raw 25
+\begin{x}\end{a**}\end{x}
+prepared 25
+\begin{x}\end{a**}\end{x}
+katex 25
+\begin{x}\end{a**}\end{x}
+end
+doc envs-1-155
+src 64
+\end{x}\end{y}> \begin{x}\(\end{align}\begin{a*}\end{x}\label{a}
+src 7
+\) a $$
+text 37
+\end{x}\end{y}> ZZDMTH0001ZZ\label{a}
+text 9
+\) a \$\$
+math 0 1 0 env
+tex 39
+\begin{x}\(\end{align}\begin{a*}\end{x}
+raw 39
+\begin{x}\(\end{align}\begin{a*}\end{x}
+prepared 39
+\begin{x}\(\end{align}\begin{a*}\end{x}
+katex 39
+\begin{x}\(\end{align}\begin{a*}\end{x}
+end
+doc envs-1-156
+src 22
+\begin{y} a \begin{x*}
+text 22
+\begin{y} a \begin{x*}
+end
+doc envs-1-157
+src 33
+{\end{y}\begin{*}\begin{x}\end{x}
+src 112
+\begin{a*b*}\end{align}\begin{a**}\begin{x*}\begin{a**}\begin{x*}\begin{a*b*}\begin{x}\end{*}x\tag{T}\)\begin{x}
+text 29
+{\end{y}\begin{*}ZZDMTH0001ZZ
+text 112
+\begin{a*b*}\end{align}\begin{a**}\begin{x*}\begin{a**}\begin{x*}\begin{a*b*}\begin{x}\end{*}x\tag{T}\)\begin{x}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-158
+src 63
+\end{x*}\begin{a*b*}$$\end{align}}\begin{x}\begin{*}\end{a*b*}x
+src 92
+\begin{x}\end{align}\begin{x}\begin{*a*}\begin{y}\begin{y}> 
+> \end{y}> \begin{*a*}\begin{y}
+text 65
+\end{x*}\begin{a*b*}\$\$\end{align}}\begin{x}\begin{*}\end{a*b*}x
+text 83
+\begin{x}\end{align}\begin{x}\begin{*a*}\begin{y}ZZDMTH0001ZZ> \begin{*a*}\begin{y}
+math 1 1 0 env
+tex 19
+\begin{y}> 
+\end{y}
+raw 21
+\begin{y}> 
+> \end{y}
+prepared 19
+\begin{y}> 
+\end{y}
+katex 19
+\begin{y}> 
+\end{y}
+end
+doc envs-1-159
+src 11
+> \end{a**}
+src 21
+\begin{x}\label{a}> x
+text 11
+> \end{a**}
+text 21
+\begin{x}\label{a}> x
+end
+doc envs-1-160
+src 61
+\begin{*a*}\end{*}\end{*a*}\end{ab**}$
+}\begin{x}\begin{ab**}
+text 62
+\begin{*a*}\end{*}\end{*a*}\end{ab**}\$
+}\begin{x}\begin{ab**}
+end
+doc envs-1-161
+src 22
+\end{a*b*}\end{x}
+
+{> 
+src 64
+\begin{x}\end{y}\end{ab**}\label{a}\begin{x*}\end{align}\tag{T}
+
+text 22
+\end{a*b*}\end{x}
+
+{> 
+text 64
+\begin{x}\end{y}\end{ab**}\label{a}\begin{x*}\end{align}\tag{T}
+
+end
+doc envs-1-162
+src 15
+> 
+> x\begin{x}
+text 15
+> 
+> x\begin{x}
+end
+doc envs-1-163
+src 41
+ b \begin{ab**}\end{x*}\tag{T} a \end{x*}
+text 41
+ b \begin{ab**}\end{x*}\tag{T} a \end{x*}
+end
+doc envs-1-164
+src 80
+> > \end{x*}$x\begin{ab**}\end{x}\begin{*}\end{x}\begin{y}\begin{align}\begin{x}
+text 81
+> > \end{x*}\$x\begin{ab**}\end{x}\begin{*}\end{x}\begin{y}\begin{align}\begin{x}
+end
+doc envs-1-165
+src 57
+\begin{align}$\end{a*}\begin{x}\end{x}\begin{a**}$\end{x}
+text 31
+\begin{align}ZZMTH0001ZZ\end{x}
+math 0 0 0 dollar
+tex 35
+\end{a*}\begin{x}\end{x}\begin{a**}
+raw 37
+$\end{a*}\begin{x}\end{x}\begin{a**}$
+prepared 35
+\end{a*}\begin{x}\end{x}\begin{a**}
+katex 35
+\end{a*}\begin{x}\end{x}\begin{a**}
+end
+doc envs-1-166
+src 25
+\end{y}\end{align}\end{x}
+text 25
+\end{y}\end{align}\end{x}
+end
+doc envs-1-167
+src 59
+> \begin{*}\end{*}\begin{a*}\(x\end{align}\end{x}\begin{a*}
+src 94
+> \begin{*}\begin{ab**}\end{x}\end{*}\begin{x}\end{ab**}{\begin{x}\begin{x*}\end{x*}\end{ab**}
+text 55
+> ZZDMTH0001ZZ\begin{a*}\(x\end{align}\end{x}\begin{a*}
+text 65
+> ZZDMTH0001ZZ\begin{x}\end{ab**}{\begin{x}ZZDMTH0002ZZ\end{ab**}
+math 0 1 0 env
+tex 16
+\begin{*}\end{*}
+raw 16
+\begin{*}\end{*}
+prepared 16
+\begin{*}\end{*}
+katex 16
+\begin{*}\end{*}
+math 1 1 0 env
+tex 35
+\begin{*}\begin{ab**}\end{x}\end{*}
+raw 35
+\begin{*}\begin{ab**}\end{x}\end{*}
+prepared 35
+\begin{*}\begin{ab**}\end{x}\end{*}
+katex 35
+\begin{*}\begin{ab**}\end{x}\end{*}
+math 1 1 0 env
+tex 18
+\begin{x*}\end{x*}
+raw 18
+\begin{x*}\end{x*}
+prepared 18
+\begin{x*}\end{x*}
+katex 18
+\begin{x*}\end{x*}
+end
+doc envs-1-168
+src 14
+ b \end{align}
+text 14
+ b \end{align}
+end
+doc envs-1-169
+src 30
+\)\(> \begin{*a*}\)`\begin{x*}
+text 24
+\)ZZMTH0001ZZ`\begin{x*}
+math 0 0 0 paren
+tex 13
+> \begin{*a*}
+raw 17
+\(> \begin{*a*}\)
+prepared 13
+> \begin{*a*}
+katex 13
+> \begin{*a*}
+end
+doc envs-1-170
+src 40
+> 
+> 
+> $\\\begin{y}$$
+> 
+> 
+> \label{a}
+src 48
+\begin{y}`$\begin{x}$\end{x}$$\end{a**}\begin{x}
+text 39
+> 
+> 
+> ZZMTH0001ZZ\$
+> 
+> 
+> \label{a}
+text 50
+\begin{y}`ZZMTH0001ZZ\end{x}\$\$\end{a**}\begin{x}
+math 0 0 0 dollar
+tex 11
+\\\begin{y}
+raw 13
+$\\\begin{y}$
+prepared 11
+\\\begin{y}
+katex 11
+\\\begin{y}
+math 1 0 0 dollar
+tex 9
+\begin{x}
+raw 11
+$\begin{x}$
+prepared 9
+\begin{x}
+katex 9
+\begin{x}
+end
+doc envs-1-171
+src 34
+\end{*a*}\begin{x}\tag{T}\label{a}
+text 34
+\end{*a*}\begin{x}\tag{T}\label{a}
+end
+doc envs-1-172
+src 27
+\begin{x}}\begin{x}> $$`{{x
+text 29
+\begin{x}}\begin{x}> \$\$`{{x
+end
+doc envs-1-173
+src 48
+}\end{*a*}\end{align}$$
+\end{y}\begin{ab**}\(x\\
+text 50
+}\end{*a*}\end{align}\$\$
+\end{y}\begin{ab**}\(x\\
+end
+doc envs-1-174
+src 30
+\end{x}\end{ab**}\begin{a**}{}
+text 30
+\end{x}\end{ab**}\begin{a**}{}
+end
+doc envs-1-175
+src 85
+\tag{T}\end{a*}\begin{a*}\)\begin{a*}$x\begin{x*}\end{*}{\begin{x}\begin{*}\begin{x*}
+src 56
+\end{a*}{\end{y}\begin{y}$$\begin{ab**}\(\begin{x} { a {
+text 86
+\tag{T}\end{a*}\begin{a*}\)\begin{a*}\$x\begin{x*}\end{*}{\begin{x}\begin{*}\begin{x*}
+text 58
+\end{a*}{\end{y}\begin{y}\$\$\begin{ab**}\(\begin{x} { a {
+end
+doc envs-1-176
+src 65
+\end{y}\end{y} \end{x*} a $$\(\begin{x*}\begin{a*b*}\tag{T}{$$ a 
+text 41
+\end{y}\end{y} \end{x*} a ZZDMTH0001ZZ a 
+math 0 1 0 dollars
+tex 32
+\(\begin{x*}\begin{a*b*}\tag{T}{
+raw 36
+$$\(\begin{x*}\begin{a*b*}\tag{T}{$$
+prepared 32
+\(\begin{x*}\begin{a*b*}\tag{T}{
+katex 32
+\(\begin{x*}\begin{a*b*}\tag{T}{
+end
+doc envs-1-177
+src 18
+ a \\\)\end{align}
+text 18
+ a \\\)\end{align}
+end
+doc envs-1-178
+src 63
+\end{y}\end{*}\begin{y}\end{y}$\end{ab**}\\\begin{x*}\begin{x*}
+src 70
+$$\end{*a*}\begin{*}
+\end{x}\begin{x} b x\begin{x}
+ \end{a*}\end{ab**}
+text 60
+\end{y}\end{*}ZZDMTH0001ZZ\$\end{ab**}\\\begin{x*}\begin{x*}
+text 72
+\$\$\end{*a*}\begin{*}
+\end{x}\begin{x} b x\begin{x}
+ \end{a*}\end{ab**}
+math 0 1 0 env
+tex 16
+\begin{y}\end{y}
+raw 16
+\begin{y}\end{y}
+prepared 16
+\begin{y}\end{y}
+katex 16
+\begin{y}\end{y}
+end
+doc envs-1-179
+src 79
+\begin{x*}\end{*}\begin{y}\end{x}\end{ab**}\end{y}x\end{ab**}\end{a*}\end{a*b*}
+text 58
+\begin{x*}\end{*}ZZDMTH0001ZZx\end{ab**}\end{a*}\end{a*b*}
+math 0 1 0 env
+tex 33
+\begin{y}\end{x}\end{ab**}\end{y}
+raw 33
+\begin{y}\end{x}\end{ab**}\end{y}
+prepared 33
+\begin{y}\end{x}\end{ab**}\end{y}
+katex 33
+\begin{y}\end{x}\end{ab**}\end{y}
+end
+doc envs-1-180
+src 46
+\begin{x}\end{y} \\\end{y}\begin{y}\begin{a**}
+text 46
+\begin{x}\end{y} \\\end{y}\begin{y}\begin{a**}
+end
+doc envs-1-181
+src 61
+\(\end{ab**}\\\begin{x}\begin{x}\tag{T}`\\\end{*}` a \end{a*}
+text 61
+\(\end{ab**}\\\begin{x}\begin{x}\tag{T}`\\\end{*}` a \end{a*}
+end
+doc envs-1-182
+src 63
+\\\begin{y} \end{a*b*}\begin{x}\begin{x}\)\begin{x}\end{a*b*}} 
+text 63
+\\\begin{y} \end{a*b*}\begin{x}\begin{x}\)\begin{x}\end{a*b*}} 
+end
+doc envs-1-183
+src 47
+
+
+`\end{ab**}\end{x}\begin{align} b \end{align}
+src 78
+\tag{T}\begin{a*}}\begin{align}\end{y}\(\end{align}\begin{a*b*}\end{align}\)$$
+text 32
+
+
+`\end{ab**}\end{x}ZZDMTH0001ZZ
+text 59
+\tag{T}\begin{a*}}ZZDMTH0001ZZ\begin{a*b*}\end{align}\)\$\$
+math 0 1 0 env
+tex 27
+\begin{align} b \end{align}
+raw 27
+\begin{align} b \end{align}
+prepared 37
+\begin{align*} b  \tag{1}\end{align*}
+katex 37
+\begin{align*} b  \tag{1}\end{align*}
+math 1 1 0 env
+tex 33
+\begin{align}\end{y}\(\end{align}
+raw 33
+\begin{align}\end{y}\(\end{align}
+prepared 43
+\begin{align*}\end{y}\( \tag{2}\end{align*}
+katex 43
+\begin{align*}\end{y}\( \tag{2}\end{align*}
+end
+doc envs-1-184
+src 55
+\end{y}\\\end{a*}\end{*a*}\begin{y}\begin{ab**}\end{x}$
+text 56
+\end{y}\\\end{a*}\end{*a*}\begin{y}\begin{ab**}\end{x}\$
+end
+doc envs-1-185
+src 46
+\end{align}\end{align} a > \end{x}\begin{x}\\}
+text 46
+\end{align}\end{align} a > \end{x}\begin{x}\\}
+end
+doc envs-1-186
+src 20
+\begin{ab**}\end{x}`
+text 20
+\begin{ab**}\end{x}`
+end
+doc envs-1-187
+src 48
+\end{*}\tag{T}$\end{x}` b \end{x}\end{x*}\tag{T}
+text 49
+\end{*}\tag{T}\$\end{x}` b \end{x}\end{x*}\tag{T}
+end
+doc envs-1-188
+src 19
+\end{*a*}\end{ab**}
+text 19
+\end{*a*}\end{ab**}
+end
+doc envs-1-189
+src 61
+\end{ab**}}\begin{x}`\begin{*a*}\begin{y}\end{y}\begin{*a*}}
+
+src 25
+\end{*a*}$ b \begin{*a*} 
+text 57
+\end{ab**}}\begin{x}`\begin{*a*}ZZDMTH0001ZZ\begin{*a*}}
+
+text 26
+\end{*a*}\$ b \begin{*a*} 
+math 0 1 0 env
+tex 16
+\begin{y}\end{y}
+raw 16
+\begin{y}\end{y}
+prepared 16
+\begin{y}\end{y}
+katex 16
+\begin{y}\end{y}
+end
+doc envs-1-190
+src 62
+> \end{x*}{\end{a*b*}\begin{ab**}\begin{*a*}\end{a*b*}\end{a*}
+text 62
+> \end{x*}{\end{a*b*}\begin{ab**}\begin{*a*}\end{a*b*}\end{a*}
+end
+doc envs-1-191
+src 28
+\begin{*a*}\end{x}\begin{a*}
+text 28
+\begin{*a*}\end{x}\begin{a*}
+end
+doc envs-1-192
+src 15
+\end{ab**} a $$
+text 17
+\end{ab**} a \$\$
+end
+doc envs-1-193
+src 23
+> \end{x*}\begin{align}
+text 23
+> \end{x*}\begin{align}
+end
+doc envs-1-194
+src 50
+\begin{x}\end{a**}\tag{T}\begin{a**}`
+$$\end{y} a 
+text 52
+\begin{x}\end{a**}\tag{T}\begin{a**}`
+\$\$\end{y} a 
+end
+doc envs-1-195
+src 85
+x\begin{*}\begin{a**}\begin{y}\end{x}\end{x}\end{a*}> \end{*a*}\begin{ab**}x$$\end{x}
+text 57
+x\begin{*}ZZDMTH0001ZZ> \end{*a*}\begin{ab**}x\$\$\end{x}
+math 0 1 0 env
+tex 42
+\begin{a**}\begin{y}\end{x}\end{x}\end{a*}
+raw 42
+\begin{a**}\begin{y}\end{x}\end{x}\end{a*}
+prepared 42
+\begin{a**}\begin{y}\end{x}\end{x}\end{a*}
+katex 42
+\begin{a**}\begin{y}\end{x}\end{x}\end{a*}
+end
+doc envs-1-196
+src 54
+\)\begin{a*b*}> \end{align}\end{a*}\begin{a*}\label{a}
+src 62
+ a x> \begin{y}\end{ab**}\end{ab**}\begin{y}\end{a**}\begin{x}
+text 54
+\)\begin{a*b*}> \end{align}\end{a*}\begin{a*}\label{a}
+text 62
+ a x> \begin{y}\end{ab**}\end{ab**}\begin{y}\end{a**}\begin{x}
+end
+doc envs-1-197
+src 20
+
+ \end{x}$$\end{*a*}
+text 22
+
+ \end{x}\$\$\end{*a*}
+end
+doc envs-1-198
+src 75
+\end{y}\begin{x}\begin{a*b*} \end{*}\begin{a*b*}\begin{a**}\begin{a*b*}\\$$
+text 77
+\end{y}\begin{x}\begin{a*b*} \end{*}\begin{a*b*}\begin{a**}\begin{a*b*}\\\$\$
+end
+doc envs-1-199
+src 32
+ a \)\end{a*}\end{x}\begin{ab**}
+text 32
+ a \)\end{a*}\end{x}\begin{ab**}
+end
+doc envs-1-200
+src 66
+\end{x}\)\begin{*a*}\end{a*b*} b \end{y}\begin{x}\end{x*}\begin{x}
+text 66
+\end{x}\)\begin{*a*}\end{a*b*} b \end{y}\begin{x}\end{x*}\begin{x}
+end
+doc envs-1-201
+src 38
+ a \tag{T}\end{x}\begin{x} b \begin{y}
+text 38
+ a \tag{T}\end{x}\begin{x} b \begin{y}
+end
+doc envs-1-202
+src 43
+> {\begin{a**} a \begin{*}
+> \)$\begin{a**}
+text 44
+> {\begin{a**} a \begin{*}
+> \)\$\begin{a**}
+end
+doc envs-1-203
+src 36
+\begin{x}\end{x}\begin{x}\begin{a**}
+text 32
+ZZDMTH0001ZZ\begin{x}\begin{a**}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-204
+src 53
+\begin{align}`\end{x}}\end{a*b*}\label{a} \)\end{a**}
+src 105
+\end{a*b*}\label{a}\end{*}\end{ab**}\end{a**}\end{*a*}\end{a**}\begin{*a*}\begin{x}\begin{*a*}\(\begin{*}
+text 53
+\begin{align}`\end{x}}\end{a*b*}\label{a} \)\end{a**}
+text 105
+\end{a*b*}\label{a}\end{*}\end{ab**}\end{a**}\end{*a*}\end{a**}\begin{*a*}\begin{x}\begin{*a*}\(\begin{*}
+end
+doc envs-1-205
+src 36
+\end{*a*} b 
+\end{align}$$$\begin{x}
+text 44
+\end{*a*} b 
+\end{align}ZZMTH0001ZZ\begin{x}
+math 0 0 0 dollar
+tex 1
+$
+raw 3
+$$$
+prepared 1
+$
+katex 1
+$
+end
+doc envs-1-206
+src 27
+$\begin{a*}\end{*a*}\end{y}
+text 28
+\$\begin{a*}\end{*a*}\end{y}
+end
+doc envs-1-207
+src 35
+\begin{a*}\tag{T}\end{x}
+
+\label{a}
+src 82
+\begin{a*b*}\end{*}\end{ab**}\end{ab**}\end{a*}\begin{a**}\end{align} a {\begin{x}
+text 35
+\begin{a*}\tag{T}\end{x}
+
+\label{a}
+text 82
+\begin{a*b*}\end{*}\end{ab**}\end{ab**}\end{a*}\begin{a**}\end{align} a {\begin{x}
+end
+doc envs-1-208
+src 8
+\end{x}x
+text 8
+\end{x}x
+end
+doc envs-1-209
+src 27
+\end{x}\end{*}\begin{a*b*} 
+src 92
+\)\begin{x}\end{a*b*}\end{y}\begin{*a*}\begin{ab**}\tag{T}\begin{*}\label{a} a }\begin{y} a 
+text 27
+\end{x}\end{*}\begin{a*b*} 
+text 92
+\)\begin{x}\end{a*b*}\end{y}\begin{*a*}\begin{ab**}\tag{T}\begin{*}\label{a} a }\begin{y} a 
+end
+doc envs-1-210
+src 34
+\begin{ab**}`\end{a*}
+
+\begin{x}
+
+
+text 34
+\begin{ab**}`\end{a*}
+
+\begin{x}
+
+
+end
+doc envs-1-211
+src 18
+\end{ab**}\end{x}x
+text 18
+\end{ab**}\end{x}x
+end
+doc envs-1-212
+src 59
+\begin{x}x\tag{T}\end{align}\begin{a**}> \end{*a*}\begin{*}
+text 59
+\begin{x}x\tag{T}\end{align}\begin{a**}> \end{*a*}\begin{*}
+end
+doc envs-1-213
+src 38
+\end{a*b*}}
+\end{ab**}
+\\\begin{*a*}\\
+text 38
+\end{a*b*}}
+\end{ab**}
+\\\begin{*a*}\\
+end
+doc envs-1-214
+src 20
+\begin{ab**}\end{x*}
+text 20
+\begin{ab**}\end{x*}
+end
+doc envs-1-215
+src 47
+{ \end{y}\end{align}\\\begin{a*}\end{x}\end{x} 
+text 47
+{ \end{y}\end{align}\\\begin{a*}\end{x}\end{x} 
+end
+doc envs-1-216
+src 20
+\begin{x}\end{x}x a 
+src 42
+> \end{*}}\end{x}\begin{a*}>  \begin{a*b*}
+text 16
+ZZDMTH0001ZZx a 
+text 42
+> \end{*}}\end{x}\begin{a*}>  \begin{a*b*}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-217
+src 22
+> \begin{a**}\end{x}{{
+text 22
+> \begin{a**}\end{x}{{
+end
+doc envs-1-218
+src 23
+\begin{a*b*}\)x\end{y} 
+text 23
+\begin{a*b*}\)x\end{y} 
+end
+doc envs-1-219
+src 27
+\begin{x}\tag{T}{\end{*a*}{
+text 27
+\begin{x}\tag{T}{\end{*a*}{
+end
+doc envs-1-220
+src 30
+\end{align}\begin{x}\begin{a*}
+text 30
+\end{align}\begin{x}\begin{a*}
+end
+doc envs-1-221
+src 76
+> \begin{ab**}{ b \tag{T}\end{y}\begin{x} \begin{align}{`$\end{x}\begin{a**}
+src 104
+\begin{x}\begin{a**}\end{a**}\begin{*a*}\end{align} a 
+
+\end{y}\end{*}\tag{T}\end{x*}\begin{y}\begin{x*}
+text 55
+> \begin{ab**}{ b \tag{T}\end{y}ZZDMTH0001ZZ\begin{a**}
+text 96
+\begin{x}ZZDMTH0001ZZ\begin{*a*}\end{align} a 
+
+\end{y}\end{*}\tag{T}\end{x*}\begin{y}\begin{x*}
+math 0 1 0 env
+tex 33
+\begin{x} \begin{align}{`$\end{x}
+raw 33
+\begin{x} \begin{align}{`$\end{x}
+prepared 33
+\begin{x} \begin{align}{`$\end{x}
+katex 33
+\begin{x} \begin{align}{`$\end{x}
+math 1 1 0 env
+tex 20
+\begin{a**}\end{a**}
+raw 20
+\begin{a**}\end{a**}
+prepared 20
+\begin{a**}\end{a**}
+katex 20
+\begin{a**}\end{a**}
+end
+doc envs-1-222
+src 33
+\begin{a*}\begin{align}{\label{a}
+src 41
+ a { x\begin{y}}\end{x}\begin{*}\begin{x}
+text 33
+\begin{a*}\begin{align}{\label{a}
+text 41
+ a { x\begin{y}}\end{x}\begin{*}\begin{x}
+end
+doc envs-1-223
+src 89
+\end{*a*}\begin{a**} b \begin{*a*}\begin{x}\end{*a*}\tag{T}\end{x} a \(\end{x}
+
+\begin{x}
+src 16
+\end{x}\end{y}\\
+text 69
+\end{*a*}\begin{a**} b \begin{*a*}ZZDMTH0001ZZ a \(\end{x}
+
+\begin{x}
+text 16
+\end{x}\end{y}\\
+math 0 1 0 env
+tex 32
+\begin{x}\end{*a*}\tag{T}\end{x}
+raw 32
+\begin{x}\end{*a*}\tag{T}\end{x}
+prepared 32
+\begin{x}\end{*a*}\tag{T}\end{x}
+katex 32
+\begin{x}\end{*a*}\tag{T}\end{x}
+end
+doc envs-1-224
+src 76
+\end{ab**}}\end{a**}\end{*}`\begin{ab**}\begin{a*}\end{x}\begin{a*b*}\end{y}
+text 76
+\end{ab**}}\end{a**}\end{*}`\begin{ab**}\begin{a*}\end{x}\begin{a*b*}\end{y}
+end
+doc envs-1-225
+src 45
+\tag{T}`
+
+\begin{*}\begin{a*b*}\(\begin{a**} 
+text 45
+\tag{T}`
+
+\begin{*}\begin{a*b*}\(\begin{a**} 
+end
+doc envs-1-226
+src 37
+\begin{x*}
+\end{a*}\end{a**}\begin{*}
+text 37
+\begin{x*}
+\end{a*}\end{a**}\begin{*}
+end
+doc envs-1-227
+src 52
+
+
+ x}\\\begin{*a*}\begin{ab**}\end{a**}\\\tag{T}\)\(
+text 52
+
+
+ x}\\\begin{*a*}\begin{ab**}\end{a**}\\\tag{T}\)\(
+end
+doc envs-1-228
+src 77
+> \(\end{a**}\begin{y}\end{a**} a \begin{*a*} a \begin{a**}\begin{y}\begin{*}
+text 77
+> \(\end{a**}\begin{y}\end{a**} a \begin{*a*} a \begin{a**}\begin{y}\begin{*}
+end
+doc envs-1-229
+src 42
+\end{a**}
+\label{a}\tag{T}\begin{y}\end{x}
+text 42
+\end{a**}
+\label{a}\tag{T}\begin{y}\end{x}
+end
+doc envs-1-230
+src 92
+\begin{ab**}\)\end{*}{\end{y}\begin{x} b \begin{align}\begin{ab**}\end{align}\end{align}> > 
+text 68
+\begin{ab**}\)\end{*}{\end{y}\begin{x} b ZZDMTH0001ZZ\end{align}> > 
+math 0 1 0 env
+tex 36
+\begin{align}\begin{ab**}\end{align}
+raw 36
+\begin{align}\begin{ab**}\end{align}
+prepared 46
+\begin{align*}\begin{ab**} \tag{1}\end{align*}
+katex 46
+\begin{align*}\begin{ab**} \tag{1}\end{align*}
+end
+doc envs-1-231
+src 55
+\(\label{a}\begin{a**}`\begin{x}\({\end{ab**}x\begin{x}
+text 55
+\(\label{a}\begin{a**}`\begin{x}\({\end{ab**}x\begin{x}
+end
+doc envs-1-232
+src 58
+
+\end{*a*} b  \begin{a**} a \end{a**}\begin{a**}\begin{a*}
+text 47
+
+\end{*a*} b  ZZDMTH0001ZZ\begin{a**}\begin{a*}
+math 0 1 0 env
+tex 23
+\begin{a**} a \end{a**}
+raw 23
+\begin{a**} a \end{a**}
+prepared 23
+\begin{a**} a \end{a**}
+katex 23
+\begin{a**} a \end{a**}
+end
+doc envs-1-233
+src 52
+\label{a}\end{*}\end{x}}\tag{T}\begin{y}
+{\begin{y}{
+text 52
+\label{a}\end{*}\end{x}}\tag{T}\begin{y}
+{\begin{y}{
+end
+doc envs-1-234
+src 37
+{}\begin{x}
+\tag{T}$$ \end{x}\end{a*}
+src 76
+\end{x}\end{x}\label{a}\end{*a*}\end{*a*}\begin{a*b*}\begin{y}\(\begin{ab**}
+text 22
+{}ZZDMTH0001ZZ\end{a*}
+text 76
+\end{x}\end{x}\label{a}\end{*a*}\end{*a*}\begin{a*b*}\begin{y}\(\begin{ab**}
+math 0 1 0 env
+tex 27
+\begin{x}
+\tag{T}$$ \end{x}
+raw 27
+\begin{x}
+\tag{T}$$ \end{x}
+prepared 27
+\begin{x}
+\tag{T}$$ \end{x}
+katex 27
+\begin{x}
+\tag{T}$$ \end{x}
+end
+doc envs-1-235
+src 82
+\end{y}\begin{y}\begin{x}\begin{y}\begin{*}}\end{align}\(\begin{align}\begin{a*}> 
+src 42
+\begin{a**}\end{a**}\end{*}$$}\begin{x*}$$
+text 82
+\end{y}\begin{y}\begin{x}\begin{y}\begin{*}}\end{align}\(\begin{align}\begin{a*}> 
+text 31
+ZZDMTH0001ZZ\end{*}ZZDMTH0002ZZ
+math 1 1 0 env
+tex 20
+\begin{a**}\end{a**}
+raw 20
+\begin{a**}\end{a**}
+prepared 20
+\begin{a**}\end{a**}
+katex 20
+\begin{a**}\end{a**}
+math 1 1 0 dollars
+tex 11
+}\begin{x*}
+raw 15
+$$}\begin{x*}$$
+prepared 11
+}\begin{x*}
+katex 11
+}\begin{x*}
+end
+doc envs-1-236
+src 60
+\)\end{x}\begin{a*}}\)\end{x}\begin{x*}\begin{a**}\end{*a*}$
+text 61
+\)\end{x}\begin{a*}}\)\end{x}\begin{x*}\begin{a**}\end{*a*}\$
+end
+doc envs-1-237
+src 62
+\begin{a*b*}\begin{x}}\tag{T}\\\end{x}\begin{*a*}\\\end{a*b*}`
+text 48
+\begin{a*b*}ZZDMTH0001ZZ\begin{*a*}\\\end{a*b*}`
+math 0 1 0 env
+tex 26
+\begin{x}}\tag{T}\\\end{x}
+raw 26
+\begin{x}}\tag{T}\\\end{x}
+prepared 26
+\begin{x}}\tag{T}\\\end{x}
+katex 26
+\begin{x}}\tag{T}\\\end{x}
+end
+doc envs-1-238
+src 22
+\\\begin{a**}\begin{y}
+text 22
+\\\begin{a**}\begin{y}
+end
+doc envs-1-239
+src 57
+\begin{*}\begin{y}`\)\begin{*a*}\end{ab**}
+\begin{a*b*}$$
+src 65
+\begin{a*}
+
+\begin{*}\begin{*}\begin{x}` a 
+ 
+\begin{x}$\begin{y}
+text 59
+\begin{*}\begin{y}`\)\begin{*a*}\end{ab**}
+\begin{a*b*}\$\$
+text 66
+\begin{a*}
+
+\begin{*}\begin{*}\begin{x}` a 
+ 
+\begin{x}\$\begin{y}
+end
+doc envs-1-240
+src 97
+x\begin{*a*}\begin{x}\end{x}\end{align}\begin{x*}\begin{*a*}\end{x}\begin{y}\begin{a*}$\end{a*b*}
+src 3
+`\(
+text 94
+x\begin{*a*}ZZDMTH0001ZZ\end{align}\begin{x*}\begin{*a*}\end{x}\begin{y}\begin{a*}\$\end{a*b*}
+text 3
+`\(
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-241
+src 60
+\begin{x}\begin{y}\begin{*a*}\end{align}\)\end{*}\end{y}$$\\
+text 27
+\begin{x}ZZDMTH0001ZZ\$\$\\
+math 0 1 0 env
+tex 47
+\begin{y}\begin{*a*}\end{align}\)\end{*}\end{y}
+raw 47
+\begin{y}\begin{*a*}\end{align}\)\end{*}\end{y}
+prepared 47
+\begin{y}\begin{*a*}\end{align}\)\end{*}\end{y}
+katex 47
+\begin{y}\begin{*a*}\end{align}\)\end{*}\end{y}
+end
+doc envs-1-242
+src 24
+> > {\begin{y}{\end{a**}
+text 24
+> > {\begin{y}{\end{a**}
+end
+doc envs-1-243
+src 13
+\end{ab**} b 
+text 13
+\end{ab**} b 
+end
+doc envs-1-244
+src 22
+> \end{a**}\end{align}
+text 22
+> \end{a**}\end{align}
+end
+doc envs-1-245
+src 71
+> \begin{align}\end{x}> \\$$\end{*a*}\begin{align}\end{ab**}$ b \end{y}
+src 46
+> \end{*}\(\)\end{a*}\begin{x}\end{*}
+> 
+> 
+> 
+text 47
+> \begin{align}\end{x}> \\ZZMTH0001ZZ b \end{y}
+text 53
+> \end{*}ZZMTH0001ZZ\end{a*}\begin{x}\end{*}
+> 
+> 
+> 
+math 0 0 0 dollar
+tex 33
+$\end{*a*}\begin{align}\end{ab**}
+raw 35
+$$\end{*a*}\begin{align}\end{ab**}$
+prepared 33
+$\end{*a*}\begin{align}\end{ab**}
+katex 33
+$\end{*a*}\begin{align}\end{ab**}
+math 1 0 0 paren
+tex 0
+
+raw 4
+\(\)
+prepared 0
+
+katex 0
+
+end
+doc envs-1-246
+src 29
+\begin{x}\end{x}``\begin{x}\\
+src 20
+\begin{x}x\begin{x*}
+text 25
+ZZDMTH0001ZZ``\begin{x}\\
+text 20
+\begin{x}x\begin{x*}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-247
+src 41
+$\tag{T}\begin{*a*}\begin{a*b*}\begin{*}{
+text 42
+\$\tag{T}\begin{*a*}\begin{a*b*}\begin{*}{
+end
+doc envs-1-248
+src 54
+\end{*}\end{ab**}\begin{*a*}\end{x}\end{a**}\begin{x}{
+src 78
+> \begin{x}\begin{x}\end{x*}> \end{a*}\end{a**} b \begin{x*}$$\end{*}\begin{x}
+text 54
+\end{*}\end{ab**}\begin{*a*}\end{x}\end{a**}\begin{x}{
+text 80
+> \begin{x}\begin{x}\end{x*}> \end{a*}\end{a**} b \begin{x*}\$\$\end{*}\begin{x}
+end
+doc envs-1-249
+src 62
+\begin{x}$$\begin{y}}\begin{y}> }\begin{x*}\begin{x}\end{a*b*}
+src 28
+\end{x*}\end{align}\begin{x}
+text 64
+\begin{x}\$\$\begin{y}}\begin{y}> }\begin{x*}\begin{x}\end{a*b*}
+text 28
+\end{x*}\end{align}\begin{x}
+end
+doc envs-1-250
+src 49
+> x\end{x*} \end{ab**}}$$\)\begin{x*}\begin{ab**}
+src 50
+}\begin{align}}\begin{a*b*}{\end{a*b*}
+\end{y}` b 
+text 51
+> x\end{x*} \end{ab**}}\$\$\)\begin{x*}\begin{ab**}
+text 50
+}\begin{align}}\begin{a*b*}{\end{a*b*}
+\end{y}` b 
+end
+doc envs-1-251
+src 11
+\begin{x*}x
+text 11
+\begin{x*}x
+end
+doc envs-1-252
+src 24
+\begin{a*b*}\begin{*a*}x
+text 24
+\begin{a*b*}\begin{*a*}x
+end
+doc envs-1-253
+src 100
+\begin{*a*}\begin{x*}\begin{x*}\end{*a*}\begin{*}\begin{y} b \end{a**}\end{*}\end{x}\end{x}\end{*a*}
+src 4
+> `$
+text 35
+ZZDMTH0001ZZ\end{x}\end{x}\end{*a*}
+text 5
+> `\$
+math 0 1 0 env
+tex 77
+\begin{*a*}\begin{x*}\begin{x*}\end{*a*}\begin{*}\begin{y} b \end{a**}\end{*}
+raw 77
+\begin{*a*}\begin{x*}\begin{x*}\end{*a*}\begin{*}\begin{y} b \end{a**}\end{*}
+prepared 77
+\begin{*a*}\begin{x*}\begin{x*}\end{*a*}\begin{*}\begin{y} b \end{a**}\end{*}
+katex 77
+\begin{*a*}\begin{x*}\begin{x*}\end{*a*}\begin{*}\begin{y} b \end{a**}\end{*}
+end
+doc envs-1-254
+src 28
+
+\end{ab**}\end{y}\begin{x*}
+src 84
+> \begin{x*}\)x\end{x*}\begin{x}\end{a*b*}\end{x*}\begin{x*}\end{a*b*}\end{x}\end{y}
+text 28
+
+\end{ab**}\end{y}\begin{x*}
+text 33
+> ZZDMTH0001ZZZZDMTH0002ZZ\end{y}
+math 1 1 0 env
+tex 21
+\begin{x*}\)x\end{x*}
+raw 21
+\begin{x*}\)x\end{x*}
+prepared 21
+\begin{x*}\)x\end{x*}
+katex 21
+\begin{x*}\)x\end{x*}
+math 1 1 0 env
+tex 54
+\begin{x}\end{a*b*}\end{x*}\begin{x*}\end{a*b*}\end{x}
+raw 54
+\begin{x}\end{a*b*}\end{x*}\begin{x*}\end{a*b*}\end{x}
+prepared 54
+\begin{x}\end{a*b*}\end{x*}\begin{x*}\end{a*b*}\end{x}
+katex 54
+\begin{x}\end{a*b*}\end{x*}\begin{x*}\end{a*b*}\end{x}
+end
+doc envs-1-255
+src 44
+\end{x}\(\begin{x*}\begin{x}$$\begin{*a*}\){
+text 19
+\end{x}ZZMTH0001ZZ{
+math 0 0 0 paren
+tex 32
+\begin{x*}\begin{x}$$\begin{*a*}
+raw 36
+\(\begin{x*}\begin{x}$$\begin{*a*}\)
+prepared 32
+\begin{x*}\begin{x}$$\begin{*a*}
+katex 32
+\begin{x*}\begin{x}$$\begin{*a*}
+end
+doc envs-1-256
+src 88
+> \begin{x}\begin{x}\end{x*}\begin{a**}> \\\end{a*}\end{y}\begin{a*}\end{a**}\begin{y}\(
+src 89
+\end{x*}{
+\end{x}\end{x}\end{y}\begin{a*}\begin{align}\begin{a*b*}\)\begin{y}\begin{a**}}
+text 77
+> \begin{x}\begin{x}\end{x*}ZZDMTH0001ZZ\end{y}\begin{a*}\end{a**}\begin{y}\(
+text 89
+\end{x*}{
+\end{x}\end{x}\end{y}\begin{a*}\begin{align}\begin{a*b*}\)\begin{y}\begin{a**}}
+math 0 1 0 env
+tex 23
+\begin{a**}> \\\end{a*}
+raw 23
+\begin{a**}> \\\end{a*}
+prepared 23
+\begin{a**}> \\\end{a*}
+katex 23
+\begin{a**}> \\\end{a*}
+end
+doc envs-1-257
+src 41
+\end{ab**}\begin{y}> \begin{y}}$$`\end{x}
+text 43
+\end{ab**}\begin{y}> \begin{y}}\$\$`\end{x}
+end
+doc envs-1-258
+src 66
+\\\begin{*a*}\begin{x}\end{y}\end{a*}\begin{a*}\end{a*b*}\tag{T}
+ 
+src 21
+> \begin{ab**}\end{x}
+text 66
+\\\begin{*a*}\begin{x}\end{y}\end{a*}\begin{a*}\end{a*b*}\tag{T}
+ 
+text 21
+> \begin{ab**}\end{x}
+end
+doc envs-1-259
+src 38
+\end{x}}\tag{T}> \begin{y}\begin{a*b*}
+text 38
+\end{x}}\tag{T}> \begin{y}\begin{a*b*}
+end
+doc envs-1-260
+src 82
+\end{a**}\begin{*a*}}\end{a*b*}\begin{x}$$\begin{x}$$\begin{*}\end{*a*}\begin{y}> 
+text 81
+\end{a**}\begin{*a*}}\end{a*b*}\begin{x}ZZDMTH0001ZZ\begin{*}\end{*a*}\begin{y}> 
+math 0 1 0 dollars
+tex 9
+\begin{x}
+raw 13
+$$\begin{x}$$
+prepared 9
+\begin{x}
+katex 9
+\begin{x}
+end
+doc envs-1-261
+src 79
+\end{a*}\begin{*a*}\begin{align} a \\\begin{y} $$$\begin{x}\end{a**}\end{align}
+src 74
+\end{*}\end{x}\end{*a*}\end{align}x\label{a}\begin{a**} \begin{a*}\end{x*}
+text 31
+\end{a*}\begin{*a*}ZZDMTH0001ZZ
+text 74
+\end{*}\end{x}\end{*a*}\end{align}x\label{a}\begin{a**} \begin{a*}\end{x*}
+math 0 1 0 env
+tex 60
+\begin{align} a \\\begin{y} $$$\begin{x}\end{a**}\end{align}
+raw 60
+\begin{align} a \\\begin{y} $$$\begin{x}\end{a**}\end{align}
+prepared 79
+\begin{align*} a  \tag{1} \\\begin{y} $$$\begin{x}\end{a**} \tag{2}\end{align*}
+katex 79
+\begin{align*} a  \tag{1} \\\begin{y} $$$\begin{x}\end{a**} \tag{2}\end{align*}
+end
+doc envs-1-262
+src 19
+\begin{*}}\begin{y}
+text 19
+\begin{*}}\begin{y}
+end
+doc envs-1-263
+src 11
+> $ \end{y}
+text 12
+> \$ \end{y}
+end
+doc envs-1-264
+src 30
+> {\end{*}\end{x*}\begin{a*b*}
+src 89
+\end{a**}x\begin{a**}\label{a}{>  a \begin{a**}\end{x*}\begin{*}\end{a*}\end{ab**}\end{y}
+text 30
+> {\end{*}\end{x*}\begin{a*b*}
+text 65
+\end{a**}x\begin{a**}\label{a}{>  a ZZDMTH0001ZZ\end{ab**}\end{y}
+math 1 1 0 env
+tex 36
+\begin{a**}\end{x*}\begin{*}\end{a*}
+raw 36
+\begin{a**}\end{x*}\begin{*}\end{a*}
+prepared 36
+\begin{a**}\end{x*}\begin{*}\end{a*}
+katex 36
+\begin{a**}\end{x*}\begin{*}\end{a*}
+end
+doc envs-1-265
+src 27
+\tag{T}\begin{y}\begin{x*} 
+text 27
+\tag{T}\begin{y}\begin{x*} 
+end
+doc envs-1-266
+src 34
+\end{ab**}\begin{a*}\end{y}\tag{T}
+text 34
+\end{ab**}\begin{a*}\end{y}\tag{T}
+end
+doc envs-1-267
+src 113
+> x\begin{y}\end{ab**}\end{y}\begin{a*}\end{x*}\end{x}\begin{*}\begin{align}> \begin{a**}\begin{align}\end{align}
+text 87
+> xZZDMTH0001ZZ\begin{a*}\end{x*}\end{x}\begin{*}\begin{align}> \begin{a**}ZZDMTH0002ZZ
+math 0 1 0 env
+tex 26
+\begin{y}\end{ab**}\end{y}
+raw 26
+\begin{y}\end{ab**}\end{y}
+prepared 26
+\begin{y}\end{ab**}\end{y}
+katex 26
+\begin{y}\end{ab**}\end{y}
+math 0 1 0 env
+tex 24
+\begin{align}\end{align}
+raw 24
+\begin{align}\end{align}
+prepared 34
+\begin{align*} \tag{1}\end{align*}
+katex 34
+\begin{align*} \tag{1}\end{align*}
+end
+doc envs-1-268
+src 45
+\end{a**} b \begin{y}\end{y}\begin{y}$\end{*}
+text 42
+\end{a**} b ZZDMTH0001ZZ\begin{y}\$\end{*}
+math 0 1 0 env
+tex 16
+\begin{y}\end{y}
+raw 16
+\begin{y}\end{y}
+prepared 16
+\begin{y}\end{y}
+katex 16
+\begin{y}\end{y}
+end
+doc envs-1-269
+src 9
+\end{x}
+
+
+src 61
+> \end{*a*}\begin{align}\begin{*a*}\end{y}\begin{x}\end{ab**}
+text 9
+\end{x}
+
+
+text 61
+> \end{*a*}\begin{align}\begin{*a*}\end{y}\begin{x}\end{ab**}
+end
+doc envs-1-270
+src 48
+\begin{ab**}\begin{align} b `\label{a}$\begin{x}
+text 49
+\begin{ab**}\begin{align} b `\label{a}\$\begin{x}
+end
+doc envs-1-271
+src 83
+\begin{a*}\begin{a*b*}\begin{y}\end{ab**}> \begin{a**}\begin{a**}\begin{a**}\end{*}
+text 83
+\begin{a*}\begin{a*b*}\begin{y}\end{ab**}> \begin{a**}\begin{a**}\begin{a**}\end{*}
+end
+doc envs-1-272
+src 39
+\begin{*a*}\begin{y}\end{ab**}\begin{*}
+text 39
+\begin{*a*}\begin{y}\end{ab**}\begin{*}
+end
+doc envs-1-273
+src 87
+\begin{align}\end{y}\begin{*a*}\end{align}\(x\\\begin{x}\end{align}\label{a}\tag{T} b {
+src 55
+\end{ab**} b \begin{a*b*}\end{a*b*}\end{x*}\begin{ab**}
+text 57
+ZZDMTH0001ZZ\(x\\\begin{x}\end{align}\label{a}\tag{T} b {
+text 55
+\end{ab**} b \begin{a*b*}\end{a*b*}\end{x*}\begin{ab**}
+math 0 1 0 env
+tex 42
+\begin{align}\end{y}\begin{*a*}\end{align}
+raw 42
+\begin{align}\end{y}\begin{*a*}\end{align}
+prepared 52
+\begin{align*}\end{y}\begin{*a*} \tag{1}\end{align*}
+katex 52
+\begin{align*}\end{y}\begin{*a*} \tag{1}\end{align*}
+end
+doc envs-1-274
+src 10
+\begin{x} 
+src 84
+\end{*a*}\end{*a*}> \\\end{ab**}\begin{x} b \begin{*a*}\begin{*}\end{x}\begin{align}
+text 10
+\begin{x} 
+text 57
+\end{*a*}\end{*a*}> \\\end{ab**}ZZDMTH0001ZZ\begin{align}
+math 1 1 0 env
+tex 39
+\begin{x} b \begin{*a*}\begin{*}\end{x}
+raw 39
+\begin{x} b \begin{*a*}\begin{*}\end{x}
+prepared 39
+\begin{x} b \begin{*a*}\begin{*}\end{x}
+katex 39
+\begin{x} b \begin{*a*}\begin{*}\end{x}
+end
+doc envs-1-275
+src 36
+
+\end{x}\begin{*}$$x$\end{y}\end{a*}
+text 43
+
+\end{x}\begin{*}ZZMTH0001ZZ\end{y}\end{a*}
+math 0 0 0 dollar
+tex 2
+$x
+raw 4
+$$x$
+prepared 2
+$x
+katex 2
+$x
+end
+doc envs-1-276
+src 47
+\end{x*}$
+\begin{x}\end{y} >  b \begin{a*b*}}\(
+text 48
+\end{x*}\$
+\begin{x}\end{y} >  b \begin{a*b*}}\(
+end
+doc envs-1-277
+src 60
+\end{ab**}
+
+\end{x}\label{a}{\end{x}\end{ab**}\)\begin{a*b*}
+src 49
+\begin{a**}\end{ab**}\)\end{*}\end{ab**}\begin{y}
+text 60
+\end{ab**}
+
+\end{x}\label{a}{\end{x}\end{ab**}\)\begin{a*b*}
+text 49
+\begin{a**}\end{ab**}\)\end{*}\end{ab**}\begin{y}
+end
+doc envs-1-278
+src 42
+\begin{y}\begin{a*b*}\begin{a**}\begin{x}`
+src 36
+\begin{x} \\\begin{ab**}\begin{ab**}
+text 42
+\begin{y}\begin{a*b*}\begin{a**}\begin{x}`
+text 36
+\begin{x} \\\begin{ab**}\begin{ab**}
+end
+doc envs-1-279
+src 12
+> \end{y} a 
+src 15
+$$> \label{a}\\
+text 12
+> \end{y} a 
+text 17
+\$\$> \label{a}\\
+end
+doc envs-1-280
+src 56
+\end{*a*}\tag{T}}\end{x}\end{y}\end{y} a \(}\end{a*b*}\(
+text 56
+\end{*a*}\tag{T}}\end{x}\end{y}\end{y} a \(}\end{a*b*}\(
+end
+doc envs-1-281
+src 3
+>  
+src 64
+\begin{a*}\(\begin{x}`\begin{x}\begin{*a*}\begin{y}
+
+\end{align}
+text 3
+>  
+text 64
+\begin{a*}\(\begin{x}`\begin{x}\begin{*a*}\begin{y}
+
+\end{align}
+end
+doc envs-1-282
+src 56
+\end{x*}$$>  \\
+\end{x}> x\end{x}\end{x}\begin{x}\end{y}
+src 48
+
+\begin{a*}\end{align}$$`{\begin{ab**}\end{a*b*}
+text 58
+\end{x*}\$\$>  \\
+\end{x}> x\end{x}\end{x}\begin{x}\end{y}
+text 50
+
+\begin{a*}\end{align}\$\$`{\begin{ab**}\end{a*b*}
+end
+doc envs-1-283
+src 47
+
+
+> \begin{*a*}\begin{y}\begin{ab**}\begin{*a*}
+src 26
+\end{x}$$\end{x}`\end{x}\)
+text 47
+
+
+> \begin{*a*}\begin{y}\begin{ab**}\begin{*a*}
+text 28
+\end{x}\$\$\end{x}`\end{x}\)
+end
+doc envs-1-284
+src 9
+``\end{*}
+text 9
+``\end{*}
+end
+doc envs-1-285
+src 44
+}\begin{x}\begin{*a*}\begin{align}\begin{x*}
+text 44
+}\begin{x}\begin{*a*}\begin{align}\begin{x*}
+end
+doc envs-1-286
+src 36
+\begin{*a*}\end{x}\begin{a**}\end{x}
+src 64
+\end{y}\end{x*}\end{a*}\end{*}> 
+
+\end{x}\begin{x*}\begin{align}
+text 36
+\begin{*a*}\end{x}\begin{a**}\end{x}
+text 64
+\end{y}\end{x*}\end{a*}\end{*}> 
+
+\end{x}\begin{x*}\begin{align}
+end
+doc envs-1-287
+src 82
+\begin{a*b*}\begin{*}{\begin{x}\tag{T}{ b \begin{a*}>  a \label{a}\end{x}\begin{x}
+src 45
+\end{a*}\begin{x*}\end{a**}\begin{x}\label{a}
+text 43
+\begin{a*b*}\begin{*}{ZZDMTH0001ZZ\begin{x}
+text 45
+\end{a*}\begin{x*}\end{a**}\begin{x}\label{a}
+math 0 1 0 env
+tex 51
+\begin{x}\tag{T}{ b \begin{a*}>  a \label{a}\end{x}
+raw 51
+\begin{x}\tag{T}{ b \begin{a*}>  a \label{a}\end{x}
+prepared 42
+\begin{x}\tag{T}{ b \begin{a*}>  a \end{x}
+katex 42
+\begin{x}\tag{T}{ b \begin{a*}>  a \end{x}
+end
+doc envs-1-288
+src 51
+\label{a}
+\begin{a**}\end{a**}\begin{a*}
+\end{a*b*}
+text 43
+\label{a}
+ZZDMTH0001ZZ\begin{a*}
+\end{a*b*}
+math 0 1 0 env
+tex 20
+\begin{a**}\end{a**}
+raw 20
+\begin{a**}\end{a**}
+prepared 20
+\begin{a**}\end{a**}
+katex 20
+\begin{a**}\end{a**}
+end
+doc envs-1-289
+src 73
+\begin{y}{\begin{x}\begin{align}\begin{y}$\begin{x}\(\begin{*}\end{align}
+text 31
+\begin{y}{\begin{x}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 54
+\begin{align}\begin{y}$\begin{x}\(\begin{*}\end{align}
+raw 54
+\begin{align}\begin{y}$\begin{x}\(\begin{*}\end{align}
+prepared 64
+\begin{align*}\begin{y}$\begin{x}\(\begin{*} \tag{1}\end{align*}
+katex 64
+\begin{align*}\begin{y}$\begin{x}\(\begin{*} \tag{1}\end{align*}
+end
+doc envs-1-290
+src 23
+> x\end{a*}\end{align}x
+src 37
+\end{a*b*}{\begin{a*}\\\end{align} a 
+text 23
+> x\end{a*}\end{align}x
+text 37
+\end{a*b*}{\begin{a*}\\\end{align} a 
+end
+doc envs-1-291
+src 26
+\begin{y}\end{a*b*}\end{*}
+text 26
+\begin{y}\end{a*b*}\end{*}
+end
+doc envs-1-292
+src 31
+\begin{ab**}\end{y}\begin{a*}\)
+src 75
+> \end{y}\end{y}\begin{y}\begin{a**} \(\tag{T}\end{align}\end{x} b \end{x} 
+text 31
+\begin{ab**}\end{y}\begin{a*}\)
+text 75
+> \end{y}\end{y}\begin{y}\begin{a**} \(\tag{T}\end{align}\end{x} b \end{x} 
+end
+doc envs-1-293
+src 17
+ a \begin{a*b*}$$
+text 19
+ a \begin{a*b*}\$\$
+end
+doc envs-1-294
+src 19
+\begin{a*b*}\end{y}
+src 63
+\begin{a*b*}\begin{a*b*}\end{a*}\begin{x}\begin{y}\begin{a*b*}`
+text 19
+\begin{a*b*}\end{y}
+text 63
+\begin{a*b*}\begin{a*b*}\end{a*}\begin{x}\begin{y}\begin{a*b*}`
+end
+doc envs-1-295
+src 25
+\end{x}\end{*}\begin{x*}
+
+text 25
+\end{x}\end{*}\begin{x*}
+
+end
+doc envs-1-296
+src 97
+
+
+\label{a}\end{x*}\end{y}\end{ab**}\begin{*a*}\begin{a*b*}\end{ab**}> \end{a**}\begin{y}x\end{*}
+text 97
+
+
+\label{a}\end{x*}\end{y}\end{ab**}\begin{*a*}\begin{a*b*}\end{ab**}> \end{a**}\begin{y}x\end{*}
+end
+doc envs-1-297
+src 50
+\(\begin{a*}\end{a*b*}\end{x} b \begin{x}\label{a}
+text 50
+\(\begin{a*}\end{a*b*}\end{x} b \begin{x}\label{a}
+end
+doc envs-1-298
+src 56
+\)\end{ab**} b \begin{a*}\begin{a*b*}
+
+\begin{x}\end{x} 
+text 52
+\)\end{ab**} b \begin{a*}\begin{a*b*}
+
+ZZDMTH0001ZZ 
+math 0 1 1 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-299
+src 18
+> \end{y}\begin{y}
+src 76
+\end{x}\end{x*}\begin{*}\end{y}\begin{x*}\begin{*a*}\begin{x*}\begin{align}x
+text 18
+> \end{y}\begin{y}
+text 76
+\end{x}\end{x*}\begin{*}\end{y}\begin{x*}\begin{*a*}\begin{x*}\begin{align}x
+end
+doc envs-1-300
+src 52
+
+
+`\begin{y}}\end{x}
+
+\begin{*a*} b \tag{T}\begin{y}
+src 85
+ a \begin{ab**}\end{a**}\begin{x}\begin{align}\end{x*}\($\end{x*}\begin{a**}\end{*a*}
+text 52
+
+
+`\begin{y}}\end{x}
+
+\begin{*a*} b \tag{T}\begin{y}
+text 86
+ a \begin{ab**}\end{a**}\begin{x}\begin{align}\end{x*}\(\$\end{x*}\begin{a**}\end{*a*}
+end
+doc envs-1-301
+src 80
+\begin{x}x\end{y}\end{a*b*}\begin{x}x\begin{a*}\end{ab**}}{\begin{a**}\begin{x*}
+src 89
+\end{*}\begin{align}\end{align}\end{*}\begin{a*b*}> \begin{*}\begin{y}\begin{y}\begin{a*}
+text 80
+\begin{x}x\end{y}\end{a*b*}\begin{x}x\begin{a*}\end{ab**}}{\begin{a**}\begin{x*}
+text 77
+\end{*}ZZDMTH0001ZZ\end{*}\begin{a*b*}> \begin{*}\begin{y}\begin{y}\begin{a*}
+math 1 1 0 env
+tex 24
+\begin{align}\end{align}
+raw 24
+\begin{align}\end{align}
+prepared 34
+\begin{align*} \tag{1}\end{align*}
+katex 34
+\begin{align*} \tag{1}\end{align*}
+end
+doc envs-1-302
+src 79
+\begin{*a*}\begin{a*} `\end{x}\begin{*}\begin{ab**}\begin{x}\end{x}\(\begin{x*}
+text 75
+\begin{*a*}\begin{a*} `\end{x}\begin{*}\begin{ab**}ZZDMTH0001ZZ\(\begin{x*}
+math 0 1 0 env
+tex 16
+\begin{x}\end{x}
+raw 16
+\begin{x}\end{x}
+prepared 16
+\begin{x}\end{x}
+katex 16
+\begin{x}\end{x}
+end
+doc envs-1-303
+src 46
+\tag{T}x a \end{y}\begin{x*}\end{x}\begin{a**}
+text 46
+\tag{T}x a \end{y}\begin{x*}\end{x}\begin{a**}
+end
+doc envs-1-304
+src 43
+\begin{a*b*}\end{x}\begin{align} \begin{a*}
+text 43
+\begin{a*b*}\end{x}\begin{align} \begin{a*}
+end
+doc envs-1-305
+src 26
+\)\begin{a*}\begin{*} b > 
+text 26
+\)\begin{a*}\begin{*} b > 
+end
+doc envs-1-306
+src 33
+\begin{align} \end{a*}\end{x} a {
+text 33
+\begin{align} \end{a*}\end{x} a {
+end
+doc envs-1-307
+src 24
+\end{a*b*}\tag{T}\end{x}
+text 24
+\end{a*b*}\tag{T}\end{x}
+end
+doc envs-1-308
+src 92
+\begin{*a*}x\\\end{*a*}\end{ab**}\end{a*b*}\end{x*}\end{align}\label{a}\tag{T}>  b \begin{x}
+src 105
+\(\end{x}\begin{x}\tag{T}\tag{T}\begin{align}\begin{align}\begin{y}\begin{x}\begin{x*}\begin{x}\begin{y}}
+text 92
+\begin{*a*}x\\\end{*a*}\end{ab**}\end{a*b*}\end{x*}\end{align}\label{a}\tag{T}>  b \begin{x}
+text 105
+\(\end{x}\begin{x}\tag{T}\tag{T}\begin{align}\begin{align}\begin{y}\begin{x}\begin{x*}\begin{x}\begin{y}}
+end
+doc envs-1-309
+src 75
+> \begin{*}$$\end{x}$\begin{*a*}x\begin{a*b*}\begin{y}\begin{x}\label{a} b 
+text 76
+> \begin{*}ZZMTH0001ZZ\begin{*a*}x\begin{a*b*}\begin{y}\begin{x}\label{a} b 
+math 0 0 0 dollar
+tex 8
+$\end{x}
+raw 10
+$$\end{x}$
+prepared 8
+$\end{x}
+katex 8
+$\end{x}
+end
+doc envs-1-310
+src 27
+\begin{x}\begin{y}\end{*a*}
+text 27
+\begin{x}\begin{y}\end{*a*}
+end
+doc envs-1-311
+src 76
+\begin{y}\begin{ab**}\end{*a*}\end{y}
+\end{*a*}\begin{y}\begin{x*}\end{ab**}
+text 51
+ZZDMTH0001ZZ
+\end{*a*}\begin{y}\begin{x*}\end{ab**}
+math 0 1 1 env
+tex 37
+\begin{y}\begin{ab**}\end{*a*}\end{y}
+raw 37
+\begin{y}\begin{ab**}\end{*a*}\end{y}
+prepared 37
+\begin{y}\begin{ab**}\end{*a*}\end{y}
+katex 37
+\begin{y}\begin{ab**}\end{*a*}\end{y}
+end
+doc envs-1-312
+src 18
+\end{x}$$\begin{x}
+src 62
+\begin{*a*}$$\begin{x}
+
+\begin{align}
+
+\end{x}\begin{*}\end{y}
+text 20
+\end{x}\$\$\begin{x}
+text 64
+\begin{*a*}\$\$\begin{x}
+
+\begin{align}
+
+\end{x}\begin{*}\end{y}
+end
+doc envs-1-313
+src 79
+\end{x}\end{x*}\end{align}\end{a*}\\}\begin{x}\end{a*}\end{*}\end{x}\end{align}
+text 60
+\end{x}\end{x*}\end{align}\end{a*}\\}ZZDMTH0001ZZ\end{align}
+math 0 1 0 env
+tex 31
+\begin{x}\end{a*}\end{*}\end{x}
+raw 31
+\begin{x}\end{a*}\end{*}\end{x}
+prepared 31
+\begin{x}\end{a*}\end{*}\end{x}
+katex 31
+\begin{x}\end{a*}\end{*}\end{x}
+end
+doc envs-1-314
+src 36
+\begin{a*b*}\end{x}\end{a*}\begin{*}
+src 64
+$\end{a**}\end{y}\begin{x*}\\\label{a}$\end{x*}\end{ab**}\end{x}
+text 36
+\begin{a*b*}\end{x}\end{a*}\begin{*}
+text 36
+ZZMTH0001ZZ\end{x*}\end{ab**}\end{x}
+math 1 0 0 dollar
+tex 37
+\end{a**}\end{y}\begin{x*}\\\label{a}
+raw 39
+$\end{a**}\end{y}\begin{x*}\\\label{a}$
+prepared 28
+\end{a**}\end{y}\begin{x*}\\
+katex 28
+\end{a**}\end{y}\begin{x*}\\
+end
+doc envs-1-315
+src 73
+\)\end{*a*}\tag{T}\end{align}\end{x}\begin{a*}\begin{y}\begin{y}\end{x}> 
+text 73
+\)\end{*a*}\tag{T}\end{align}\end{x}\begin{a*}\begin{y}\begin{y}\end{x}> 
+end
+doc envs-1-316
+src 31
+{\end{*}\begin{a*b*}$ a \end{x}
+src 41
+\end{a*b*}\begin{*}\begin{x}\begin{a*} a 
+text 32
+{\end{*}\begin{a*b*}\$ a \end{x}
+text 41
+\end{a*b*}\begin{*}\begin{x}\begin{a*} a 
+end
+doc envs-1-317
+src 32
+`${`$$\tag{T}$\end{x}$$\label{a}
+text 25
+`${`ZZDMTH0001ZZ\label{a}
+math 0 1 0 dollars
+tex 15
+\tag{T}$\end{x}
+raw 19
+$$\tag{T}$\end{x}$$
+prepared 15
+\tag{T}$\end{x}
+katex 15
+\tag{T}$\end{x}
+end
+doc envs-1-318
+src 20
+\begin{a*}\begin{x*}
+text 20
+\begin{a*}\begin{x*}
+end
+doc envs-1-319
+src 50
+> \end{y}
+> > \tag{T}\end{x} b \begin{a*}
+> 
+> 
+> 
+src 22
+\(\end{a*}\begin{a*b*}
+text 50
+> \end{y}
+> > \tag{T}\end{x} b \begin{a*}
+> 
+> 
+> 
+text 22
+\(\end{a*}\begin{a*b*}
+end
+doc envs-1-320
+src 83
+`\tag{T}
+\begin{a*b*}\begin{x*}\begin{x}\end{x}\begin{x}\(\end{y}\end{a*b*}\end{x*}
+text 33
+`\tag{T}
+\begin{a*b*}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 62
+\begin{x*}\begin{x}\end{x}\begin{x}\(\end{y}\end{a*b*}\end{x*}
+raw 62
+\begin{x*}\begin{x}\end{x}\begin{x}\(\end{y}\end{a*b*}\end{x*}
+prepared 62
+\begin{x*}\begin{x}\end{x}\begin{x}\(\end{y}\end{a*b*}\end{x*}
+katex 62
+\begin{x*}\begin{x}\end{x}\begin{x}\(\end{y}\end{a*b*}\end{x*}
+end
+doc envs-1-321
+src 43
+\end{align}
+
+ \end{align}\begin{x}\\\tag{T}
+src 60
+> 
+> 
+> \begin{y}\begin{align}$\end{a*b*}
+> 
+> \end{x}
+> 
+> 
+text 43
+\end{align}
+
+ \end{align}\begin{x}\\\tag{T}
+text 61
+> 
+> 
+> \begin{y}\begin{align}\$\end{a*b*}
+> 
+> \end{x}
+> 
+> 
+end
+doc envs-1-322
+src 31
+> \end{y}\begin{x}\begin{align}
+text 31
+> \end{y}\begin{x}\begin{align}
+end
+doc envs-1-323
+src 58
+\begin{*a*} a x\end{x}\label{a}\end{y}\begin{*a*}\label{a}
+src 49
+{\begin{a**}\end{a*}\begin{x*}{\)\end{x}\end{*a*}
+text 58
+\begin{*a*} a x\end{x}\label{a}\end{y}\begin{*a*}\label{a}
+text 42
+{ZZDMTH0001ZZ\begin{x*}{\)\end{x}\end{*a*}
+math 1 1 0 env
+tex 19
+\begin{a**}\end{a*}
+raw 19
+\begin{a**}\end{a*}
+prepared 19
+\begin{a**}\end{a*}
+katex 19
+\begin{a**}\end{a*}
+end
+doc envs-1-324
+src 5
+> $> 
+src 3
+}$$
+text 6
+> \$> 
+text 5
+}\$\$
+end
+doc envs-1-325
+src 25
+\begin{a**}\begin{ab**}``
+src 51
+\end{a**}\end{a*}$$\begin{y}\begin{a*}\({x
+x\end{y}
+text 25
+\begin{a**}\begin{ab**}``
+text 33
+\end{a**}\end{a*}\$\$ZZDMTH0001ZZ
+math 1 1 0 env
+tex 32
+\begin{y}\begin{a*}\({x
+x\end{y}
+raw 32
+\begin{y}\begin{a*}\({x
+x\end{y}
+prepared 32
+\begin{y}\begin{a*}\({x
+x\end{y}
+katex 32
+\begin{y}\begin{a*}\({x
+x\end{y}
+end
+doc envs-1-326
+src 41
+\end{a*}\tag{T}\begin{a*b*}$$\)`\end{*a*}
+text 43
+\end{a*}\tag{T}\begin{a*b*}\$\$\)`\end{*a*}
+end
+doc envs-1-327
+src 58
+\(`> \end{y}\begin{y}\)\end{x}\end{x*}\end{ab**}\begin{a*}
+text 46
+ZZMTH0001ZZ\end{x}\end{x*}\end{ab**}\begin{a*}
+math 0 0 0 paren
+tex 19
+`> \end{y}\begin{y}
+raw 23
+\(`> \end{y}\begin{y}\)
+prepared 19
+`> \end{y}\begin{y}
+katex 19
+`> \end{y}\begin{y}
+end
+doc envs-1-328
+src 15
+\label{a}}x` b 
+text 15
+\label{a}}x` b 
+end
+doc envs-1-329
+src 57
+\end{align}\end{*a*}\begin{y}\end{x}\end{x}
+\begin{a*b*}$
+text 58
+\end{align}\end{*a*}\begin{y}\end{x}\end{x}
+\begin{a*b*}\$
+end
+doc envs-1-330
+src 75
+\begin{*a*}\begin{a*}\begin{x}$$\begin{y}\($\begin{x*}\begin{x}\end{ab**}$$
+src 63
+
+\begin{ab**}\end{*a*}\end{a*}x\label{a} a \end{align}\(\end{x}
+text 42
+\begin{*a*}\begin{a*}\begin{x}ZZDMTH0001ZZ
+text 63
+
+\begin{ab**}\end{*a*}\end{a*}x\label{a} a \end{align}\(\end{x}
+math 0 1 0 dollars
+tex 41
+\begin{y}\($\begin{x*}\begin{x}\end{ab**}
+raw 45
+$$\begin{y}\($\begin{x*}\begin{x}\end{ab**}$$
+prepared 41
+\begin{y}\($\begin{x*}\begin{x}\end{ab**}
+katex 41
+\begin{y}\($\begin{x*}\begin{x}\end{ab**}
+end
+doc envs-1-331
+src 49
+\end{a*}\begin{ab**}\end{a**}\tag{T}\begin{a*b*}
+
+text 49
+\end{a*}\begin{ab**}\end{a**}\tag{T}\begin{a*b*}
+
+end
+doc envs-1-332
+src 65
+> \end{align}x\begin{x}\end{a**}\(\end{x}\end{x}\end{x}\end{a*b*}
+src 35
+\end{a**} b \end{x}
+\begin{ab**} b 
+text 50
+> \end{align}xZZDMTH0001ZZ\end{x}\end{x}\end{a*b*}
+text 35
+\end{a**} b \end{x}
+\begin{ab**} b 
+math 0 1 0 env
+tex 27
+\begin{x}\end{a**}\(\end{x}
+raw 27
+\begin{x}\end{a**}\(\end{x}
+prepared 27
+\begin{x}\end{a**}\(\end{x}
+katex 27
+\begin{x}\end{a**}\(\end{x}
+end
+doc envs-1-333
+src 15
+\begin{align}\)
+text 15
+\begin{align}\)
+end
+doc envs-1-334
+src 60
+> \begin{*}
+> 
+> 
+> \begin{a**}> \begin{y}\end{a*}\begin{x*}
+text 42
+> \begin{*}
+> 
+> 
+> ZZDMTH0001ZZ\begin{x*}
+math 0 1 0 env
+tex 30
+\begin{a**}> \begin{y}\end{a*}
+raw 30
+\begin{a**}> \begin{y}\end{a*}
+prepared 30
+\begin{a**}> \begin{y}\end{a*}
+katex 30
+\begin{a**}> \begin{y}\end{a*}
+end
+doc envs-1-335
+src 81
+\tag{T}\begin{*}\end{x}\end{ab**}\) b \end{x}\begin{ab**}$$\\\begin{ab**}\end{x}$
+src 88
+\end{x}\)\)\end{a*b*} \begin{align}\begin{x}\end{x*}\end{a*}\end{y}\begin{x}\(\end{ab**}
+text 68
+\tag{T}\begin{*}\end{x}\end{ab**}\) b \end{x}\begin{ab**}ZZMTH0001ZZ
+text 88
+\end{x}\)\)\end{a*b*} \begin{align}\begin{x}\end{x*}\end{a*}\end{y}\begin{x}\(\end{ab**}
+math 0 0 0 dollar
+tex 22
+$\\\begin{ab**}\end{x}
+raw 24
+$$\\\begin{ab**}\end{x}$
+prepared 22
+$\\\begin{ab**}\end{x}
+katex 22
+$\\\begin{ab**}\end{x}
+end
+doc envs-1-336
+src 21
+\begin{x}$$ a \end{*}
+text 23
+\begin{x}\$\$ a \end{*}
+end
+doc envs-1-337
+src 79
+\begin{x}\begin{*}\end{*a*}\begin{x}x\begin{a**}\\\begin{a*}\end{x*}> \label{a}
+text 79
+\begin{x}\begin{*}\end{*a*}\begin{x}x\begin{a**}\\\begin{a*}\end{x*}> \label{a}
+end
+doc envs-1-338
+src 45
+\begin{x}x\end{a*b*}\begin{x}\(\end{x} b } a 
+src 59
+\end{x}\begin{a*b*}`
+\end{*}\end{x}\begin{a**} b \end{y}
+
+`
+text 39
+\begin{x}x\end{a*b*}ZZDMTH0001ZZ b } a 
+text 59
+\end{x}\begin{a*b*}`
+\end{*}\end{x}\begin{a**} b \end{y}
+
+`
+math 0 1 0 env
+tex 18
+\begin{x}\(\end{x}
+raw 18
+\begin{x}\(\end{x}
+prepared 18
+\begin{x}\(\end{x}
+katex 18
+\begin{x}\(\end{x}
+end
+doc envs-1-339
+src 60
+\begin{x} a x\begin{x}\end{*a*}\begin{a*}\end{*a*}\begin{x*}
+text 60
+\begin{x} a x\begin{x}\end{*a*}\begin{a*}\end{*a*}\begin{x*}
+end
+doc envs-1-340
+src 53
+\begin{*a*}> \end{x}{\end{a*}\end{a**} a \\\end{a*b*}
+text 53
+\begin{*a*}> \end{x}{\end{a*}\end{a**} a \\\end{a*b*}
+end
+doc envs-1-341
+src 25
+>  a 
+x}\end{x}\begin{x} 
+text 25
+>  a 
+x}\end{x}\begin{x} 
+end
+doc envs-1-342
+src 31
+\begin{*} a `\end{y}x\end{ab**}
+text 31
+\begin{*} a `\end{y}x\end{ab**}
+end
+doc envs-1-343
+src 48
+\end{a**}
+
+\begin{y}\\\end{y}\end{x}\)
+\label{a}
+text 42
+\end{a**}
+
+ZZDMTH0001ZZ\end{x}\)
+\label{a}
+math 0 1 0 env
+tex 18
+\begin{y}\\\end{y}
+raw 18
+\begin{y}\\\end{y}
+prepared 18
+\begin{y}\\\end{y}
+katex 18
+\begin{y}\\\end{y}
+end
+doc envs-1-344
+src 11
+\end{a*b*}}
+text 11
+\end{a*b*}}
+end
+doc envs-1-345
+src 26
+\begin{a*}\\\begin{ab**}\\
+text 26
+\begin{a*}\\\begin{ab**}\\
+end
+doc envs-1-346
+src 77
+`\begin{a*}\end{ab**}\label{a}\begin{x}\end{a**}\end{align}\end{x*}\end{ab**}
+src 42
+\begin{x}\end{y}
+\end{*a*}\end{y}\end{a**}
+text 77
+`\begin{a*}\end{ab**}\label{a}\begin{x}\end{a**}\end{align}\end{x*}\end{ab**}
+text 42
+\begin{x}\end{y}
+\end{*a*}\end{y}\end{a**}
+end
+doc envs-1-347
+src 19
+\label{a}\end{*a*}x
+text 19
+\label{a}\end{*a*}x
+end
+doc envs-1-348
+src 57
+\end{x}}$$\end{x}\end{a*b*}\begin{x}\begin{a*b*}\begin{x}
+text 59
+\end{x}}\$\$\end{x}\end{a*b*}\begin{x}\begin{a*b*}\begin{x}
+end
+doc envs-1-349
+src 44
+\begin{x}\end{*a*}\tag{T}\label{a}
+\end{*a*}
+text 44
+\begin{x}\end{*a*}\tag{T}\label{a}
+\end{*a*}
+end
+doc envs-1-350
+src 74
+}> \end{a**}\end{ab**}\begin{*a*}\begin{y}}> `\end{a*b*}\begin{*}\end{*a*}
+text 74
+}> \end{a**}\end{ab**}\begin{*a*}\begin{y}}> `\end{a*b*}\begin{*}\end{*a*}
+end
+doc envs-1-351
+src 2
+x$
+src 31
+\begin{a*b*}\end{a**}
+\begin{y}
+text 3
+x\$
+text 31
+\begin{a*b*}\end{a**}
+\begin{y}
+end
+doc envs-1-352
+src 83
+\begin{*}}\tag{T}\end{ab**} \begin{align}\end{x*}\end{*a*}$$\begin{align}\end{ab**}
+text 85
+\begin{*}}\tag{T}\end{ab**} \begin{align}\end{x*}\end{*a*}\$\$\begin{align}\end{ab**}
+end
+doc envs-1-353
+src 18
+$$\end{a*}\end{a*}
+text 20
+\$\$\end{a*}\end{a*}
+end
+doc envs-1-354
+src 79
+> \begin{*}\end{a**}\begin{y}
+\begin{x}\label{a}\begin{x} a \end{a*}\begin{y}> 
+src 16
+ b \begin{a*}\) 
+text 79
+> \begin{*}\end{a**}\begin{y}
+\begin{x}\label{a}\begin{x} a \end{a*}\begin{y}> 
+text 16
+ b \begin{a*}\) 
+end
+doc envs-1-355
+src 77
+\end{x}x\end{x}}\begin{align}\end{x}\end{x}\tag{T}\tag{T}
+
+\begin{y}\label{a}
+src 54
+> \end{a*b*}
+
+
+ b \end{x*}\end{x*}\({\end{x}\begin{x*}
+text 77
+\end{x}x\end{x}}\begin{align}\end{x}\end{x}\tag{T}\tag{T}
+
+\begin{y}\label{a}
+text 54
+> \end{a*b*}
+
+
+ b \end{x*}\end{x*}\({\end{x}\begin{x*}
+end
+doc envs-1-356
+src 77
+\begin{a*}\end{y}\begin{ab**}`\end{*}\end{x}\end{x*}
+\)\end{x} a \begin{ab**}
+src 47
+ a \end{x}\begin{y}\begin{ab**}\begin{y}\end{*}
+text 77
+\begin{a*}\end{y}\begin{ab**}`\end{*}\end{x}\end{x*}
+\)\end{x} a \begin{ab**}
+text 47
+ a \end{x}\begin{y}\begin{ab**}\begin{y}\end{*}
+end
+doc envs-1-357
+src 106
+\end{a**}\end{a**}\)\end{y}\end{ab**}\begin{y}\end{a*b*}\end{y}\end{*a*}\begin{ab**}\begin{a*}\begin{ab**}
+src 53
+\begin{a*b*}{ \end{x*}}\begin{x}$\end{a**}\begin{x}> 
+text 92
+\end{a**}\end{a**}\)\end{y}\end{ab**}ZZDMTH0001ZZ\end{*a*}\begin{ab**}\begin{a*}\begin{ab**}
+text 54
+\begin{a*b*}{ \end{x*}}\begin{x}\$\end{a**}\begin{x}> 
+math 0 1 0 env
+tex 26
+\begin{y}\end{a*b*}\end{y}
+raw 26
+\begin{y}\end{a*b*}\end{y}
+prepared 26
+\begin{y}\end{a*b*}\end{y}
+katex 26
+\begin{y}\end{a*b*}\end{y}
+end
+doc envs-1-358
+src 47
+\label{a}\tag{T}\begin{*a*}\end{y}$\begin{*} b 
+text 48
+\label{a}\tag{T}\begin{*a*}\end{y}\$\begin{*} b 
+end
+doc envs-1-359
+src 85
+> \end{a*b*}$\end{x}\end{x}\begin{a*}\end{y}
+
+\label{a}
+\begin{y}\end{align}\label{a}
+text 86
+> \end{a*b*}\$\end{x}\end{x}\begin{a*}\end{y}
+
+\label{a}
+\begin{y}\end{align}\label{a}
+end
+doc envs-1-360
+src 35
+{\end{align}\begin{y}
+
+\end{*a*}$$`
+src 51
+$\begin{align}\begin{a*b*} b }\begin{x}`\\\label{a}
+text 37
+{\end{align}\begin{y}
+
+\end{*a*}\$\$`
+text 52
+\$\begin{align}\begin{a*b*} b }\begin{x}`\\\label{a}
+end
+doc envs-1-361
+src 27
+\\ \end{a*}\end{x}\end{*}> 
+src 48
+\begin{y} b \end{y}\)\end{y}\end{a*b*}{\end{*a*}
+text 27
+\\ \end{a*}\end{x}\end{*}> 
+text 41
+ZZDMTH0001ZZ\)\end{y}\end{a*b*}{\end{*a*}
+math 1 1 0 env
+tex 19
+\begin{y} b \end{y}
+raw 19
+\begin{y} b \end{y}
+prepared 19
+\begin{y} b \end{y}
+katex 19
+\begin{y} b \end{y}
+end
+doc envs-1-362
+src 19
+\end{a*}} b \end{*}
+text 19
+\end{a*}} b \end{*}
+end
+doc envs-1-363
+src 57
+\end{y}\end{a*b*}\end{ab**}> \end{a**}x\end{y}\begin{*a*}
+text 57
+\end{y}\end{a*b*}\end{ab**}> \end{a**}x\end{y}\begin{*a*}
+end
+doc envs-1-364
+src 43
+\end{x*}$$\end{*a*}
+\begin{*a*}x\\\(\end{x}
+src 53
+$\begin{a*}\begin{align}\begin{a*b*}x\begin{x}\tag{T}
+text 45
+\end{x*}\$\$\end{*a*}
+\begin{*a*}x\\\(\end{x}
+text 54
+\$\begin{a*}\begin{align}\begin{a*b*}x\begin{x}\tag{T}
+end
+doc envs-1-365
+src 20
+> \end{x}\end{a**}> 
+text 20
+> \end{x}\end{a**}> 
+end
+doc envs-1-366
+src 80
+\begin{*a*}\begin{ab**}\begin{y}`\begin{y}\end{a**}\begin{*}\begin{*a*}\begin{y}
+text 80
+\begin{*a*}\begin{ab**}\begin{y}`\begin{y}\end{a**}\begin{*}\begin{*a*}\begin{y}
+end
+doc envs-1-367
+src 19
+ \label{a}\begin{y}
+text 19
+ \label{a}\begin{y}
+end
+doc envs-1-368
+src 17
+\end{y}\tag{T}\)
+
+text 17
+\end{y}\tag{T}\)
+
+end
+doc envs-1-369
+src 8
+\end{x}x
+src 18
+\(\tag{T}\begin{x}
+text 8
+\end{x}x
+text 18
+\(\tag{T}\begin{x}
+end
+doc envs-1-370
+src 62
+>  b {\label{a}\end{a*b*}x\end{a*}\begin{y}\begin{*}\begin{a*}
+src 34
+\begin{a*}\end{x}\end{x*}\begin{x}
+text 62
+>  b {\label{a}\end{a*b*}x\end{a*}\begin{y}\begin{*}\begin{a*}
+text 34
+\begin{a*}\end{x}\end{x*}\begin{x}
+end
+doc envs-1-371
+src 22
+\begin{a*b*}\end{y}\)}
+text 22
+\begin{a*b*}\end{y}\)}
+end
+doc envs-1-372
+src 67
+x\begin{align}\end{a*}\begin{y}\begin{*}$\end{a*b*}\tag{T}\end{*a*}
+text 68
+x\begin{align}\end{a*}\begin{y}\begin{*}\$\end{a*b*}\tag{T}\end{*a*}
+end
+doc envs-1-373
+src 22
+{> \begin{x*}`\end{y}}
+text 22
+{> \begin{x*}`\end{y}}
+end
+doc envs-1-374
+src 17
+> \begin{x*}`x b 
+text 17
+> \begin{x*}`x b 
+end
+doc envs-1-375
+src 9
+\end{y}> 
+src 83
+\begin{ab**}\label{a}` b $$\begin{a**}\end{a**} a  b \begin{x}\end{ab**}\end{a**}> 
+text 9
+\end{y}> 
+text 23
+ZZDMTH0001ZZ\end{a**}> 
+math 1 1 0 env
+tex 72
+\begin{ab**}\label{a}` b $$\begin{a**}\end{a**} a  b \begin{x}\end{ab**}
+raw 72
+\begin{ab**}\label{a}` b $$\begin{a**}\end{a**} a  b \begin{x}\end{ab**}
+prepared 63
+\begin{ab**}` b $$\begin{a**}\end{a**} a  b \begin{x}\end{ab**}
+katex 63
+\begin{ab**}` b $$\begin{a**}\end{a**} a  b \begin{x}\end{ab**}
+end
+doc envs-1-376
+src 34
+\begin{x}\begin{x}\end{a*}\end{x*}
+src 57
+> \begin{ab**}\end{a*}\label{a}\end{a**}\end{a**}$\end{y}
+text 34
+\begin{x}\begin{x}\end{a*}\end{x*}
+text 58
+> \begin{ab**}\end{a*}\label{a}\end{a**}\end{a**}\$\end{y}
+end
+doc envs-1-377
+src 34
+`$$\end{*a*}\begin{*a*}\begin{a**}
+text 36
+`\$\$\end{*a*}\begin{*a*}\begin{a**}
+end
+doc envs-1-378
+src 71
+\begin{*a*}\end{ab**}\end{x}\end{x}`x$\begin{x*} \end{a*b*}\begin{*a*}
+
+text 72
+\begin{*a*}\end{ab**}\end{x}\end{x}`x\$\begin{x*} \end{a*b*}\begin{*a*}
+
+end
+doc envs-1-379
+src 62
+ b $\end{ab**}`\end{ab**}\begin{x*}\end{a**}\)\end{x*}\end{a*}
+text 46
+ b \$\end{ab**}`\end{ab**}ZZDMTH0001ZZ\end{a*}
+math 0 1 0 env
+tex 29
+\begin{x*}\end{a**}\)\end{x*}
+raw 29
+\begin{x*}\end{a**}\)\end{x*}
+prepared 29
+\begin{x*}\end{a**}\)\end{x*}
+katex 29
+\begin{x*}\end{a**}\)\end{x*}
+end
+doc envs-1-380
+src 19
+\end{a*}\end{a**}> 
+text 19
+\end{a*}\end{a**}> 
+end
+doc envs-1-381
+src 68
+\end{x}\begin{a*}\end{*}x\end{x}\end{y}\end{x*}\end{x}\end{x}\end{*}
+text 68
+\end{x}\begin{a*}\end{*}x\end{x}\end{y}\end{x*}\end{x}\end{x}\end{*}
+end
+doc envs-1-382
+src 21
+> \tag{T} a \begin{x}
+text 21
+> \tag{T} a \begin{x}
+end
+doc envs-1-383
+src 23
+$$\begin{x}\(`\begin{x}
+text 25
+\$\$\begin{x}\(`\begin{x}
+end
+doc envs-1-384
+src 37
+ a \begin{x}\end{a*b*}
+{}\begin{a**}{
+text 37
+ a \begin{x}\end{a*b*}
+{}\begin{a**}{
+end
+doc envs-1-385
+src 78
+\label{a}\\\end{x}\end{a*b*}\end{x}\begin{ab**}\end{a*b*}\end{x*} b \end{ab**}
+text 47
+\label{a}\\\end{x}\end{a*b*}\end{x}ZZDMTH0001ZZ
+math 0 1 0 env
+tex 43
+\begin{ab**}\end{a*b*}\end{x*} b \end{ab**}
+raw 43
+\begin{ab**}\end{a*b*}\end{x*} b \end{ab**}
+prepared 43
+\begin{ab**}\end{a*b*}\end{x*} b \end{ab**}
+katex 43
+\begin{ab**}\end{a*b*}\end{x*} b \end{ab**}
+end
+doc envs-1-386
+src 43
+>  \begin{a**}\end{a*b*}\tag{T}{\end{ab**}x
+src 14
+\begin{x*}{
+> 
+text 43
+>  \begin{a**}\end{a*b*}\tag{T}{\end{ab**}x
+text 14
+\begin{x*}{
+> 
+end
+doc envs-1-387
+src 64
+> \\\end{y}\begin{a*b*}\end{x}\begin{y}\tag{T}
+> 
+> \begin{y}x\\
+text 64
+> \\\end{y}\begin{a*b*}\end{x}\begin{y}\tag{T}
+> 
+> \begin{y}x\\
+end
+doc envs-1-388
+src 27
+\tag{T}$\end{y}
+
+\begin{a*}
+text 28
+\tag{T}\$\end{y}
+
+\begin{a*}
+end
+doc envs-1-389
+src 77
+\end{x}\end{ab**}\end{x*}\begin{y}\end{a**}
+\end{a*b*}\end{x*}\end{x*}\end{*}
+src 80
+}$
+
+\begin{*}\end{a**}\begin{ab**}\begin{x}\begin{x*}\begin{a*}\end{ab**}\end{x}
+text 77
+\end{x}\end{ab**}\end{x*}\begin{y}\end{a**}
+\end{a*b*}\end{x*}\end{x*}\end{*}
+text 42
+}\$
+
+\begin{*}\end{a**}ZZDMTH0001ZZ\end{x}
+math 1 1 0 env
+tex 51
+\begin{ab**}\begin{x}\begin{x*}\begin{a*}\end{ab**}
+raw 51
+\begin{ab**}\begin{x}\begin{x*}\begin{a*}\end{ab**}
+prepared 51
+\begin{ab**}\begin{x}\begin{x*}\begin{a*}\end{ab**}
+katex 51
+\begin{ab**}\begin{x}\begin{x*}\begin{a*}\end{ab**}
+end
+doc envs-1-390
+src 21
+ 
+{\begin{x}\begin{*}
+src 46
+}\end{*a*}\begin{y}\begin{*}\begin{y}\begin{*}
+text 21
+ 
+{\begin{x}\begin{*}
+text 46
+}\end{*a*}\begin{y}\begin{*}\begin{y}\begin{*}
+end
+doc envs-1-391
+src 85
+\end{x}\end{x}\end{a**}
+
+\end{align} b \begin{align}\begin{align}\begin{y}\begin{a**}
+text 85
+\end{x}\end{x}\end{a**}
+
+\end{align} b \begin{align}\begin{align}\begin{y}\begin{a**}
+end
+doc envs-1-392
+src 50
+\begin{x*}{\end{y}\begin{y}\end{align}\begin{ab**}
+text 50
+\begin{x*}{\end{y}\begin{y}\end{align}\begin{ab**}
+end
+doc envs-1-393
+src 34
+\begin{a*}\begin{ab**}\)\end{y}$$ 
+src 67
+` b > \end{*}\)\begin{*a*}\end{a*}\begin{ab**}\)\end{x*}\begin{*a*}
+text 36
+\begin{a*}\begin{ab**}\)\end{y}\$\$ 
+text 67
+` b > \end{*}\)\begin{*a*}\end{a*}\begin{ab**}\)\end{x*}\begin{*a*}
+end
+doc envs-1-394
+src 76
+\end{a*b*}\end{a*}$\begin{align}
+\end{a*}> \end{align}\\\begin{a*b*}\end{x*}
+text 54
+\end{a*b*}\end{a*}\$ZZDMTH0001ZZ\\\begin{a*b*}\end{x*}
+math 0 1 0 env
+tex 35
+\begin{align}
+\end{a*}> \end{align}
+raw 35
+\begin{align}
+\end{a*}> \end{align}
+prepared 45
+\begin{align*}
+\end{a*}>  \tag{1}\end{align*}
+katex 45
+\begin{align*}
+\end{a*}>  \tag{1}\end{align*}
+end
+doc envs-1-395
+src 50
+> x\begin{y}\end{*}}\end{a*}
+> \end{y}\begin{*a*}{
+text 27
+> xZZDMTH0001ZZ\begin{*a*}{
+math 0 1 0 env
+tex 33
+\begin{y}\end{*}}\end{a*}
+\end{y}
+raw 35
+\begin{y}\end{*}}\end{a*}
+> \end{y}
+prepared 33
+\begin{y}\end{*}}\end{a*}
+\end{y}
+katex 33
+\begin{y}\end{*}}\end{a*}
+\end{y}
+end
+doc envs-1-396
+src 51
+\begin{a**}\(
+ {\end{align}$$\begin{a**}\begin{y}
+
+
+text 53
+\begin{a**}\(
+ {\end{align}\$\$\begin{a**}\begin{y}
+
+
+end
+doc envs-1-397
+src 44
+> \begin{y}> \end{x}\begin{y}\begin{align}\)
+text 44
+> \begin{y}> \end{x}\begin{y}\begin{align}\)
+end
+doc envs-1-398
+src 84
+\end{a**}\begin{x}\begin{ab**}\end{x}\end{x}\begin{y}{\begin{ab**}\end{x}\end{align}
+src 73
+`\begin{x}x\tag{T}\end{x}\end{a*}
+
+\begin{*}
+
+\begin{y}\begin{x}\begin{y}
+text 68
+\end{a**}ZZDMTH0001ZZ\end{x}\begin{y}{\begin{ab**}\end{x}\end{align}
+text 61
+`ZZDMTH0001ZZ\end{a*}
+
+\begin{*}
+
+\begin{y}\begin{x}\begin{y}
+math 0 1 0 env
+tex 28
+\begin{x}\begin{ab**}\end{x}
+raw 28
+\begin{x}\begin{ab**}\end{x}
+prepared 28
+\begin{x}\begin{ab**}\end{x}
+katex 28
+\begin{x}\begin{ab**}\end{x}
+math 1 1 0 env
+tex 24
+\begin{x}x\tag{T}\end{x}
+raw 24
+\begin{x}x\tag{T}\end{x}
+prepared 24
+\begin{x}x\tag{T}\end{x}
+katex 24
+\begin{x}x\tag{T}\end{x}
+end
+doc envs-1-399
+src 13
+x\begin{a*b*}
+text 13
+x\begin{a*b*}
+end
+count 400

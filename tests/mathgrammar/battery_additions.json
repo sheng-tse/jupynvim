@@ -1,0 +1,13 @@
+[
+ ["settled-digit-both-sides", "2$x$3"],
+ ["settled-price-decimal", "It costs $20.50 each."],
+ ["settled-prices", "$5 and $10 per item, $1,000 total or $20.50 each."],
+ ["settled-display-blank-line", "$$\na\n\nb\n$$"],
+ ["settled-dbl-paren", "\\\\(a + b\\\\)"],
+ ["settled-dbl-bracket", "\\\\[x\\\\]"],
+ ["settled-dbl-bracket-lines", "\\\\[\nc + d\n\\\\]"],
+ ["settled-newcommand-R", "$\\newcommand{\\R}{\\mathbb{R}}$ and $\\R^n$"],
+ ["settled-multline", "$$\\begin{multline}a\\\\b\\\\c\\end{multline}$$"],
+ ["settled-escaped-dollar-in-math", "$\\$4 + x$"],
+ ["settled-escaped-dollar-text", "a \\$ b"]
+]

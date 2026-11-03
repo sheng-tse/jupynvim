@@ -1,0 +1,145 @@
+JNVMATH 2
+doc settled-digit-both-sides
+src 5
+2$x$3
+text 7
+2\$x\$3
+end
+doc settled-price-decimal
+src 21
+It costs $20.50 each.
+text 22
+It costs \$20.50 each.
+end
+doc settled-prices
+src 49
+$5 and $10 per item, $1,000 total or $20.50 each.
+text 53
+\$5 and \$10 per item, \$1,000 total or \$20.50 each.
+end
+doc settled-display-blank-line
+src 10
+$$
+a
+
+b
+$$
+text 14
+\$\$
+a
+
+b
+\$\$
+end
+doc settled-dbl-paren
+src 11
+\\(a + b\\)
+text 11
+ZZMTH0001ZZ
+math 0 0 0 doubled
+tex 5
+a + b
+raw 11
+\\(a + b\\)
+prepared 5
+a + b
+katex 5
+a + b
+end
+doc settled-dbl-bracket
+src 7
+\\[x\\]
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 doubled
+tex 1
+x
+raw 7
+\\[x\\]
+prepared 1
+x
+katex 1
+x
+end
+doc settled-dbl-bracket-lines
+src 13
+\\[
+c + d
+\\]
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 doubled
+tex 5
+c + d
+raw 13
+\\[
+c + d
+\\]
+prepared 5
+c + d
+katex 5
+c + d
+end
+doc settled-newcommand-R
+src 40
+$\newcommand{\R}{\mathbb{R}}$ and $\R^n$
+text 27
+ZZMTH0001ZZ and ZZMTH0002ZZ
+math 0 0 0 dollar
+tex 27
+\newcommand{\R}{\mathbb{R}}
+raw 29
+$\newcommand{\R}{\mathbb{R}}$
+prepared 27
+\newcommand{\R}{\mathbb{R}}
+katex 29
+\renewcommand{\R}{\mathbb{R}}
+math 0 0 0 dollar
+tex 4
+\R^n
+raw 6
+$\R^n$
+prepared 4
+\R^n
+katex 4
+\R^n
+end
+doc settled-multline
+src 41
+$$\begin{multline}a\\b\\c\end{multline}$$
+text 12
+ZZDMTH0001ZZ
+math 0 1 1 dollars
+tex 37
+\begin{multline}a\\b\\c\end{multline}
+raw 41
+$$\begin{multline}a\\b\\c\end{multline}$$
+prepared 45
+\begin{gather*}a \\b \\c \tag{1}\end{gather*}
+katex 45
+\begin{gather*}a \\b \\c \tag{1}\end{gather*}
+mathjax 49
+\begin{multline*}a \\b \\c \tag{1}\end{multline*}
+end
+doc settled-escaped-dollar-in-math
+src 9
+$\$4 + x$
+text 11
+ZZMTH0001ZZ
+math 0 0 0 dollar
+tex 7
+\$4 + x
+raw 9
+$\$4 + x$
+prepared 7
+\$4 + x
+katex 7
+\$4 + x
+end
+doc settled-escaped-dollar-text
+src 6
+a \$ b
+text 6
+a \$ b
+end
+count 11
