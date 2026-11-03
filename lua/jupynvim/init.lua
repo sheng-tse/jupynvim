@@ -32,7 +32,7 @@ M.config = {
   -- "kitty":       real PNG via direct placement (lives at fixed screen coords)
   -- "chafa":       ASCII art fallback for terminals without graphics support
   image_renderer = "placeholder",
-  -- Inline image grid size in terminal cells (rows x cols). Default 32x96
+  -- Inline image grid size in terminal cells (rows x cols). Default 16x48
   -- works for typical matplotlib plots; bump if your terminal is large and
   -- you want sharper output, or shrink for compact display. Affects the
   -- Kitty Unicode placeholder rendering. Reported as #7 by medwatt.
