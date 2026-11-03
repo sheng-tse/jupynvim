@@ -1,0 +1,33 @@
+[package]
+name = "libjupynvim"
+version = "0.4.6"
+edition = "2021"
+description = "In-process library for jupynvim, loaded by Neovim through LuaJIT's FFI"
+license = "MIT"
+publish = false
+
+[lib]
+name = "jupynvim"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+
+# Fake libraries for the loader tests: standalone, they never use this crate.
+[[example]]
+name = "jnv_fake"
+path = "examples/jnv_fake.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "jnv_fake_nosym"
+path = "examples/jnv_fake_nosym.rs"
+crate-type = ["cdylib"]
+
+# Its own binary without the test harness, which captures what a test
+# thread's panics print and would hide a print from the check.
+[[test]]
+name = "no_stderr"
+path = "tests/no_stderr.rs"
+harness = false

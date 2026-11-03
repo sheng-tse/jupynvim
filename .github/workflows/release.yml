@@ -1,8 +1,9 @@
 name: release
 
-# Build prebuilt jupynvim-core binaries for every tag push.
-# The lua/jupynvim/install.lua module downloads these so users don't
-# need a Rust toolchain locally.
+# Build prebuilt jupynvim-core binaries and the in-process library
+# (libjupynvim) for every tag push, and publish them with a SHA256SUMS
+# that lists every one. The lua/jupynvim/install.lua module downloads
+# these so users don't need a Rust toolchain locally.
 
 on:
   push:
@@ -51,7 +52,7 @@ jobs:
 
       - name: build
         working-directory: core
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release -p jupynvim-core --target ${{ matrix.target }}
 
       - name: stage artifact
         run: |
@@ -69,9 +70,81 @@ jobs:
           path: dist/jupynvim-core-*
           if-no-files-found: error
 
+  build-lib:
+    name: build libjupynvim ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            ext: dylib
+          # Cross-built on the arm64 runner and checked under Rosetta.
+          - os: macos-14
+            target: x86_64-apple-darwin
+            ext: dylib
+            arch: x86_64
+          # Linked against glibc 2.17 symbols, so it loads into Neovim on any
+          # glibc Linux from 2014 on, cluster login nodes included.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: so
+            glibc: "2.17"
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            ext: so
+            glibc: "2.17"
+    steps:
+      - uses: actions/checkout@v7
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: zig and cargo-zigbuild
+        if: matrix.glibc
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install ziglang==0.16.0 cargo-zigbuild==0.22.3
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+      - name: cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: build
+        working-directory: core
+        run: |
+          if [ -n "${{ matrix.glibc }}" ]; then
+            cargo zigbuild --release -p libjupynvim --target ${{ matrix.target }}.${{ matrix.glibc }}
+          else
+            cargo build --release -p libjupynvim --target ${{ matrix.target }}
+          fi
+      - name: stage and check
+        run: |
+          mkdir -p dist
+          out="dist/libjupynvim-${{ matrix.target }}.${{ matrix.ext }}"
+          cp "core/target/${{ matrix.target }}/release/libjupynvim.${{ matrix.ext }}" "$out"
+          glibc="${{ matrix.glibc }}"
+          python3 tests/lib/native_artifact.py "$out" --target ${{ matrix.target }} ${glibc:+--max-glibc $glibc}
+          cflags=""; ldl=""; run=""
+          if [ "${{ matrix.arch }}" = x86_64 ]; then cflags="-arch x86_64"; run="arch -x86_64"; fi
+          if [ "$(uname -s)" = Linux ]; then ldl="-ldl"; fi
+          cc -std=gnu99 -Wall -Wextra -Werror $cflags -I core/native/include tests/native/abi_check.c -o "$RUNNER_TEMP/abi_check" $ldl
+          # The installer wants the library to report the plugin's version,
+          # the first version line of core/Cargo.toml.
+          version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' core/Cargo.toml | head -n 1)
+          test -n "$version"
+          $run "$RUNNER_TEMP/abi_check" "$out" "$version"
+          ls -lah dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: libjupynvim-${{ matrix.target }}
+          path: dist/libjupynvim-*
+          if-no-files-found: error
+
   release:
     name: publish release
-    needs: build
+    needs: [build, build-lib]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -85,7 +158,7 @@ jobs:
       - name: generate SHA256SUMS
         run: |
           cd artifacts
-          sha256sum jupynvim-core-* > SHA256SUMS
+          sha256sum jupynvim-core-* libjupynvim-* > SHA256SUMS
           cat SHA256SUMS
 
       # A tag with a suffix, like v0.4.6-beta.1, is a pre-release, so GitHub

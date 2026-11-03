@@ -73,3 +73,8 @@ strip = true
 
 [profile.dev]
 opt-level = 1
+
+[workspace]
+members = [".", "native"]
+default-members = [".", "native"]
+resolver = "2"
