@@ -160,7 +160,7 @@ impl Server {
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
             .ok_or_else(|| anyhow!("argv required"))?;
         if argv.is_empty() { return Err(anyhow!("argv empty")); }
-        let mut cmd = tokio::process::Command::new(&argv[0]);
+        let mut cmd = crate::kernel::command(&argv[0]);
         cmd.args(&argv[1..]);
         if let Some(cwd) = p.get("cwd").and_then(|v| v.as_str()) {
             let path = if let Some(rest) = cwd.strip_prefix("~/") {

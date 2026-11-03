@@ -115,13 +115,15 @@ jnv_tmux_stop() {
 # _jnv_plain_socket: the socket a tmux client run around the wrapper (no -L
 # or -S, no TMUX) would use with this environment, as tmux itself reports it;
 # tmux is not run at all unless TMUX_TMPDIR is the run dir or a dir in it,
-# so this never reaches the user's server.
+# so this never reaches the user's server. env is a program of its own, so
+# it runs the tmux binary from PATH and never this file's tmux function
+# (command is a shell builtin, not a program on every system).
 _jnv_plain_socket() {
   case "${TMUX_TMPDIR:-}" in
     "$JNV_RUN_ROOT"|"$JNV_RUN_ROOT"/*) ;;
     *) echo "(TMUX_TMPDIR is ${TMUX_TMPDIR:-unset}, not in the run)"; return 1 ;;
   esac
-  env -u TMUX command tmux ls 2>&1 \
+  env -u TMUX tmux ls 2>&1 \
     | sed -n -e 's/^no server running on //p' -e 's/^error connecting to \(.*\) ([^)]*)$/\1/p' \
     | head -n 1
 }

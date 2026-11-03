@@ -43,6 +43,9 @@ tracing-appender = "0.2"
 # Filesystem
 dirs = "5"
 
+# Unix calls: effective uid, host id and hostname for the private runtime dir
+libc = "0.2"
+
 # Misc
 bytes = "1"
 parking_lot = "0.12"
@@ -64,6 +67,10 @@ regex = "1"
 # inotify on Linux, kqueue on BSD. Notifies client via fs_event for
 # auto-refresh in the file browser and external-change detection.
 notify = "6"
+
+[dev-dependencies]
+# Raw sockets without SO_REUSEADDR, to check the ports held for a kernel
+socket2 = "0.6"
 
 [profile.release]
 lto = "thin"

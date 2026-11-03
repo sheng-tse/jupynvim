@@ -113,6 +113,8 @@ impl Server {
     pub(super) async fn save(&self, p: Json) -> Result<Json> {
         let sid = p.get("session_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("session_id"))?;
         let s = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?;
+        // the exit waits for a save in progress
+        let _writing = crate::writes::hold().ok_or_else(|| anyhow!("the backend is exiting; not saved"))?;
         s.save()?;
         Ok(json!({ "ok": true }))
     }
@@ -139,6 +141,8 @@ impl Server {
         let sid = p.get("session_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("session_id"))?;
         let path = arg_path(&p, "path")?;
         let s = self.sessions.get(sid).ok_or_else(|| anyhow!("no session"))?;
+        // the exit waits for a save in progress
+        let _writing = crate::writes::hold().ok_or_else(|| anyhow!("the backend is exiting; not saved"))?;
         s.save_to(&path)?;
         Ok(json!({ "ok": true }))
     }

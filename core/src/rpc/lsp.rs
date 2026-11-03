@@ -15,12 +15,11 @@ impl Server {
     // speaks JSON-RPC tables and does URI rewriting.
     // ===========================================================
     pub(super) async fn lsp_start(self: Arc<Self>, p: Json) -> Result<Json> {
-        use tokio::process::Command;
         let argv: Vec<String> = p.get("cmd").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
             .ok_or_else(|| anyhow!("cmd required"))?;
         if argv.is_empty() { return Err(anyhow!("cmd empty")); }
-        let mut cmd = Command::new(&argv[0]);
+        let mut cmd = crate::kernel::command(&argv[0]);
         cmd.args(&argv[1..]);
         if let Some(cwd) = p.get("cwd").and_then(|v| v.as_str()) {
             let path = if let Some(rest) = cwd.strip_prefix("~/") {

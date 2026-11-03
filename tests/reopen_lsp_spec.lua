@@ -303,7 +303,18 @@ do
     source = "x = 1", execution_count = vim.NIL, outputs = {} } }, nbformat = 4, nbformat_minor = 5,
     metadata = { kernelspec = { display_name = "N", language = "python", name = "jn-no-such-kernel" } } }))
   f:close()
-  buf = edit(p)
+  -- The plugin starts a kernel 50 ms after open. For a kernel name that does
+  -- not exist it falls back to python3 by language, and that start reports
+  -- its interpreter, which can land inside edit()'s wait. This check is about
+  -- what the open itself found, so the start of this one open is held back.
+  local start_kernel, held = J.start_kernel, 0
+  J.start_kernel = function() held = held + 1 end
+  local ok, res = pcall(edit, p)
+  J.start_kernel = start_kernel
+  if not ok then error(res, 0) end
+  buf = res
+  chk("the kernel start after this open is held back (precondition)", held > 0,
+      held .. " start(s) held")
   c = pyright_of(buf)
   chk("nor does one with no interpreter found",
       NB.get(buf) and NB.get(buf).kernel_python_path == nil

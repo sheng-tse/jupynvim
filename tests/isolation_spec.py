@@ -11,9 +11,12 @@ backend_integration.py.
      in the run dir
   P2 core.log goes to JUPYNVIM_LOG_DIR
   P3 the python3 kernelspec is the run's own
-  P4 the kernel's connection file, command line and environment are in it,
-     and the caller's Python startup file, path and matplotlib backend are not
-  P5 the kernel exits with the backend
+  P4 the kernel's connection file (in the run's runtime dir,
+     $XDG_RUNTIME_DIR/jupynvim, mode 0600 in 0700 dirs), command line and
+     environment are in it, and the caller's Python startup file, path and
+     matplotlib backend are not
+  P5 the kernel exits with the backend, the backend's runtime dir goes with
+     it, and nothing is in the old location ($TMPDIR/jupynvim)
 """
 import glob
 import json
@@ -111,6 +114,10 @@ def main():
 
     cl = Client()
     sid, nb_path, kpids = None, None, []
+    # The backend's runtime dir: $XDG_RUNTIME_DIR/jupynvim/core-<host>-<pid>-<rand>/
+    runtime = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""), "jupynvim")
+    backend_dir = os.path.join(runtime, f"core-*-{cl.p.pid}-*")
+    backend_dirs = []
     try:
         # P2
         err, res = cl.call("ping", {})
@@ -148,13 +155,29 @@ def main():
         if not (err is None and res and "session_id" in res):
             return
         sid = res["session_id"]
-        conn = os.path.join(tmpdir, "jupynvim", "kernel-*.json")
+        conn = os.path.join(runtime, "core-*", "kernel-*", "connection.json")
         before = set(glob.glob(conn))
         err, _ = cl.call("start_kernel", {"session_id": sid}, timeout=30)
         report("P4 start_kernel returns", err is None, str(err))
         new = sorted(set(glob.glob(conn)) - before)
-        report("P4 one new connection file, in the run dir",
-               len(new) == 1 and all(under(p) for p in new), f"new files: {new}")
+        report("P4 one new connection file, in the run's runtime dir",
+               len(new) == 1 and all(under(p) for p in new), f"new files in {runtime}: {new}")
+        backend_dirs = glob.glob(backend_dir)
+
+        def modes():
+            f = new[0]
+            kdir = os.path.dirname(f)
+            places = ((f, 0o600), (kdir, 0o700), (os.path.dirname(kdir), 0o700), (runtime, 0o700))
+            return {p: f"{os.stat(p).st_mode & 0o777:o}" for p, _ in places}, \
+                all(os.stat(p).st_mode & 0o777 == want for p, want in places)
+        if len(new) == 1:
+            try:
+                got, ok = modes()
+            except OSError as e:
+                got, ok = repr(e), False
+        else:
+            got, ok = "no connection file in the run's runtime dir", False
+        report("P4 the connection file is 0600 in 0700 dirs", ok, got)
 
         kpids = poll(lambda: _kernel_pids_of(cl.p.pid), 5) or []
         cmds = {p: cmdline(p) for p in kpids}
@@ -208,6 +231,17 @@ def main():
                 except Exception:  # the backend may be gone already
                     pass
         cl.stop()
+        # The dir the backend had while its kernel ran must be gone with it.
+        left = glob.glob(backend_dir)
+        report("P5 the backend's runtime dir is gone", backend_dirs and not left,
+               f"left: {left}" if left else f"no backend dir {backend_dir} while the kernel ran")
+        legacy = os.path.join(tmpdir, "jupynvim")
+        try:
+            in_legacy = sorted(os.listdir(legacy))
+        except OSError:
+            in_legacy = []
+        report("P5 nothing in TMPDIR/jupynvim", not in_legacy,
+               f"{legacy}: {in_legacy[:5]}{' ...' if len(in_legacy) > 5 else ''}")
         if kpids:
             survivors = _wait_all_dead(kpids, timeout=6)
             report("P5 the kernel is gone within 6s of the backend", not survivors,

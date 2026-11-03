@@ -101,6 +101,8 @@ impl Server {
             .ok_or_else(|| anyhow!("content_b64 required"))?;
         let bytes = base64::engine::general_purpose::STANDARD.decode(b64)
             .map_err(|e| anyhow!("base64 decode: {e}"))?;
+        // the exit waits for a write in progress, its parent dirs included
+        let _writing = crate::writes::hold().ok_or_else(|| anyhow!("the backend is exiting; not written"))?;
         if let Some(parent) = path.parent() {
             // Create parent dir if it doesn't exist (parents=true by default for writes)
             let _ = tokio::fs::create_dir_all(parent).await;
@@ -113,6 +115,8 @@ impl Server {
     pub(super) async fn fs_mkdir(&self, p: Json) -> Result<Json> {
         let path = arg_path(&p, "path")?;
         let parents = p.get("parents").and_then(|v| v.as_bool()).unwrap_or(true);
+        // the exit waits for a change to the user's files in progress
+        let _changing = crate::writes::hold().ok_or_else(|| anyhow!("the backend is exiting; not created"))?;
         if parents {
             tokio::fs::create_dir_all(&path).await?;
         } else {
@@ -126,6 +130,9 @@ impl Server {
         let recursive = p.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
         let meta = tokio::fs::symlink_metadata(&path).await
             .with_context(|| format!("stat {}", path.display()))?;
+        // the exit waits for a removal in progress (a recursive one cut short
+        // would leave a half-removed tree)
+        let _changing = crate::writes::hold().ok_or_else(|| anyhow!("the backend is exiting; not removed"))?;
         if meta.is_dir() && !meta.file_type().is_symlink() {
             if recursive {
                 tokio::fs::remove_dir_all(&path).await?;
@@ -141,6 +148,7 @@ impl Server {
     pub(super) async fn fs_rename(&self, p: Json) -> Result<Json> {
         let src = arg_path(&p, "src")?;
         let dst = arg_path(&p, "dst")?;
+        let _changing = crate::writes::hold().ok_or_else(|| anyhow!("the backend is exiting; not renamed"))?;
         tokio::fs::rename(&src, &dst).await
             .with_context(|| format!("rename {} -> {}", src.display(), dst.display()))?;
         Ok(json!({ "ok": true }))
@@ -214,5 +222,67 @@ impl Server {
             .ok_or_else(|| anyhow!("watcher_id required"))? as u32;
         self.watchers.remove(&id);
         Ok(json!({ "ok": true }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    // F1: once the exit began, a file write, a mkdir, a removal and a
+    // rename are refused and change nothing, not even a write's missing
+    // parent dirs. The writes gate is the whole process's, so the checks run
+    // in a process of their own: this test binary, running only f1_child.
+    #[test]
+    fn f1_changes_refused_at_exit_change_nothing() {
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new(&exe)
+            .args(["rpc::fs::tests::f1_child", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("JVTEST_F1", "1")
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "{text}");
+        assert!(text.contains("f1_child: every check ran"), "{text}");
+    }
+
+    #[test]
+    #[ignore = "run by f1 in a process of its own: it closes the process's writes gate"]
+    fn f1_child() {
+        if std::env::var_os("JVTEST_F1").is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("jvtest-fs-{}-f1", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let keep = dir.join("keep");
+        std::fs::write(&keep, b"x").unwrap();
+        crate::writes::close(Duration::ZERO);
+        let s = Server::new();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let path = |p: &PathBuf| p.to_string_lossy().into_owned();
+        let errs = rt.block_on(async {
+            let new = dir.join("new").join("sub").join("file.txt");
+            let content = base64::engine::general_purpose::STANDARD.encode(b"hello");
+            vec![
+                s.fs_write(json!({"path": path(&new), "content_b64": content})).await.err(),
+                s.fs_mkdir(json!({"path": path(&dir.join("made"))})).await.err(),
+                s.fs_rm(json!({"path": path(&keep)})).await.err(),
+                s.fs_rename(json!({"src": path(&keep), "dst": path(&dir.join("moved"))})).await.err(),
+            ]
+        });
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        for (what, e) in ["write", "mkdir", "rm", "rename"].iter().zip(&errs) {
+            let msg = e.as_ref().map(|e| e.to_string()).unwrap_or_default();
+            assert!(msg.starts_with("the backend is exiting"), "{what} at exit: {msg:?}");
+        }
+        assert_eq!(left, vec!["keep".to_string()], "a change refused at exit changed the dir");
+        println!("f1_child: every check ran");
     }
 }

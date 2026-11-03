@@ -29,7 +29,13 @@ JNV_RUN_ROOT) when all three hold:
         $JNV_RUN_ROOT/owner.info) or a recorded server's, or in a session
         whose leader still runs and was started by the run (a pane of the
         run's tmux server): an orphaned backend or kernel, or what the run
-        left when its owner was killed.
+        left when its owner was killed;
+     e. a process started after the run dir that leads a session of its
+        own and whose command line names a backend dir under the run dir
+        (<run>/.../core-<token>-<pid>-<12 hex>): a kernel the backend
+        started in a session of its own (its connection file is in that
+        dir) or the backend's guard (that dir is its argument). It is
+        checked before c, so it holds on Linux too.
 
 A process is born into the process group and the session of its parent, so
 group and session are evidence of who started it. A process someone else
@@ -50,8 +56,11 @@ runs `bash tests/run_all.sh & tail -F <run dir>/... &`) that refers to the
 run and whose parent has since exited looks like an orphan of the run. And
 the other way: a process of the run that is orphaned after its session
 leader has also exited (a pane whose shell is gone), or that put itself in
-a new group or session, is not provably the run's. It is reported, not stopped. tests/lib/tmux.sh still stops what a
-session or server stop orphans, from the snapshot it takes first.
+a new group or session, is not provably the run's, except the session
+leaders of rule 3e (a kernel or the backend's guard, which name a backend
+dir under the run dir). It is reported, not stopped. tests/lib/tmux.sh
+still stops what a session or server stop orphans, from the snapshot it
+takes first.
 
 A process is identified by its pid and its start: the start time ps prints
 on macOS (fixed when the process starts), and on Linux the start in clock
@@ -287,6 +296,15 @@ class Run:
                                     + r"\d+\s(?:.*\s)?-f\s+(?:.*/)?"
                                     + re.escape(os.path.basename(root))
                                     + r"/tmux\.conf\s(?:.*\s)?start-server(?:\s|$)")
+        # a backend dir anywhere under the run dir, as core/src/connfile.rs
+        # names it (core-<token>-<pid>-<12 hex>), with or without a slash
+        # after it: a kernel's connection file is in one, and the backend's
+        # guard gets one as its argument (rule 3e). Any root under the run
+        # dir counts: the run's own XDG_RUNTIME_DIR/jupynvim, a Jupyter
+        # runtime dir, or jupynvim in a JUPYNVIM_RUNTIME_DIR a test gives the
+        # backend.
+        self.runtime_re = re.compile(r"/" + re.escape(os.path.basename(root))
+                                     + r"/\S*/core-[A-Za-z0-9._-]+-\d+-[0-9a-f]{12}(?=[/\s]|$)")
         self.born = birth_time(real)
         info = read_info(real)
         self.owner_group = info.get("pgid")
@@ -468,6 +486,8 @@ class Lineage:
             return False
         if q in self.servers or self.unrecorded_server(q):
             return True
+        if self.runtime_leader(q):
+            return True
         mark = environ_mark(self.run, q)
         if mark is not None:
             return mark
@@ -484,6 +504,15 @@ class Lineage:
         socket name and the run's config."""
         return self.p.ppid.get(q) == 1 and getsid(q) == q \
             and bool(self.run.server_re.search(self.p.cmd.get(q, "")))
+
+    def runtime_leader(self, q):
+        """q leads a session of its own and its command line names a backend
+        dir under the run dir (rule 3e): a kernel the backend started in a
+        session of its own (its connection file is in that dir) or the
+        backend's guard (that dir is its argument). Whatever its parent:
+        pid 1 once the backend is gone, a subreaper on Linux, or the backend
+        while it runs."""
+        return getsid(q) == q and bool(self.run.runtime_re.search(self.p.cmd.get(q, "")))
 
     def in_run_session(self, q):
         """q's session leader still runs, and the run started it (a session

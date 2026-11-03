@@ -116,7 +116,7 @@ impl Server {
             .unwrap_or(false)
         {
             if let Some(py) = spec.argv.first().cloned() {
-                let probe = tokio::process::Command::new(&py)
+                let probe = crate::kernel::command(&py)
                     .args(["-c", "import ipykernel"])
                     .output()
                     .await;
@@ -127,7 +127,7 @@ impl Server {
                         "level": "info",
                         "text": format!("installing ipykernel into this env (one-time, can take a minute)...\n  {py}"),
                     })).await;
-                    let out = tokio::process::Command::new(&py)
+                    let out = crate::kernel::command(&py)
                         .args(["-m", "pip", "install", "ipykernel"])
                         .output()
                         .await

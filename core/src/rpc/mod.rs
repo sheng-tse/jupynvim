@@ -5,6 +5,7 @@
 //   Notification: [2, method, params]
 
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use dashmap::DashMap;
 use rmpv::Value as Mp;
 use serde_json::{json, Value as Json};
@@ -19,6 +20,9 @@ use crate::session::Session;
 pub struct Server {
     sessions: DashMap<String, Arc<Session>>,
     out_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<Mp>>>,
+    /// The same output channel, for the reader's synchronous widget path
+    /// (send_now, notify_now). Set once by run_stdio; empty in unit tests.
+    out: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<Mp>>,
     shutdown: Arc<Notify>,
     /// How kitty escape bytes reach the user's terminal. None until the
     /// frontend has called kitty_attach (local TTY or remote-bytes-via-RPC).
@@ -67,12 +71,14 @@ mod lsp;
 mod notebook;
 mod proc;
 mod search;
+mod widget;
 
 impl Server {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sessions: DashMap::new(),
             out_tx: Mutex::new(None),
+            out: std::sync::OnceLock::new(),
             shutdown: Arc::new(Notify::new()),
             kitty: Mutex::new(None),
             procs: DashMap::new(),
@@ -87,8 +93,13 @@ impl Server {
     }
 
     pub async fn run_stdio(self: Arc<Self>) -> Result<()> {
+        // Remove what earlier backends that did not exit cleanly left in the
+        // runtime dirs, off the RPC path (never awaited).
+        crate::connfile::spawn_sweep_at_start();
+
         let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Mp>();
-        *self.out_tx.lock().await = Some(out_tx);
+        *self.out_tx.lock().await = Some(out_tx.clone());
+        let _ = self.out.set(out_tx);
 
         // Writer task — owns stdout. Frame each message as <u32 BE length><payload>.
         let writer = tokio::spawn(async move {
@@ -148,12 +159,17 @@ impl Server {
                     let mut cursor = std::io::Cursor::new(&payload[..]);
                     match rmpv::decode::read_value(&mut cursor) {
                         Ok(val) => {
-                            let server2 = server.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = server2.handle_message(val).await {
-                                    tracing::warn!("handle_message: {e:?}");
-                                }
-                            });
+                            // Widget messages are handled here, in arrival order, before
+                            // the next message is decoded. Everything else gets its own
+                            // task, as before.
+                            if let Err(val) = server.try_widget_request(val) {
+                                let server2 = server.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = server2.handle_message(val).await {
+                                        tracing::warn!("handle_message: {e:?}");
+                                    }
+                                });
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("decode rpc payload: {e}");
@@ -181,6 +197,8 @@ impl Server {
         // Kill every kernel now, while the runtime is alive. Doing it here is
         // deterministic; Child::kill_on_drop during runtime teardown is not.
         self.shutdown_kernels().await;
+        // Then this backend's runtime dir (its kernels' dirs are in it).
+        crate::connfile::shutdown();
         Ok(())
     }
 
@@ -211,6 +229,65 @@ impl Server {
         if let Some(tx) = g.as_ref() {
             let _ = tx.send(msg);
         }
+    }
+
+    /// Sends a message without awaiting it. The output channel is unbounded,
+    /// so this never blocks: the reader's synchronous widget path uses it.
+    fn send_now(&self, msg: Mp) {
+        if let Some(tx) = self.out.get() {
+            let _ = tx.send(msg);
+        }
+    }
+
+    /// A notification `[2, method, [params]]`, sent without awaiting.
+    fn notify_now(&self, method: &str, params: Mp) {
+        self.send_now(Mp::Array(vec![
+            Mp::from(2u32),
+            Mp::String(method.to_string().into()),
+            Mp::Array(vec![params]),
+        ]));
+    }
+
+    /// Handles a widget_update or widget_custom message (a request or a
+    /// notification) on the reader itself, in arrival order: the store is
+    /// updated and the kernel gets the frames before the reader decodes the
+    /// next message. Any other message comes back untouched.
+    fn try_widget_request(self: &Arc<Self>, val: Mp) -> Result<(), Mp> {
+        let Some((msgid, method)) = widget_call(&val).map(|(id, m)| (id, m.to_string())) else {
+            return Err(val);
+        };
+        let mut arr = match val {
+            Mp::Array(arr) => arr,
+            other => return Err(other),
+        };
+        let params = arr.pop().unwrap_or(Mp::Nil);
+        let (params, buffers) = split_buffers(params);
+        let p = params_json(&params);
+        let result = if method == "widget_update" {
+            self.widget_update(p, buffers)
+        } else {
+            self.widget_custom(p, buffers)
+        };
+        match msgid {
+            Some(id) => {
+                let resp = match result {
+                    Ok(v) => Mp::Array(vec![Mp::from(1u32), Mp::from(id), Mp::Nil, json_to_mp(&v)]),
+                    Err(e) => Mp::Array(vec![
+                        Mp::from(1u32),
+                        Mp::from(id),
+                        Mp::String(format!("{e:#}").into()),
+                        Mp::Nil,
+                    ]),
+                };
+                self.send_now(resp);
+            }
+            None => {
+                if let Err(e) = result {
+                    tracing::warn!("notify {method} error: {e:#}");
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn handle_message(self: Arc<Self>, val: Mp) -> Result<()> {
@@ -272,10 +349,7 @@ impl Server {
     async fn dispatch(self: Arc<Self>, method: &str, params: Mp) -> Result<Json> {
         // msgpack-rpc params is always Array. If length == 1, unwrap so handlers
         // can treat it as a single named-args object.
-        let p = match &params {
-            Mp::Array(arr) if arr.len() == 1 => mp_to_json(&arr[0]),
-            _ => mp_to_json(&params),
-        };
+        let p = params_json(&params);
         match method {
             "ping" => Ok(json!("pong")),
             "list_kernels" => self.list_kernels(p),
@@ -329,6 +403,8 @@ impl Server {
             "lsp_start" => self.lsp_start(p).await,
             "lsp_send" => self.lsp_send(p).await,
             "lsp_stop" => self.lsp_stop(p).await,
+            // widget_update and widget_custom never get here: the reader handles them (try_widget_request).
+            "widget_state" => self.widget_state(p),
             other => Err(anyhow!("unknown method '{other}'")),
         }
     }
@@ -379,6 +455,54 @@ pub fn mp_to_json(v: &Mp) -> Json {
         }
         Mp::Ext(_, _) => Json::Null,
     }
+}
+
+/// The params of a request as one JSON value. msgpack-rpc params are an array;
+/// a single named-args map is unwrapped so the handler sees the map itself.
+fn params_json(params: &Mp) -> Json {
+    match params {
+        Mp::Array(arr) if arr.len() == 1 => mp_to_json(&arr[0]),
+        _ => mp_to_json(params),
+    }
+}
+
+/// The msg id (requests only) and method of a widget message: a request
+/// `[0, msgid, method, params]` or a notification `[2, method, params]`, with
+/// method widget_update or widget_custom. None for any other message.
+fn widget_call(val: &Mp) -> Option<(Option<u64>, &str)> {
+    let arr = val.as_array()?;
+    let (msgid, method) = match (arr.first()?.as_u64()?, arr.len()) {
+        (0, 4) => (Some(arr[1].as_u64()?), arr[2].as_str()?),
+        (2, 3) => (None, arr[1].as_str()?),
+        _ => return None,
+    };
+    matches!(method, "widget_update" | "widget_custom").then_some((msgid, method))
+}
+
+/// Takes the `buffers` entry out of a request's params (a single map, possibly
+/// inside a one-item array). A binary item moves into a Bytes without a copy;
+/// a string item (Lua sends bytes as strings) gives its raw bytes.
+fn split_buffers(mut params: Mp) -> (Mp, Vec<Bytes>) {
+    let mut buffers = Vec::new();
+    let map = match &mut params {
+        Mp::Array(arr) if arr.len() == 1 => &mut arr[0],
+        other => other,
+    };
+    if let Mp::Map(pairs) = map {
+        if let Some(at) = pairs.iter().position(|(k, _)| k.as_str() == Some("buffers")) {
+            if let (_, Mp::Array(items)) = pairs.remove(at) {
+                buffers = items
+                    .into_iter()
+                    .map(|item| match item {
+                        Mp::Binary(b) => Bytes::from(b),
+                        Mp::String(s) => Bytes::from(s.into_bytes()),
+                        _ => Bytes::new(),
+                    })
+                    .collect();
+            }
+        }
+    }
+    (params, buffers)
 }
 
 /// Extract a path field from RPC params, expanding `~/` to $HOME on the
