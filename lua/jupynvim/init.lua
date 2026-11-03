@@ -2314,8 +2314,14 @@ function M.run_cell(buf, opts)
       if opts.advance then vim.schedule(function() M._advance_after_run(buf) end) end
       return
     end
+    nb:mark_queued(cell.id)
+    Render.refresh(nb, vim.fn.bufwinid(buf))
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
-      if err2 then show_execute_error(nb, err2) end
+      if err2 then
+        nb:unqueue(cell.id)
+        Render.refresh(nb, vim.fn.bufwinid(buf))
+        show_execute_error(nb, err2)
+      end
     end)
     if opts.advance then
       vim.schedule(function() M._advance_after_run(buf) end)
@@ -2347,27 +2353,44 @@ function M._advance_after_run(buf)
   end)
 end
 
--- Run `cells` one after another, each sent once the one before it was taken.
--- The first refusal is shown, as run_cell shows it, and ends the run: every
--- cell after it would get the same answer (a kernel not started yet, a
--- session the backend does not have), and none of them was asked for alone.
+-- Run `cells` the way JupyterLab does: every cell is marked queued ("[*]")
+-- up front, then they go to the kernel in order, each sent once the one
+-- before it was taken. The backend's execute answers on submission, not
+-- completion, so within a moment they are all at the kernel, which runs them
+-- one at a time; the queued badge is what shows the cells still waiting
+-- behind the running one. The first refusal is shown, as run_cell shows it,
+-- and ends the run: every cell after it would get the same answer (a kernel
+-- not started yet, a session the backend does not have), and none of them
+-- was asked for alone. The cells that never made it are released.
 -- `retry` names the run to ask for again while the kernel is still starting.
 local function run_chain(nb, cells, retry)
+  if #cells == 0 then return end
+  local buf = nb.buf
+  -- resolve the client BEFORE marking anything: a remote backend that has
+  -- to be respawned can raise here, and nothing would release the cells
   local cl = M._nb_client(nb)
+  for _, c in ipairs(cells) do nb:mark_queued(c.id) end
+  Render.refresh(nb, vim.fn.bufwinid(buf))
   local i = 0
+  local function fail(show)
+    for j = i, #cells do nb:unqueue(cells[j].id) end
+    -- the notebook was closed while the run was still being submitted:
+    -- "no session" is expected, not news
+    if Notebook.get(buf) ~= nb then return end
+    Render.refresh(nb, vim.fn.bufwinid(buf))
+    show()
+  end
   local function step()
     i = i + 1
     local c = cells[i]
     if not c then return end
     cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function(err)
       if err then
-        vim.notify("update_cell_source: " .. tostring(err), vim.log.levels.ERROR)
-        return
+        return fail(function() vim.notify("update_cell_source: " .. tostring(err), vim.log.levels.ERROR) end)
       end
       cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function(err2)
         if err2 then
-          show_execute_error(nb, err2, retry)
-          return
+          return fail(function() show_execute_error(nb, err2, retry) end)
         end
         step()
       end)
@@ -2749,9 +2772,17 @@ function M.stop_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb.kernel_started = false
+  M._release_pending(nb)
   M._nb_client(nb):call("stop_kernel", { session_id = nb.session_id }, function(err)
     if err then vim.notify("stop: " .. tostring(err), vim.log.levels.ERROR) end
   end)
+end
+
+-- Executions die with the kernel: queued cells drop their waiting badge,
+-- and a cell that was running is finished as failed (its stopwatch stops at
+-- the kill), since the kernel that would have sent its idle is gone.
+function M._release_pending(nb)
+  if nb:release_pending() then Render.refresh(nb, vim.fn.bufwinid(nb.buf)) end
 end
 
 function M.interrupt_kernel(buf)
@@ -2849,6 +2880,9 @@ end
 function M.restart_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
+  -- the backend stops the old kernel before starting the new one, so the
+  -- pending executions are gone whether or not the start succeeds
+  M._release_pending(nb)
   M._nb_client(nb):call("restart_kernel", { session_id = nb.session_id }, function(err, res)
     if err then vim.notify("restart: " .. tostring(err), vim.log.levels.ERROR); return end
     vim.notify("jupynvim: kernel restarted", vim.log.levels.INFO)
