@@ -24,6 +24,81 @@ M._binary_version = binary_version
 local install_tried = false
 M._reset_install_tried = function() install_tried = false end
 
+-- The in-process library comes with the core's install. A current core
+-- with no library (a plugin manager that never ran a build hook, or an
+-- update from before the library), or a core this first open just
+-- installed, gets it here: in a Neovim of its own, so opening the notebook
+-- never waits for it, and once per session. Every core gets it, the
+-- plugin's own, core_path and one on PATH alike: the library's place is the
+-- plugin's whatever core runs, and this checks the library's own need. A
+-- build of your own is left to cargo, a directory the installer cannot
+-- write is left alone, and a release that does not publish the library,
+-- or one that did not load here, is not asked again. A library the user
+-- turned off, or one they point at with JUPYNVIM_NATIVE or native.path, is
+-- not fetched either.
+local lib_tried = false
+M._reset_lib_tried = function() lib_tried = false end
+local function maybe_fetch_lib(root, want)
+  if lib_tried or M.config.auto_install == false then return end
+  lib_tried = true
+  local ok, err = pcall(function()
+    local Install = require("jupynvim.backend.install")
+    local t = Install._lib_target()
+    if not t or not Install.lib_needs_install(root, want) then return end
+    local tag = Install._detect_tag(root)
+    if tag and Install.known_bad(tag, "lib-" .. t.target) then return end
+    -- only the library this Neovim would load: never one the user turned
+    -- off or replaced with a file of their own, nor one this Neovim cannot
+    -- load (native.lua decides, from the same settings its loader reads)
+    local okw, wanted, why = pcall(function() return require("jupynvim.native").plugin_lib_wanted() end)
+    if not (okw and wanted) then
+      Log.debug("libjupynvim background install skipped: " .. tostring(okw and why or wanted))
+      return
+    end
+    local started, start_why = Install.run_lib_background(root, function(done, msg)
+      -- what the loader's advice (native.lua status().fix) goes by
+      M._lib_bg_state = done and "done" or "failed"
+      -- A download refused for its integrity, or a release base the
+      -- installer must not download from, is a security matter the user
+      -- has to see: one line that fits the message line (at most 68
+      -- characters, native.lua _one_line), so it never stops at a hit-enter
+      -- prompt that would swallow the next key. The whole text goes to the
+      -- log. Any other failure (not published, offline, does not load
+      -- here) stays in the log.
+      local text = tostring(msg)
+      local sum = not done and text:match("jnv%-lib fail checksum: ([^\n]*)")
+      local base = not done and text:find("jnv%-lib fail JUPYNVIM_RELEASE_BASE must start with ")
+      if sum or base then
+        Log.warn("libjupynvim background install refused the download: " .. text)
+        local line, short
+        if base then
+          line, short = "jupynvim: JUPYNVIM_RELEASE_BASE must start with https:// or file://",
+            "jupynvim: bad JUPYNVIM_RELEASE_BASE"
+        else
+          line = sum:find("^not verified") and "jupynvim: libjupynvim download refused: could not be checked"
+            or "jupynvim: libjupynvim download refused: failed its SHA256 check"
+          short = "jupynvim: libjupynvim download refused"
+        end
+        local okf, fit = pcall(function() return require("jupynvim.native")._one_line(line, short) end)
+        vim.notify(okf and type(fit) == "string" and fit or line, vim.log.levels.WARN)
+      end
+      Log.info("libjupynvim background install: " .. text)
+      -- a missing library is looked for again on its next use
+      local N = done and package.loaded["jupynvim.native"]
+      if N then pcall(N._forget_missing) end
+    end)
+    if started then
+      M._lib_bg_state = "running"
+    else
+      Log.warn("libjupynvim background install did not start: " .. tostring(start_why))
+    end
+  end)
+  if not ok then Log.warn("libjupynvim background install: " .. tostring(err)) end
+end
+-- The loader asks for it too, at a first use outside a notebook open (a .md
+-- file, a remote notebook): native.lua when_ready.
+M._maybe_fetch_lib = maybe_fetch_lib
+
 -- Only lazy.nvim's build hook ever installed the binary. Any other plugin
 -- manager (vim.pack, packer or mini.deps without a hook, a manual clone) left
 -- it missing, and an update that skipped the hook left an old one next to
@@ -31,7 +106,11 @@ M._reset_install_tried = function() install_tried = false end
 -- it is missing or stale the matching release is fetched here, once per
 -- session, unless auto_install is off.
 local function locate_core()
-  if M.config.core_path then return M.config.core_path end
+  if M.config.core_path then
+    local okr, root = pcall(M._plugin_root)
+    if okr and root then maybe_fetch_lib(root, require("jupynvim.backend.install").source_version(root)) end
+    return M.config.core_path
+  end
   -- Ask the one helper that knows where the plugin lives; this used to repeat
   -- the :h:h:h path math and broke silently, falling back to a bare name that
   -- is not on PATH, when this file moved a directory deeper.
@@ -42,7 +121,10 @@ local function locate_core()
   local exists = vim.fn.executable(candidate) == 1
   local have, err
   if exists then have, err = binary_version(candidate) end
-  if have and (not want or have == want) then return candidate end
+  if have and (not want or have == want) then
+    maybe_fetch_lib(root, want)
+    return candidate
+  end
   -- A cargo build of your own is never downloaded over, whatever it reports;
   -- a stale one, or one that does not run here, only gets a hint.
   if exists and Install.is_dev_build(root) then
@@ -66,7 +148,10 @@ local function locate_core()
     or ("is not installed at " .. candidate)
   if vim.fn.executable("jupynvim-core") == 1 then
     local pv = binary_version("jupynvim-core")
-    if pv and (not want or pv == want) then return "jupynvim-core" end
+    if pv and (not want or pv == want) then
+      maybe_fetch_lib(root, want)
+      return "jupynvim-core"
+    end
     if pv and not fallback then
       fallback = "jupynvim-core"
       why = why .. (", and the one on PATH is v%s"):format(pv)
@@ -84,8 +169,13 @@ local function locate_core()
   vim.notify("jupynvim: jupynvim-core " .. why .. ", fetching the matching release...",
     vim.log.levels.INFO)
   pcall(vim.cmd, "redraw")
-  local ok, ierr = pcall(Install.run, root, { no_cargo = true })
-  if ok and vim.fn.executable(candidate) == 1 then return candidate end
+  -- The core only: the library follows in the background, so the install
+  -- that opening this notebook waits for is no longer than before it.
+  local ok, ierr = pcall(Install.run, root, { no_cargo = true, lib_later = true })
+  if ok and vim.fn.executable(candidate) == 1 then
+    maybe_fetch_lib(root, want)
+    return candidate
+  end
   if fallback then
     local msg = tostring(ierr):gsub("^jupynvim: ", ""):gsub("%.?%s*$", ".")
     vim.notify("jupynvim: " .. msg .. " Using " .. fallback .. " as it is.", vim.log.levels.WARN)
@@ -187,6 +277,15 @@ M._core_source_mtime = core_source_mtime   -- exposed for tests
 M._artifact_version = artifact_version
 M._linux_core_stale = linux_core_stale     -- exposed for tests
 
+-- The cross build of the linux backend. core/ is a workspace that also
+-- holds the in-process library, so it names the backend's package: a build
+-- of the whole workspace would compile the library for musl too, only for
+-- cargo to drop a crate type that target cannot make.
+function M._cross_build_cmd(triple)
+  return { "cargo", "zigbuild", "--release", "--target", triple, "--package", "jupynvim-core",
+           "--manifest-path", M._plugin_root() .. "/core/Cargo.toml" }
+end
+
 -- Cross-build the linux binary HERE if it has fallen behind the source. We
 -- never build on the remote: a login node is not a build box, and PSC would
 -- not thank us for it. Nothing used to keep this artifact in step, so it went
@@ -197,10 +296,7 @@ local function cross_build_if_stale(triple)
   if not stale then return true end
   vim.notify("jupynvim: linux binary " .. why .. ", cross-building " .. triple .. " ...",
              vim.log.levels.INFO)
-  local res = vim.system({
-    "cargo", "zigbuild", "--release", "--target", triple,
-    "--manifest-path", M._plugin_root() .. "/core/Cargo.toml",
-  }, { text = true }):wait()
+  local res = vim.system(M._cross_build_cmd(triple), { text = true }):wait()
   local bin = M._plugin_root() .. "/core/target/" .. triple .. "/release/jupynvim-core"
   if res.code ~= 0 then
     vim.notify("jupynvim: cross-build failed; the remote keeps whatever it has.\n" ..
@@ -212,6 +308,7 @@ local function cross_build_if_stale(triple)
   vim.notify("jupynvim: cross-build done, uploading to the remote", vim.log.levels.INFO)
   return true
 end
+M._cross_build_if_stale = cross_build_if_stale   -- exposed for tests
 
 -- Persistent record of "alias A already carries binary sha S, on arch X".
 -- Written only once the remote copy is confirmed to hold that sha, and dropped
@@ -278,7 +375,7 @@ local function ensure_remote_binary(alias, profile)
   local core_path = profile.core_path or "~/.local/bin/jupynvim-core"
   -- Make a remote-shell-expandable, quoted path: "~/.x" -> "$HOME/.x", wrapped
   -- in double quotes so $HOME expands AND spaces survive. (shellescape uses
-  -- single quotes, which would keep ~ literal — the marker never persisted and
+  -- single quotes, which would keep ~ literal, so the marker never persisted and
   -- the upload path could be wrong.)
   local function rp(p)
     if p:sub(1, 2) == "~/" then p = "$HOME/" .. p:sub(3) end
@@ -439,16 +536,33 @@ local function spawn_client(cmd_vec, alias, trust)
     end,
   })
   if trust then table.insert(trust.spawns, client) end
-  -- Attach the controlling TTY for native Kitty graphics. Local mode is
-  -- attempted first; for SSH-remote backends the local-mode attempt fails
-  -- (backend is on a different host) and Image.attach auto-falls-back to
-  -- remote mode (escape_b64 round-trip).
+  -- Native Kitty graphics. Only the local backend can write to this terminal,
+  -- so only it is attached. Once a terminal UI has been attached, Image.attach
+  -- encodes every escape in Lua and writes it through the UI with
+  -- nvim_ui_send (Neovim 0.12+) or on the editor's stderr (Neovim 0.11); the
+  -- backend is only told not to write, and no tty is probed. In an editor
+  -- that never had one (headless), or on Neovim 0.11 one whose stderr is not
+  -- a terminal, the backend's local mode on tty_path is tried first; when it
+  -- cannot open it (an editor with no controlling tty) the escapes are
+  -- encoded in Lua as well and written on the fallback path. Either way
+  -- nothing is written while no terminal shows the editor.
   local tty_path = vim.env.JUPYNVIM_TTY or "/dev/tty"
-  Image.attach(client, tty_path)
+  -- A remote backend never becomes the image writer: every notebook's images
+  -- would then go through it and stop with it. It is only told not to write,
+  -- without waiting for the answer (two blocking round trips over SSH before).
+  if alias == "local" then
+    Image.attach(client, tty_path)
+  else
+    Image.attach_remote(client)
+  end
 
+  -- `client` goes along, so an event counts only for the notebooks it owns
   client:on("cell_event", function(args)
     local p = args[1] or args
-    M._handle_cell_event(p)
+    M._handle_cell_event(p, client)
+  end)
+  client:on("widget_event", function(args)
+    require("jupynvim.notebook.widgets").handle_event(args[1] or args)
   end)
   client:on("kernel_event", function(args)
     local p = args[1] or args
@@ -475,14 +589,24 @@ function M._ensure_client()
   return M.client
 end
 
--- Resolve the RPC client a notebook's operations should route to. Remote
--- notebooks (nb.alias set) go to their own backend; local ones to the
--- shared local backend. Always use this in execute/kernel paths rather than
--- the global M.client — otherwise, with a local AND a remote notebook open,
--- run-cell on one routes to whichever backend was touched last.
+-- The backend a notebook's operations go to, spawned when it is not running:
+-- a remote notebook (nb.alias set) its own remote, a local one the local
+-- backend. Every per-notebook request goes through this or _live_client,
+-- never through M.client, which is the local backend only.
 function M._nb_client(nb)
   if nb and nb.alias then return M.client_for(nb.alias) end
   return M._ensure_client()
+end
+
+-- The notebook's own backend only while it runs, else nil. Closing a session
+-- as its buffer goes and asking the kernel for completions use this: neither
+-- is worth spawning a backend for, least of all a remote one over SSH.
+function M._live_client(nb)
+  if not nb then return nil end
+  local cl
+  if nb.alias then cl = M.clients[nb.alias] else cl = M.client end
+  if cl and cl.job then return cl end
+  return nil
 end
 
 -- ControlMaster socket path for an alias. Multiplexed SSH: run
@@ -496,7 +620,7 @@ control_path = function(alias)
 end
 
 -- Resolve a possibly-function spec field. Functions can read env, prompt
--- the user, etc. at spawn time — useful for dynamic slurm jobids, cloud
+-- the user, etc. at spawn time: useful for dynamic slurm jobids, cloud
 -- tokens, anything that varies between calls.
 function M._resolve(field, spec)
   if type(field) == "function" then return field(spec) end
@@ -529,7 +653,7 @@ end
 --   Can be a function returning the array.
 -- spec.slurm: if set, prepended to the remote command. Typical:
 --   slurm = "srun -p GPU-shared --gpus 1 -t 02:00:00"
--- Can be a function returning the string — useful for attaching to an
+-- Can be a function returning the string, useful for attaching to an
 -- existing job whose ID isn't known until call time:
 --   slurm = function()
 --     local jid = vim.env.PSC_JOBID or vim.fn.input("Job ID: ")
@@ -555,7 +679,7 @@ function M._build_ssh_cmd(spec)
   end
   -- Slurm wrapping: only honor (a) the :JupynvimUseJob cache or (b) a
   -- static `slurm = "..."` string in the profile. Function-valued slurm
-  -- fields are intentionally IGNORED here — calling them from inside the
+  -- fields are intentionally IGNORED here: calling them from inside the
   -- BufReadCmd that triggered the spawn would block on vim.fn.input with
   -- no visible prompt. For dynamic per-spawn slurm, use :JupynvimUseJob.
   local slurm
@@ -609,10 +733,12 @@ function M.client_for(alias)
   return spawn_client(cmd, alias, M._record_trusted and M._record_trusted[alias])
 end
 
--- Point the "active" client at a remote alias's backend. Reuses the
--- existing M.clients[alias] connection (spawned at :JupynvimConnect time)
--- instead of tearing down and respawning. Accepts either an alias string
--- or a spec table (the latter must include `label` or `host` for lookup).
+-- Make a remote alias the active session (the explorer, terminal and picker
+-- keys follow it) and return its backend, reusing the one :JupynvimConnect
+-- started. Accepts either an alias string or a spec table (the latter must
+-- include `label` or `host` for lookup). M.client stays the local backend: a
+-- notebook goes to the backend its own alias names, never to the one used
+-- last, so a remote open no longer sends later local opens to the remote.
 function M.use_remote(alias_or_spec)
   local alias, spec
   if type(alias_or_spec) == "string" then
@@ -623,12 +749,10 @@ function M.use_remote(alias_or_spec)
     alias = spec.label or spec.host
   end
   assert(spec and spec.host, "use_remote: profile not found or missing host")
-  M._remote_spec = spec
   -- Only treat named-profile aliases as the "active" explorer target
   -- (one-off user@host specs aren't in M.config.remote).
   if M.config.remote and M.config.remote[alias] then M._set_active_alias(alias) end
-  M.client = M.client_for(alias)  -- reuse existing alive client
-  return M.client
+  return M.client_for(alias)  -- reuse existing alive client
 end
 
 -- Is the ControlMaster for this alias alive?
@@ -696,7 +820,7 @@ local function ssh_config_hosts()
 end
 M._ssh_config_hosts = ssh_config_hosts  -- exposed for the :JupynvimConnect completion
 
--- Hosts nobody means as a jupynvim target (git hosting etc) — hidden from the
+-- Hosts nobody means as a jupynvim target (git hosting etc) are hidden from the
 -- chooser, still accepted if typed explicitly.
 local SSH_HOST_NOISE = {
   ["github.com"] = true, ["ssh.github.com"] = true, ["gitlab.com"] = true,
@@ -777,11 +901,11 @@ function M.connect_choose()
   end)
 end
 
--- Connect to an arbitrary user@host with no pre-declared profile. Creates a
--- session-scoped profile (alias = sanitized host string) with the default
--- core_path; everything (auto binary upload, explorer, LSP, terminal) works
--- the same. Add it under config.remote to make it permanent.
-function M.connect_adhoc(host)
+-- A session-scoped profile for an arbitrary user@host with no pre-declared
+-- profile (alias = sanitized host string) with the default core_path;
+-- everything (auto binary upload, explorer, LSP, terminal) works the same.
+-- Add it under config.remote to make it permanent. Returns the alias.
+function M._adhoc_profile(host)
   local alias = host:gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
   if alias == "" then alias = "adhoc" end
   M.config.remote = M.config.remote or {}
@@ -790,7 +914,12 @@ function M.connect_adhoc(host)
     vim.notify(("jupynvim: session profile '%s' -> %s\n  add to config.remote to persist"):format(alias, host),
       vim.log.levels.INFO)
   end
-  M.connect(alias)
+  return alias
+end
+
+-- Connect to an arbitrary user@host through a session profile.
+function M.connect_adhoc(host)
+  M.connect(M._adhoc_profile(host))
 end
 
 -- Open an interactive SSH ControlMaster session in a terminal split. After
@@ -822,6 +951,8 @@ function M.connect(alias)
     local existing = M.clients[alias]
     if existing then pcall(function() existing:stop() end); M.clients[alias] = nil end
     if M._binary_verified then M._binary_verified[alias] = nil end
+    -- and a home the old one could not say is asked of the new one
+    M._remote_homes[alias] = nil
     M.remote_browse(alias)
     return
   end
@@ -852,7 +983,7 @@ function M.connect(alias)
       vim.schedule(function()
         -- Always close the auth terminal on clean exit (code 0). With
         -- ControlPersist, the ssh foreground exits as soon as the master
-        -- forks to background — that's the success signal. If auth
+        -- forks to background, and that's the success signal. If auth
         -- actually failed, code != 0 and we leave the terminal up.
         if code == 0 then
           if term_buf and vim.api.nvim_buf_is_valid(term_buf) then
@@ -917,7 +1048,7 @@ function M.use_job(alias, jobid)
     M._slurm_cache[alias] = nil
   else
     -- --unbuffered is critical: without it srun block-buffers the task's
-    -- stdout when it's a pipe (our case — no TTY), so the backend's
+    -- stdout when it's a pipe (our case, no TTY), so the backend's
     -- length-prefixed msgpack response frames sit in srun's buffer and
     -- never reach the frontend → every RPC times out. --unbuffered
     -- forwards task output immediately.
@@ -930,8 +1061,9 @@ function M.use_job(alias, jobid)
   if existing and existing.job then
     pcall(function() existing:stop() end)
     M.clients[alias] = nil
-    if M.client == existing then M.client = nil end
   end
+  -- the next backend is asked its home again
+  M._remote_homes[alias] = nil
 
   -- If there's no live SSH master, do a full connect (auth terminal + spawn);
   -- otherwise just spawn the backend through the existing master.
@@ -978,6 +1110,7 @@ function M.disconnect(alias)
   if M._active_alias == alias then M._set_active_alias(nil) end
   M._session_cwd[alias] = nil
   M._resolved_home[alias] = nil
+  M._remote_homes[alias] = nil
   if M._binary_verified then M._binary_verified[alias] = nil end
   -- and the next connect checks the remote binary again
   pcall(M._deploy_record_clear, alias)
@@ -996,8 +1129,11 @@ function M.remote_browse(alias, subpath, opts)
     return
   end
   -- Custom transports (transport_cmd) don't use an SSH ControlMaster; the
-  -- master check only applies to plain ssh profiles.
-  if not profile.transport_cmd and not master_alive(alias, profile) then
+  -- master check only applies to plain ssh profiles. A backend that runs for
+  -- the alias is a working connection already (key login needs no master),
+  -- so the check is only for when none runs.
+  local live = M.clients[alias]
+  if not profile.transport_cmd and not (live and live.job) and not master_alive(alias, profile) then
     vim.notify("jupynvim: " .. alias .. " not connected; run :JupynvimConnect " .. alias .. " first",
                vim.log.levels.WARN)
     return

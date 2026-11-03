@@ -258,12 +258,14 @@ M._image_outputs = image_outputs
 -- OUT_SEP region emitted by Notebook:to_lines), so only kitty/ascii image
 -- rows remain virtual. `lead` prefixes every row (these rows render with
 -- virt_lines_leftcol). Images stack in output order with a blank row
--- between them.
-local function build_image_virt_lines(cell, width, nb, lead)
+-- between them. With `spans`, each image key gets { off, rows }: the index of
+-- its first row among the rows returned (0-based) and how many it has.
+local function build_image_virt_lines(cell, width, nb, lead, spans)
   lead = (lead or "") .. OUT_INDENT
   local rows = {}
   for n, img in ipairs(image_outputs(nb, cell)) do
     if n > 1 then table.insert(rows, { { lead, HL_OUTPUT } }) end
+    local first = #rows
     local ph = image.placeholder_virt_lines(img.key)
     if ph then
       for _, line in ipairs(ph) do
@@ -282,10 +284,33 @@ local function build_image_virt_lines(cell, width, nb, lead)
         end
       end
     end
+    if spans then spans[img.key] = { off = first, rows = #rows - first } end
   end
   return rows
 end
 M._build_image_virt_lines = build_image_virt_lines
+
+-- Where the rows of a cell's images are among the virtual lines hanging under
+-- its last source line: nb.image_spans[cell_id] = { keys = { key -> { off,
+-- rows } }, off, rows } (off counted from the first virtual line of the
+-- extmark, `rows` of the image, and `off`/`rows` of the whole span covering
+-- every image of the cell), with the number of virtual lines in all (n).
+-- Recorded where those lines are built, so a layout change moves the offsets
+-- with no second rule; output_on_screen reads them. `spans` holds offsets
+-- counted from the first row an image builder returned; base moves them to
+-- the extmark's first line.
+local function note_image_spans(nb, cell_id, spans, base, total)
+  nb.image_spans = nb.image_spans or {}
+  local keys, lo, hi = {}, nil, nil
+  for key, sp in pairs(spans or {}) do
+    if sp.rows > 0 then
+      keys[key] = { off = base + sp.off, rows = sp.rows, n = total }
+      lo = math.min(lo or math.huge, base + sp.off)
+      hi = math.max(hi or 0, base + sp.off + sp.rows)
+    end
+  end
+  nb.image_spans[cell_id] = lo and { keys = keys, off = lo, rows = hi - lo, n = total } or nil
+end
 
 -- VSCode's execution bar: "[1] ✓ 0.1s" under the input box. Live elapsed
 -- time with a spinner glyph while running; ✗ on error.
@@ -373,12 +398,14 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
     -- on an extmark re-render and can never linger over the gif/image.
     local md_lead = repeat_char(" ", gut)
     local lines_below = {}
+    local md_spans = {}
     if cell.cell_type == "markdown" then
       local Embedded = require("jupynvim.notebook.embedded")
       local src = cell.source or ""
       for _, img in ipairs(Embedded.list_images(cell.id) or {}) do
         if src:find("jupynvim%-img:" .. img.idx .. "%)") then
           local key = cell.id .. "_md_" .. img.idx
+          local first = #lines_below
           local ph = image.placeholder_virt_lines(key)
           if ph then
             for _, line in ipairs(ph) do
@@ -392,11 +419,13 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
               end
             end
           end
+          md_spans[key] = { off = first, rows = #lines_below - first }
         end
       end
     end
     -- breathing room between a markdown cell and whatever follows
     table.insert(lines_below, { { " ", "Normal" } })
+    note_image_spans(nb, cell.id, md_spans, 0, #lines_below)
     local last = math.max(range.stop - 1, range.start)
     if last >= total then last = total - 1 end
     if last >= 0 then
@@ -413,8 +442,12 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
       if imgs and #imgs > 0 then
         nb.image_ids = nb.image_ids or {}
         local src = cell.source or ""
+        local md_cell_id = cell.id
         for _, img in ipairs(imgs) do
           local key = cell.id .. "_md_" .. img.idx
+          if not image.has_visible_probe(key) then
+            image.set_visible_probe(key, function() return M.md_image_on_screen(md_cell_id, key) end)
+          end
           local renderer = (require("jupynvim").config.image_renderer) or "chafa"
           -- a deleted image keeps its data for undo; send it only while shown
           if not nb.image_ids[key] and src:find("jupynvim%-img:" .. img.idx .. "%)") then
@@ -451,9 +484,10 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   -- separate "[n] ✓ 0.1s" line below the box anymore.
   table.insert(lines_below, footer_chunks(total_w, gut, bc, label, cell, st, border_hl))
   local sub_lead = repeat_char(" ", gut)
+  local img_spans, img_base = {}, #lines_below
   if cell.cell_type == "code" then
     if #(cell.outputs or {}) > 0 then
-      for _, l in ipairs(build_image_virt_lines(cell, width, nb, sub_lead)) do
+      for _, l in ipairs(build_image_virt_lines(cell, width, nb, sub_lead, img_spans)) do
         table.insert(lines_below, l)
       end
     end
@@ -471,6 +505,7 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   else
     table.insert(lines_below, { { " ", "Normal" } })
   end
+  note_image_spans(nb, cell.id, img_spans, img_base, #lines_below)
 
   local last = math.max(range.stop - 1, range.start)
   if last >= total then last = total - 1 end
@@ -567,6 +602,139 @@ local function render_cell(nb, cell, range, geom, win, cellno, selected, editing
   end
 end
 
+-- Rows the top border of floating window `w` takes above its text: 1 when the
+-- border has a top edge (item 2 of the border list, a string or { char, hl }),
+-- else 0. getwininfo().winrow is the float's outer row, the border's, while
+-- screenpos() gives text rows, so the two meet only with this added. A split,
+-- a float without a border and one whose border has no top edge (the shadow
+-- style, a bottom-only list) take none. nil when it cannot be told.
+local function top_border_rows(w)
+  local ok, cfg = pcall(vim.api.nvim_win_get_config, w)
+  if not ok or type(cfg) ~= "table" then return nil end
+  if (cfg.relative or "") == "" then return 0 end
+  local b = cfg.border
+  if type(b) == "string" then
+    -- a named style, should a Neovim report one instead of the list
+    return (b == "single" or b == "double" or b == "rounded" or b == "solid") and 1 or 0
+  end
+  if type(b) ~= "table" then return 0 end
+  local top = b[2]
+  if type(top) == "table" then top = top[1] end
+  return (type(top) == "string" and top ~= "") and 1 or 0
+end
+
+-- Screen rows of window `w` left below the last text row of line `anchor`
+-- (1-based, in view), where the virtual lines under it show; nil when they
+-- cannot be told (the caller then counts the image as on screen). The line
+-- the window ends on can have all of them cut off (line("w$") is the anchor
+-- while it fills the window's last row), so the line numbers alone are not
+-- enough. The window's last text row is worked out in the frame of
+-- reference screenpos() uses: the top border of a float and a winbar come
+-- before its first text row.
+local function rows_below(w, anchor)
+  local sp = vim.fn.screenpos(w, anchor, 1)
+  if type(sp) ~= "table" or (sp.row or 0) < 1 then return nil end
+  local wi = (vim.fn.getwininfo(w) or {})[1]
+  if not wi then return nil end
+  local border = top_border_rows(w)
+  if not border then return nil end
+  local ok, th = pcall(vim.api.nvim_win_text_height, w, { start_row = anchor - 1, end_row = anchor - 1 })
+  if not ok or type(th) ~= "table" or not th.all then return nil end
+  -- all counts the line's wrapped rows and the fill above it
+  local text_rows = math.max(th.all - (th.fill or 0), 1)
+  return (wi.winrow + border + wi.winbar + wi.height - 1) - (sp.row + text_rows - 1)
+end
+
+-- Rows of virtual lines above line `lnum` (1-based) of `buf`, all extmarks.
+local function fill_above(buf, lnum)
+  local n = 0
+  local ok, marks = pcall(vim.api.nvim_buf_get_extmarks, buf, -1, { lnum - 1, 0 }, { lnum - 1, -1 },
+    { details = true, type = "virt_lines" })
+  for _, m in ipairs(ok and marks or {}) do
+    local d = m[4]
+    if type(d) == "table" and d.virt_lines_above and type(d.virt_lines) == "table" then n = n + #d.virt_lines end
+  end
+  return n
+end
+
+-- Is any row of `span` (see note_image_spans) shown at the top of window `w`
+-- while the anchor line is just above its top line `top`? The filler at the
+-- top (`tf` rows, as winsaveview counts them) is the end of the virtual lines
+-- under the anchor followed by those above the top line (the next cell's top
+-- border), so what is left of the anchor's own lines is tf less the top
+-- line's own filler. Extmarks of other plugins on the anchor line only push
+-- these rows down, which makes this err toward on screen.
+local function span_in_topfill(buf, top, tf, span)
+  local shown = tf - fill_above(buf, top)
+  if shown <= 0 then return false end
+  return span.off + span.rows > span.n - shown
+end
+
+-- Are the image rows of `cell_id` on screen in a window of the current tab
+-- page? With `key`, the rows of that image; without it, those of every image
+-- of the cell. They are virt_lines hanging under the cell's last source line
+-- (a border first, then each image after a gap row; in a markdown cell the
+-- images directly), so they can show while that line is in view and has room
+-- below it for them, or right after it scrolled off the top (then the top
+-- filler, topfill > 0, holds the end of them). An image that is not at the
+-- start of the lines (a gif after a plot) can hang below the window while the
+-- anchor line shows; the offsets recorded where the lines were built
+-- (note_image_spans) tell. Without a record, or when the window's geometry
+-- cannot be told, the image counts as on screen. With `markdown`, a cell open
+-- in the boxed editor shows none: the editor draws no markdown images.
+-- Called on every gif frame tick, so it stays cheap: windows first, the cell
+-- ranges are cached per changedtick, and the geometry is asked only for a
+-- cell whose anchor line is in view.
+function M.output_on_screen(nb, cell_id, markdown, key)
+  local buf = nb.buf
+  if not vim.api.nvim_buf_is_valid(buf) then return false end
+  local wins
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(w) == buf then
+      wins = wins or {}
+      wins[#wins + 1] = w
+    end
+  end
+  if not wins then return false end
+  local idx
+  for i, c in ipairs(nb.cells) do
+    if c.id == cell_id then idx = i; break end
+  end
+  if not idx then return false end
+  local CellMode = require("jupynvim.notebook.cellmode")
+  -- the same test do_render uses to draw a cell as the boxed editor
+  if markdown and not CellMode.is_command(buf) and CellMode.selected_idx(buf) == idx then
+    return false
+  end
+  local r = CellMode.ranges(buf)[idx]
+  if not r then return false end
+  local anchor = math.max(r.stop, r.start + 1)  -- 1-based last source line
+  local cell_spans = nb.image_spans and nb.image_spans[cell_id]
+  local span = cell_spans and ((key and cell_spans.keys[key]) or (not key and cell_spans))
+  for _, w in ipairs(wins) do
+    local top, bot = vim.fn.line("w0", w), vim.fn.line("w$", w)
+    if anchor >= top and anchor <= bot then
+      if not span then return true end
+      local left = rows_below(w, anchor)
+      if left == nil or span.off < left then return true end
+    elseif anchor == top - 1 then
+      local tf = vim.api.nvim_win_call(w, function() return vim.fn.winsaveview().topfill end)
+      if tf > 0 and (not span or span_in_topfill(buf, top, tf, span)) then return true end
+    end
+  end
+  return false
+end
+
+-- A markdown image's key holds only its cell id, which every copy of a
+-- notebook shares, so its probe asks every open notebook: the image is on
+-- screen when any notebook that holds the cell shows it.
+function M.md_image_on_screen(cell_id, key)
+  for _, onb in pairs(Notebook.all()) do
+    if M.output_on_screen(onb, cell_id, true, key) then return true end
+  end
+  return false
+end
+
 -- For each image in a cell's outputs, register the image_id and place it
 -- directly at the correct screen row using Kitty's a=T (transmit-and-place).
 function M.place_images(nb, cell, range, win, gut)
@@ -581,7 +749,11 @@ function M.place_images(nb, cell, range, win, gut)
   if #imgs == 0 then return end
   local renderer = (require("jupynvim").config.image_renderer) or "chafa"
   local cfg = require("jupynvim").config or {}
+  local cell_id = cell.id
   for n, img in ipairs(imgs) do
+    if not image.has_visible_probe(img.key) then
+      image.set_visible_probe(img.key, function() return M.output_on_screen(nb, cell_id, nil, img.key) end)
+    end
     -- Only a fresh transmit needs the follow-up refresh. Deciding that from
     -- the stored renderer looped forever when a jpeg fell back to chafa:
     -- the stored renderer never matched the one asked for.
@@ -731,11 +903,11 @@ local function do_render(nb, win, opts)
   end
   clear_separators(nb, ranges)
   manage_busy_ticker(nb)
-  -- heal any static image whose virtual placement the terminal lost. Skip on
-  -- the busy-ticker tick: that fires every 500ms only to advance the live
-  -- "[*] 0.3s" timer, and re-asserting placements that often visibly flashes
-  -- the image. Placements only get lost on layout changes, which refresh
-  -- through the normal (non-tick) path.
+  -- re-assert image placements: only those whose placement generation moved
+  -- (image.invalidate_placements), plus, without nvim_ui_send (Neovim
+  -- 0.11), a heal of the images on screen at most once per second. Skipped
+  -- on the busy-ticker tick: that fires every 500ms only to advance the live
+  -- "[*] 0.3s" timer.
   if not (opts and (opts.exec_tick or opts.no_image)) then
     pcall(image.reassert_virtual_placements)
   end

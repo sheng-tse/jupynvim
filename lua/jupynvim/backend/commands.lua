@@ -491,9 +491,23 @@ function Commands.install(M, Image)
     local img = require("jupynvim.notebook.image")
     local rnd = require("jupynvim.notebook.render")
     local msg = string.format(
-      "jupynvim render since last reset (now reset):\n    renders:   %d\n    tty writes: %d  (%d KB)",
-      rnd._render_n or 0, img._tty_n or 0, math.floor((img._tty_bytes or 0) / 1024))
-    rnd._render_n, img._tty_n, img._tty_bytes = 0, 0, 0
+      "jupynvim render since last reset (now reset):\n    renders:   %d\n    tty writes: %d  (%d KB)"
+        .. "\n      through nvim_ui_send: %d  (%d KB)"
+        .. "\n    gif frames: %d sent, %d skipped out of view or while no terminal showed the editor, %d skipped waiting for the terminal, %d waited for a quiet screen"
+        .. "\n      terminal answers: %d of %d asked, %d given up"
+        .. "\n      markers: %d of %d answered, %d given up"
+        .. "\n    placement re-asserts: %d"
+        .. "\n    held while no terminal showed the editor: %d writes (%d KB), %d images sent again",
+      rnd._render_n or 0, img._tty_n or 0, math.floor((img._tty_bytes or 0) / 1024),
+      img._ui_send_n or 0, math.floor((img._ui_send_bytes or 0) / 1024),
+      img._frames_sent or 0, img._frames_skipped or 0, img._frames_held or 0, img._frames_quiet or 0,
+      img._acks_got or 0, img._acks_sent or 0, img._ack_timeouts or 0,
+      img._marks_got or 0, img._marks_sent or 0, img._marks_lost or 0,
+      img._place_writes or 0,
+      img._held_n or 0, math.floor((img._held_bytes or 0) / 1024), img._resent_n or 0)
+    rnd._render_n = 0
+    -- what is still on its way counts in the next period (image.lua)
+    img.reset_stats()
     vim.notify(msg, vim.log.levels.INFO)
   end, {})
 
