@@ -536,6 +536,9 @@ local function spawn_client(cmd_vec, alias, trust)
     end,
   })
   if trust then table.insert(trust.spawns, client) end
+  -- A second notebook may open while Image.attach waits for the backend.
+  M.clients[alias] = client
+  if alias == "local" then M.client = client end
   -- Native Kitty graphics. Only the local backend can write to this terminal,
   -- so only it is attached. Once a terminal UI has been attached, Image.attach
   -- encodes every escape in Lua and writes it through the UI with
@@ -576,7 +579,6 @@ local function spawn_client(cmd_vec, alias, trust)
                    error = vim.log.levels.ERROR })[p.level or "info"] or vim.log.levels.INFO
     vim.notify("jupynvim: " .. tostring(p.text or ""), lvl)
   end)
-  M.clients[alias] = client
   return client
 end
 

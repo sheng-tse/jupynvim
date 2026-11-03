@@ -353,6 +353,7 @@ section "remote-hl spec" "$rc"
 # the spec never reached its own exit: a Lua error aborts the chunk, and with a
 # plain `qa!` there that crash used to count as a pass.
 for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec deploy_probe_spec \
+            backend_startup_spec \
             keymap_override_spec image_b64_spec reopen_lsp_spec edit_nav_spec \
             multi_image_spec install_spec output_cache_spec stale_output_e2e output_view_spec \
             config_comment_spec pixi_env_spec \
