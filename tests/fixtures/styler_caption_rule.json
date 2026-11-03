@@ -1,0 +1,7 @@
+{
+ "pandas": "3.0.0",
+ "data": {
+  "text/plain": "<pandas.io.formats.style.Styler object at 0x10b623250>",
+  "text/html": "<style type=\"text/css\">\n#T_68eea caption {\n  caption-side: top;\n}\n</style>\n<table id=\"T_68eea\" style=\"caption-side: bottom\">\n  <caption>Totals</caption>\n  <thead>\n    <tr>\n      <th class=\"blank level0\" >&nbsp;</th>\n      <th id=\"T_68eea_level0_col0\" class=\"col_heading level0 col0\" >a</th>\n      <th id=\"T_68eea_level0_col1\" class=\"col_heading level0 col1\" >b</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <th id=\"T_68eea_level0_row0\" class=\"row_heading level0 row0\" >x</th>\n      <td id=\"T_68eea_row0_col0\" class=\"data row0 col0\" >1.500000</td>\n      <td id=\"T_68eea_row0_col1\" class=\"data row0 col1\" >10</td>\n    </tr>\n    <tr>\n      <th id=\"T_68eea_level0_row1\" class=\"row_heading level0 row1\" >y</th>\n      <td id=\"T_68eea_row1_col0\" class=\"data row1 col0\" >2.250000</td>\n      <td id=\"T_68eea_row1_col1\" class=\"data row1 col1\" >200</td>\n    </tr>\n  </tbody>\n</table>\n"
+ }
+}

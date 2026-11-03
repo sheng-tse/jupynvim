@@ -1,0 +1,7 @@
+{
+ "pandas": "3.0.0",
+ "data": {
+  "text/plain": "<pandas.io.formats.style.Styler object at 0x10cc77390>",
+  "text/html": "<style type=\"text/css\">\n</style>\n<table id=\"T_9dcd6\">\n  <thead>\n    <tr>\n      <th class=\"index_name level0\" >metric</th>\n      <th id=\"T_9dcd6_level0_col0\" class=\"col_heading level0 col0\" >sales</th>\n      <th id=\"T_9dcd6_level0_col1\" class=\"col_heading level0 col1\" >units</th>\n    </tr>\n    <tr>\n      <th class=\"index_name level0\" >region</th>\n      <th class=\"blank col0\" >&nbsp;</th>\n      <th class=\"blank col1\" >&nbsp;</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <th id=\"T_9dcd6_level0_row0\" class=\"row_heading level0 row0\" >east</th>\n      <td id=\"T_9dcd6_row0_col0\" class=\"data row0 col0\" >2,070.5</td>\n      <td id=\"T_9dcd6_row0_col1\" class=\"data row0 col1\" >20.0</td>\n    </tr>\n    <tr>\n      <th id=\"T_9dcd6_level0_row1\" class=\"row_heading level0 row1\" >west</th>\n      <td id=\"T_9dcd6_row1_col0\" class=\"data row1 col0\" >33,000.2</td>\n      <td id=\"T_9dcd6_row1_col1\" class=\"data row1 col1\" >330.0</td>\n    </tr>\n  </tbody>\n</table>\n"
+ }
+}

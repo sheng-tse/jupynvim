@@ -1,0 +1,7 @@
+{
+ "pandas": "3.0.0",
+ "data": {
+  "text/plain": "<pandas.io.formats.style.Styler object at 0x10cc77390>",
+  "text/html": "<style type=\"text/css\">\n</style>\n<table id=\"T_7e094\">\n  <thead>\n  </thead>\n  <tbody>\n  </tbody>\n</table>\n"
+ }
+}

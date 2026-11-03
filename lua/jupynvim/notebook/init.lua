@@ -138,6 +138,20 @@ local function trunc_marker(hidden, total)
   return "  " .. trunc_text(hidden, total)
 end
 
+-- The text of an output's HTML table, read once per output: a cell is drawn,
+-- the cursor moves and the Output widget asks again for the same output, and a
+-- table of a megabyte or more takes milliseconds to read. The memo is keyed by
+-- the output's data table and holds the HTML it was made from, so a data table
+-- that changes in place is read again; false stands for "no table".
+local table_memo = setmetatable({}, { __mode = "k" })
+local function html_table_text(data, html)
+  local m = table_memo[data]
+  if m and m.src == html then return m.text or nil end
+  local text = HtmlTable.to_text(_as_str(html))
+  table_memo[data] = { src = html, text = text or false }
+  return text
+end
+
 -- The text an execute_result or display_data shows. A figure's repr stays
 -- hidden behind its image. The Output widget's text uses it too (widgets.lua).
 local function result_text(o)
@@ -150,10 +164,12 @@ local function result_text(o)
     return ""
   end
   -- A bare repr like "<pandas.io.formats.style.Styler at 0x...>" says nothing
-  -- when the same output carries an HTML table: show the table instead.
-  if data["text/html"] and (text == "" or text:match("^<[%w._]+ at 0x[%x]+>$")
-                             or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
-    local tbl = HtmlTable.to_text(_as_str(data["text/html"]))
+  -- when the same output carries an HTML table: show the table instead (a
+  -- table with no text, an empty DataFrame's Styler, shows nothing).
+  local html = data["text/html"]
+  if html and (text == "" or text:match("^<[%w._]+ at 0x[%x]+>$")
+                or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
+    local tbl = html_table_text(data, html)
     if tbl then return tbl end
   end
   return text

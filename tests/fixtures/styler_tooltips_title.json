@@ -1,0 +1,7 @@
+{
+ "pandas": "3.0.0",
+ "data": {
+  "text/plain": "<pandas.io.formats.style.Styler object at 0x10b82acf0>",
+  "text/html": "<style type=\"text/css\">\n</style>\n<table id=\"T_8aaa8\">\n  <thead>\n    <tr>\n      <th class=\"blank level0\" >&nbsp;</th>\n      <th id=\"T_8aaa8_level0_col0\" class=\"col_heading level0 col0\" >score</th>\n      <th id=\"T_8aaa8_level0_col1\" class=\"col_heading level0 col1\" >label</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <th id=\"T_8aaa8_level0_row0\" class=\"row_heading level0 row0\" >a</th>\n      <td id=\"T_8aaa8_row0_col0\" class=\"data row0 col0\"  title=\"score > 0.9: top\">0.91</td>\n      <td id=\"T_8aaa8_row0_col1\" class=\"data row0 col1\"  title=\"it's <ok>\">pass</td>\n    </tr>\n    <tr>\n      <th id=\"T_8aaa8_level0_row1\" class=\"row_heading level0 row1\" >b</th>\n      <td id=\"T_8aaa8_row1_col0\" class=\"data row1 col0\" >0.42</td>\n      <td id=\"T_8aaa8_row1_col1\" class=\"data row1 col1\"  title=\"flag \"low\" > review\">fail</td>\n    </tr>\n    <tr>\n      <th id=\"T_8aaa8_level0_row2\" class=\"row_heading level0 row2\" >c</th>\n      <td id=\"T_8aaa8_row2_col0\" class=\"data row2 col0\"  title=\"0.5 < s < 0.8\">0.77</td>\n      <td id=\"T_8aaa8_row2_col1\" class=\"data row2 col1\" >pass</td>\n    </tr>\n  </tbody>\n</table>\n"
+ }
+}

@@ -92,6 +92,10 @@
 #      output_view_screen.sh (real nvim via tmux: <leader>no, <leader>nO and
 #      <leader>nl, :q after them, and u after a restart with an output
 #      expanded or hidden)
+#      styler_screen.sh (real nvim via tmux: a pandas Styler, live from a
+#      kernel and saved in the notebook, shows its table as aligned text and
+#      never its repr, a 600-row table is cut by the output cap, a named
+#      index keeps its column labels right-aligned and "<" text reads as written)
 #      native_screen.sh (real nvim via tmux: the library's artifact and C ABI
 #      checks, typing while a job runs, silent panics, :qa! with a job
 #      running, and the notebook drawn the same without the library)
@@ -403,6 +407,8 @@ bash "$ROOT/tests/undo_screen.sh"
 section "undo screen" "$?"
 bash "$ROOT/tests/output_view_screen.sh"
 section "output-view screen" "$?"
+bash "$ROOT/tests/styler_screen.sh"
+section "styler screen" "$?"
 bash "$ROOT/tests/native_screen.sh"
 section "native screen" "$?"
 bash "$ROOT/tests/widget_screen.sh"
