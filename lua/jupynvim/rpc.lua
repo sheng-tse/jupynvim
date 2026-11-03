@@ -106,6 +106,11 @@ function Client:stop()
   if self.handle and not self.handle:is_closing() then
     self.handle:kill("sigterm")
   end
+  -- Close its stdin as well. The backend reads stdin on a thread nothing can
+  -- cancel, so after a SIGTERM alone it shut its kernels down and then stayed
+  -- running until this editor exited, its exit (and the routing cleanup in
+  -- on_exit) arriving only then.
+  if self.stdin and not self.stdin:is_closing() then self.stdin:close() end
 end
 
 function Client:_drain()

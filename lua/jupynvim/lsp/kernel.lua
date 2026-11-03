@@ -205,18 +205,43 @@ local function make_cmd(buf, nb_getter, rpc_getter)
   end
 end
 
--- Attach the virtual LSP to a notebook buffer. Safe to call multiple times;
--- vim.lsp.start de-dupes by name+root within a buffer.
+-- buf -> id of the client made for it
+local by_buf = {}
+
+-- Attach the virtual LSP to a notebook buffer. Safe to call multiple times:
+-- a buffer keeps the one client made for it, through :e! and reopens.
 function M.attach(buf, nb_getter, rpc_getter)
   if not (vim.lsp and vim.lsp.start) then return end
-  pcall(vim.lsp.start, {
+  local ok, id = pcall(vim.lsp.start, {
     name = "jupynvim_kernel",
     cmd = make_cmd(buf, nb_getter, rpc_getter),
     root_dir = vim.fn.getcwd(),
+  }, {
     bufnr = buf,
-    -- Don't reuse: each notebook buffer gets its own session-bound client
-    -- because the nb_getter / rpc_getter closures are per-buffer.
-    reuse_client = function() return false end,
+    -- One client per notebook buffer, since the getters answer for this
+    -- buffer's notebook alone. These options used to sit in the config,
+    -- where vim.lsp.start never reads them, so the default reuse by name and
+    -- root gave every notebook the first one's client: completion and hover
+    -- in a second notebook asked the first notebook's kernel about the first
+    -- notebook's cells.
+    -- A client on its way out (stopped, its exit not yet handled) is never
+    -- handed back: the buffer would be left with none once it is gone.
+    reuse_client = function(client) return client.id == by_buf[buf] and not client:is_stopped() end,
+  })
+  if not (ok and id) then return end
+  by_buf[buf] = id
+  -- the buffer's number is never used again, so neither is its client
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = vim.api.nvim_create_augroup("JupynvimKernelLsp_" .. buf, { clear = true }),
+    buffer = buf,
+    once = true,
+    callback = function()
+      local client = vim.lsp.get_client_by_id(by_buf[buf])
+      by_buf[buf] = nil
+      if client then pcall(function() client:stop() end) end
+      -- the group held this one autocommand, which has now run
+      pcall(vim.api.nvim_del_augroup_by_name, "JupynvimKernelLsp_" .. buf)
+    end,
   })
 end
 

@@ -94,6 +94,11 @@ local function fetch_dir(state, dir, cb)
     if dir ~= resolved then  -- remember it so the next jump skips the placeholder
       pcall(function() require("jupynvim")._note_resolved_home(state.alias, resolved) end)
     end
+    -- the listing of "~" says where the home is: a file named from the home
+    -- is then the file this tree names by its absolute path
+    if dir == "~" or dir == "/~" then
+      pcall(function() require("jupynvim")._note_remote_home(state.alias, res.path) end)
+    end
     local items = {}
     for _, e in ipairs(res.entries or {}) do
       table.insert(items, { name = e.name, dir = e.kind == "dir", ignored = e.ignored and true or nil })

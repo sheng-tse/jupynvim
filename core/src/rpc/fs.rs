@@ -79,11 +79,15 @@ impl Server {
         let mtime = meta.modified().ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64).unwrap_or(0);
+        // `path` is the path as this backend spells it: a leading `~` or `/~`
+        // is its own $HOME. A frontend that names a file by its remote path
+        // learns the home here, so "~/x" and "/home/u/x" are one name.
         Ok(json!({
             "kind": kind,
             "size": meta.len(),
             "mode": meta.mode() & 0o777,
             "mtime": mtime,
+            "path": path.to_string_lossy(),
         }))
     }
 

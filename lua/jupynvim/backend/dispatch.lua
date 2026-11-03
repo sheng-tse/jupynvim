@@ -340,23 +340,23 @@ function M._set_active_alias(alias)
   elseif was and not alias then dispatch_restore() end
 end
 
--- Switch back to a local backend. Clears the active-remote alias so
--- <leader>e goes back to the local (snacks) explorer.
+-- Point the session keys back at this machine: clears the active-remote alias
+-- so <leader>e goes back to the local (snacks) explorer, and makes sure the
+-- local backend runs. Every notebook keeps its own backend and none is
+-- stopped. Stopping the one M.client pointed at used to take every remote
+-- notebook's kernel down with it.
 function M.use_local()
   M._set_active_alias(nil)
-  if M.client and not M._remote_spec then return M.client end
-  if M.client then
-    pcall(function() M.client:stop() end)
-    M.client = nil
-  end
-  M._remote_spec = nil
+  local running = M.client and M.client.job
   local c = M._ensure_client()
-  -- spawning the local core re-attaches kitty graphics with raw tty writes;
-  -- if those scroll the screen, nvim's grid is visually shifted (stale rows
-  -- on top, dead rows below the statusline). Repaint the whole screen once
-  -- the attach has settled.
-  vim.defer_fn(function() pcall(vim.cmd, "mode") end, 150)
-  vim.defer_fn(function() pcall(vim.cmd, "mode") end, 500)
+  if not running then
+    -- spawning the local core re-attaches kitty graphics with raw tty writes;
+    -- if those scroll the screen, nvim's grid is visually shifted (stale rows
+    -- on top, dead rows below the statusline). Repaint the whole screen once
+    -- the attach has settled.
+    vim.defer_fn(function() pcall(vim.cmd, "mode") end, 150)
+    vim.defer_fn(function() pcall(vim.cmd, "mode") end, 500)
+  end
   return c
 end
 

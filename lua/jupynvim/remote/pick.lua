@@ -123,7 +123,9 @@ function M.open_in_editor(file, pos)
     -- force the file into the intended target and close any OTHER window showing
     -- it. (Only ever closes windows displaying this file buffer, never the
     -- picker/explorer, which show their own buffers.)
-    local b = vim.fn.bufnr(file)
+    -- the buffer of exactly this name: bufnr(file) reads it as a file pattern
+    -- ([ ] * ? { } are wildcards) and can take another file's buffer
+    local b = vim.fn.bufexists(file) == 1 and vim.fn.bufadd(file) or -1
     if b ~= -1 and vim.api.nvim_win_is_valid(target) then
       pcall(vim.api.nvim_win_set_buf, target, b)
       for _, win in ipairs(vim.fn.win_findbuf(b)) do

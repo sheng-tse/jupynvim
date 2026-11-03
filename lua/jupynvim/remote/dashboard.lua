@@ -45,7 +45,7 @@ local actions = {
   { key = "l", icon = ICON.home,   desc = "Local backend",   run = function()
       local J = require("jupynvim")
       J.use_local()
-      vim.notify("jupynvim: switched to local backend", vim.log.levels.INFO)
+      vim.notify("jupynvim: explorer, terminal and pickers back on this machine", vim.log.levels.INFO)
       J.explorer()  -- active alias cleared → opens the local (snacks) explorer
     end },
   { key = "q", icon = ICON.power,  desc = "Close",           run = function() vim.cmd("q") end },

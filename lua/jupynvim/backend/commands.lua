@@ -8,9 +8,9 @@ local Render   = require("jupynvim.notebook.render")
 local Commands = {}
 
 function Commands.install(M, Image)
-  -- :JupynvimGrep <alias> <pattern>  — ripgrep-equivalent on remote.
+  -- :JupynvimGrep <alias> <pattern>: ripgrep-equivalent on remote.
   -- Populates the quickfix list with matches. Uses the search RPC (ignore +
-  -- regex on the backend — no remote ripgrep binary required). Search root
+  -- regex on the backend, no remote ripgrep binary required). Search root
   -- defaults to the remote home; pass `:JupynvimGrep alias pattern path` to
   -- scope it.
   vim.api.nvim_create_user_command("JupynvimGrep", function(o)
@@ -61,7 +61,7 @@ function Commands.install(M, Image)
     end,
   })
 
-  -- :JupynvimTerm <alias>  — open a PTY-backed remote shell in a split.
+  -- :JupynvimTerm <alias>: open a PTY-backed remote shell in a split.
   -- :JupynvimTerm [alias] [below|left|right|tab]
   --   Opens a plain remote shell. With a position it's an extra terminal
   --   alongside the <C-/> one (e.g. `:JupynvimTerm psc right` for a second
@@ -92,16 +92,38 @@ function Commands.install(M, Image)
     end,
   })
 
-  -- :JupynvimEdit <alias>:<path>  — convenience wrapper for opening a remote
+  -- :JupynvimEdit <alias>:<path>: convenience wrapper for opening a remote
   -- file. Equivalent to `:e jupynvim://<alias>/<path>` (which also works).
+  -- That holds for an absolute <path> and for ~/name. A relative name is read
+  -- under the remote's home, as :JupynvimOpenRemote reads it; the URI form
+  -- would read it under /.
   vim.api.nvim_create_user_command("JupynvimEdit", function(o)
     local alias, path = o.args:match("^([^:]+):(.+)$")
     if not alias or not path then
       vim.notify("usage: :JupynvimEdit <alias>:<path>", vim.log.levels.WARN)
       return
     end
-    if not path:match("^/") then path = "/" .. path end  -- relative → home-relative
-    vim.cmd("edit jupynvim://" .. alias .. path)
+    -- a relative name and ~/name are under the remote's home, as for
+    -- :JupynvimOpenRemote; an absolute one is kept; ~user/name is refused
+    local rpath, rerr = M._remote_path(path)
+    if not rpath then
+      vim.notify("jupynvim: " .. rerr, vim.log.levels.ERROR)
+      return
+    end
+    -- a text file by the name the explorer gives it (its absolute path); a
+    -- notebook is named by M.open when the URI is read. A backend that did
+    -- not answer for the name would make the read wait as long again.
+    if rpath:sub(-6) ~= ".ipynb" then
+      local nerr
+      rpath, nerr = M._remote_name(alias, rpath)
+      if nerr == "timeout" then
+        vim.notify("jupynvim: " .. alias .. " did not answer (timeout)", vim.log.levels.ERROR)
+        return
+      end
+    end
+    -- escaped: % and # in a remote name are part of it, not the current
+    -- and alternate file names (and | is not a command separator)
+    vim.cmd("edit " .. vim.fn.fnameescape("jupynvim://" .. alias .. rpath))
   end, {
     nargs = 1,
     complete = function(_, line)
@@ -139,25 +161,49 @@ function Commands.install(M, Image)
   vim.api.nvim_create_user_command("JupynvimOpen", function(o) M.open(o.args) end, { nargs = 1, complete = "file" })
 
   -- :JupynvimOpenRemote alias:path  (alias from config.remote)
-  -- :JupynvimOpenRemote user@host:/abs/path  (one-off)
-  -- Switches the active backend to an SSH-spawned one on the named host,
-  -- then opens the notebook at the given remote path.
+  -- :JupynvimOpenRemote user@host:/abs/path  (one-off, a session profile)
+  -- Makes the alias the active session, then opens the path on that remote:
+  -- a notebook as a notebook on its backend, any other file as a
+  -- jupynvim:// buffer.
   vim.api.nvim_create_user_command("JupynvimOpenRemote", function(o)
     local spec, perr = M._parse_remote_spec(o.args)
     if not spec then
       vim.notify("jupynvim: " .. tostring(perr), vim.log.levels.ERROR)
       return
     end
-    M.use_remote(spec)
-    -- For remote opens, the path is whatever the user wrote (we don't expand
-    -- ~ or resolve relative against the local CWD). Backend opens it on the
-    -- remote filesystem.
-    M.open(spec.path, { remote_label = spec.label })
+    -- The path is the remote's: "~" and a relative path mean the remote's
+    -- home, never this machine's (the backend resolves them). Judged first:
+    -- a refused path (~user/name) starts no backend, adds no session
+    -- profile and leaves the active remote as it was.
+    local path, rerr = M._remote_path(spec.path)
+    if not path then
+      vim.notify("jupynvim: " .. rerr, vim.log.levels.ERROR)
+      return
+    end
+    local alias = spec.label
+    if not (M.config.remote or {})[alias] then alias = M._adhoc_profile(spec.host) end
+    local ok, err = pcall(M.use_remote, alias)
+    if not ok then
+      vim.notify("jupynvim: " .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+    if path:sub(-6) == ".ipynb" then
+      M.open(path, { alias = alias })
+    else
+      local nerr
+      path, nerr = M._remote_name(alias, path)
+      if nerr == "timeout" then
+        vim.notify("jupynvim: " .. alias .. " did not answer (timeout)", vim.log.levels.ERROR)
+        return
+      end
+      vim.cmd("edit " .. vim.fn.fnameescape("jupynvim://" .. alias .. path))
+    end
   end, { nargs = 1 })
 
+  -- Point the session keys back at this machine. No backend is stopped.
   vim.api.nvim_create_user_command("JupynvimUseLocal", function() M.use_local() end, {})
 
-  -- :JupynvimDebugFrames — dump the exact frame state so a broken render can
+  -- :JupynvimDebugFrames: dump the exact frame state so a broken render can
   -- be diagnosed without screenshots. Run it right after the breakage.
   vim.api.nvim_create_user_command("JupynvimDebugFrames", function()
     local buf = vim.api.nvim_get_current_buf()
@@ -199,7 +245,7 @@ function Commands.install(M, Image)
     end)
   end, {})
 
-  -- :JupynvimDebugHl — dump every highlight source at the cursor (treesitter,
+  -- :JupynvimDebugHl: dump every highlight source at the cursor (treesitter,
   -- semantic tokens, syntax, jupynvim extmarks) with each group's resolved
   -- foreground. Put the cursor on a line that looks wrong (e.g. gray output)
   -- and run this; it tells us exactly which group is painting it instead of
@@ -259,11 +305,11 @@ function Commands.install(M, Image)
     end)
   end, {})
 
-  -- :JupynvimExplorer — open the explorer dispatcher (remote tree if an SSH
+  -- :JupynvimExplorer: open the explorer dispatcher (remote tree if an SSH
   -- session is active, else local). Same as the explorer_keys binding.
   vim.api.nvim_create_user_command("JupynvimExplorer", function() M.explorer() end, {})
 
-  -- :JupynvimRemoteCd <alias> <path> — re-root the remote explorer at <path>
+  -- :JupynvimRemoteCd <alias> <path>: re-root the remote explorer at <path>
   -- (absolute remote path, e.g. /ocean/projects/<alloc>/shared). Lets you
   -- browse/edit anywhere on the remote, not just $HOME. In the tree, `-` roots
   -- up one level and `.` prompts for a path.
@@ -295,7 +341,7 @@ function Commands.install(M, Image)
     end,
   })
 
-  -- :JupynvimCrossBuild — cross-compile the linux backend binary locally
+  -- :JupynvimCrossBuild: cross-compile the linux backend binary locally
   -- (static musl, runs on PSC's old glibc). Output is auto-uploaded to remotes
   -- on the next connect. One-time setup: brew install zig; cargo install
   -- cargo-zigbuild; rustup target add x86_64-unknown-linux-musl.
@@ -303,9 +349,11 @@ function Commands.install(M, Image)
   -- added; add aarch64-unknown-linux-musl for arm64 remotes like AWS
   -- Graviton). Auto-upload then picks the right one per remote via uname -m.
   -- Install or update the local backend binary: the release prebuilt
-  -- (SHA256-checked), else a cargo build. For plugin managers without a
-  -- build hook, and to repair a stale binary. The download is renamed into
-  -- place, so a running backend keeps its old binary until it restarts.
+  -- (SHA256-checked), else a cargo build, and the in-process library with
+  -- it (also when the core could not be installed). For plugin managers
+  -- without a build hook, and to repair a stale binary. The download is
+  -- renamed into place, so a running backend keeps its old binary until it
+  -- restarts.
   vim.api.nvim_create_user_command("JupynvimInstall", function()
     -- force: try again even a prebuilt that did not run here last time
     local ok, err = pcall(require("jupynvim.backend.install").run, M._plugin_root(), { force = true })
@@ -315,14 +363,15 @@ function Commands.install(M, Image)
       return
     end
     if M.client and M.client.job then
-      vim.notify("jupynvim: :JupynvimReset to switch the running backend to it",
+      -- :JupynvimReset reopens the notebooks on this same running backend;
+      -- only a new backend process runs the new binary
+      vim.notify("jupynvim: installed; restart Neovim to run the new backend",
         vim.log.levels.INFO)
     end
-  end, { desc = "jupynvim: download or build the jupynvim-core backend" })
+  end, { desc = "jupynvim: download or build jupynvim-core and install libjupynvim" })
 
   vim.api.nvim_create_user_command("JupynvimCrossBuild", function()
     local root = M._plugin_root()
-    local manifest = root .. "/core/Cargo.toml"
     local installed = vim.fn.systemlist({ "rustup", "target", "list", "--installed" }) or {}
     local targets = {}
     for _, t in ipairs(installed) do
@@ -338,9 +387,8 @@ function Commands.install(M, Image)
       if i > #targets then return end
       local triple = targets[i]
       vim.notify("jupynvim: cross-building " .. triple .. " ...", vim.log.levels.INFO)
-      vim.system({
-        "cargo", "zigbuild", "--release", "--target", triple, "--manifest-path", manifest,
-      }, { text = true }, function(res)
+      -- the backend's package only, as the cross build before an upload does
+      vim.system(M._cross_build_cmd(triple), { text = true }, function(res)
         vim.schedule(function()
           if res.code == 0 then
             M._binary_verified = {}  -- force re-upload check on next connect
@@ -358,7 +406,7 @@ function Commands.install(M, Image)
     build(1)
   end, {})
 
-  -- :JupynvimUseJob <alias> [<jobid>]  — route next backend spawn through
+  -- :JupynvimUseJob <alias> [<jobid>]: route next backend spawn through
   -- srun --jobid=N --overlap. Omit jobid to clear (back to login node).
   vim.api.nvim_create_user_command("JupynvimUseJob", function(o)
     local parts = vim.split(o.args, " ", { trimempty = true })
@@ -380,7 +428,7 @@ function Commands.install(M, Image)
     end,
   })
 
-  -- :JupynvimConnect <alias>  — open a terminal split for interactive SSH
+  -- :JupynvimConnect <alias>: open a terminal split for interactive SSH
   -- auth (password / 2FA). Sets up a ControlMaster socket; future
   -- :JupynvimOpenRemote calls for this alias reuse it without prompting.
   -- :JupynvimConnect                 -> pick a profile (or "new connection")
@@ -409,13 +457,13 @@ function Commands.install(M, Image)
     end,
   })
 
-  -- :JupynvimLspStatus — dump the remote-LSP attach chain breadcrumbs
+  -- :JupynvimLspStatus: dump the remote-LSP attach chain breadcrumbs
   -- (resolved servers, probe/install results, root, server/client state).
   vim.api.nvim_create_user_command("JupynvimLspStatus", function()
     require("jupynvim.remote.lsp").status()
   end, {})
 
-  -- :JupynvimRpcStats — print per-method RPC counts since the last reset, then
+  -- :JupynvimRpcStats: print per-method RPC counts since the last reset, then
   -- reset. Run once to clear, do the laggy action (e.g. j/k around a big cell),
   -- run again: the counts are exactly what crossed the link during that window.
   vim.api.nvim_create_user_command("JupynvimRpcStats", function()
@@ -435,7 +483,7 @@ function Commands.install(M, Image)
     vim.notify("jupynvim RPC since last reset (now reset):\n" .. out .. "\n" .. inc, vim.log.levels.INFO)
   end, {})
 
-  -- :JupynvimRenderStats — local-render counters (frame re-renders, tty/kitty
+  -- :JupynvimRenderStats: local-render counters (frame re-renders, tty/kitty
   -- writes and their byte volume) since last reset, then reset. Pairs with
   -- JupynvimRpcStats: if RPC is zero but these are high during the laggy
   -- action, the cost is local rendering, not the link.
@@ -449,7 +497,7 @@ function Commands.install(M, Image)
     vim.notify(msg, vim.log.levels.INFO)
   end, {})
 
-  -- :JupynvimPauseAnimations — toggle all gif animation timers. A/B test for
+  -- :JupynvimPauseAnimations: toggle all gif animation timers. A/B test for
   -- whether animation drives navigation lag over a remote backend, and a
   -- workaround if it does.
   vim.api.nvim_create_user_command("JupynvimPauseAnimations", function()
@@ -463,7 +511,13 @@ function Commands.install(M, Image)
     end
   end, {})
 
-  -- :JupynvimLspRetry [alias] — clear cached LSP provisioning failures and
+  -- :JupynvimPalette: the color tokens everything jupynvim draws with, taken
+  -- from the colorscheme, and where each one came from.
+  vim.api.nvim_create_user_command("JupynvimPalette", function()
+    require("jupynvim.palette").show()
+  end, { desc = "Show the palette tokens and where each came from" })
+
+  -- :JupynvimLspRetry [alias]: clear cached LSP provisioning failures and
   -- re-attach remote language servers for open jupynvim:// buffers.
   vim.api.nvim_create_user_command("JupynvimLspRetry", function(o)
     local alias = vim.trim(o.args or "")
@@ -477,7 +531,7 @@ function Commands.install(M, Image)
     end,
   })
 
-  -- :JupynvimDisconnect <alias>  — close the ControlMaster socket. Completes
+  -- :JupynvimDisconnect <alias>: close the ControlMaster socket. Completes
   -- with the same target list as Connect (profiles + ssh-config hosts), with
   -- live-socket targets first.
   vim.api.nvim_create_user_command("JupynvimDisconnect", function(o) M.disconnect(o.args) end, {
@@ -492,7 +546,7 @@ function Commands.install(M, Image)
   -- On nvim exit we only stop the backend SUBPROCESSES (clean shutdown of
   -- jupynvim-core over each transport), but DELIBERATELY LEAVE the SSH
   -- ControlMaster sockets alive. ControlPersist keeps them for their TTL
-  -- (4h), so the next nvim session reuses them WITHOUT re-auth — critical
+  -- (4h), so the next nvim session reuses them WITHOUT re-auth, which is critical
   -- with password+2FA logins where re-auth every restart is painful.
   -- Use :JupynvimDisconnect <alias> for explicit teardown.
   vim.api.nvim_create_autocmd("VimLeavePre", {
@@ -513,19 +567,22 @@ function Commands.install(M, Image)
   vim.api.nvim_create_user_command("JupynvimClearOutputs", function() M.clear_outputs(0) end, {})
   vim.api.nvim_create_user_command("JupynvimClearCellOutput", function() M.clear_cell_output(0) end, {})
 
-  -- Nuclear reset: close all sessions, wipe all notebook buffers, reload from disk.
+  -- Nuclear reset: close all sessions, wipe all notebook buffers, reload from
+  -- disk. Each notebook is closed on, and reopened from, its own backend.
   vim.api.nvim_create_user_command("JupynvimReset", function()
     for buf, nb in pairs(Notebook.all()) do
-      if nb.session_id and M.client then
-        M.client:call("close", { session_id = nb.session_id }, function() end)
-      end
+      -- reopened by the path its backend opened: the buffer name is resolved
+      -- against this machine (through symlinks), which can name nothing on a
+      -- remote
+      local alias, path = nb.alias, nb.path
+      local cl = nb.session_id and M._live_client(nb)
+      if cl then cl:call("close", { session_id = nb.session_id }, function() end) end
       Notebook.remove(buf)
       pcall(Image.clear_all)
       if vim.api.nvim_buf_is_valid(buf) then
-        local path = vim.api.nvim_buf_get_name(buf)
         vim.api.nvim_buf_delete(buf, { force = true })
         if path:match("%.ipynb$") then
-          vim.defer_fn(function() M.open(path, { force = true }) end, 100)
+          vim.defer_fn(function() M.open(path, { force = true, alias = alias }) end, 100)
         end
       end
     end
@@ -541,9 +598,10 @@ function Commands.install(M, Image)
       return
     end
     print(string.format("buf=%d session=%s path=%s", buf, nb.session_id:sub(1,8), nb.path))
+    print("backend: " .. (nb.alias or "local"))
     print(string.format("buffer line count: %d", vim.api.nvim_buf_line_count(buf)))
     print(string.format("nb.cells count:    %d", #nb.cells))
-    -- Window dup detection — if more than one window shows this buffer, the user
+    -- Window dup detection: if more than one window shows this buffer, the user
     -- is seeing apparent "duplicate cells" because both windows render the same buffer.
     local wins = vim.fn.win_findbuf(buf)
     print(string.format("windows showing this buf: %d  (Ctrl-w o to close others)", #wins))

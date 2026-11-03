@@ -285,7 +285,9 @@ local function open_node(state, node)
     J.open(node.path, { alias = state.alias })
   else
     local uri = "jupynvim://" .. state.alias .. node.path
-    vim.cmd("edit " .. uri)
+    -- escaped: % and # in a remote name are part of it, not the current
+    -- and alternate file names (and | is not a command separator)
+    vim.cmd("edit " .. vim.fn.fnameescape(uri))
     -- Force the file into the INTENDED target window. LazyVim/neo-tree/snacks
     -- can auto-split on :edit and move focus to a stray window (the file showed
     -- up at the far left); keying off the focused window would then close the
@@ -294,7 +296,8 @@ local function open_node(state, node)
     -- catches DEFERRED plugin auto-splits that happen on the next tick.
     local function force_into_target()
       if not (target and vim.api.nvim_win_is_valid(target)) then return end
-      local b = vim.fn.bufnr(uri)
+      -- exactly this name: bufnr(uri) reads it as a file pattern
+      local b = vim.fn.bufexists(uri) == 1 and vim.fn.bufadd(uri) or -1
       if b == -1 then return end
       pcall(vim.api.nvim_win_set_buf, target, b)
       for _, w in ipairs(vim.fn.win_findbuf(b)) do
@@ -688,6 +691,11 @@ load_root = function(state, root_path)
       return
     end
     state.root = res.path or root_path
+    -- the listing of "~" says where the home is: a file named from the home
+    -- is then the file this tree names by its absolute path
+    if root_path == nil or root_path == "~" or root_path == "/~" then
+      pcall(function() require("jupynvim")._note_remote_home(state.alias, res.path) end)
+    end
     state.kids[state.root] = { loaded = true, items = items_from_entries(state.root, res.entries) }
     render(state)
     start_watch(state, state.root)

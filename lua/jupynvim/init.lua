@@ -1,9 +1,9 @@
--- jupynvim — VSCode-style Jupyter notebook editing in Neovim.
+-- jupynvim: VSCode-style Jupyter notebook editing in Neovim.
 --
 -- Usage (lazy.nvim-style):
 --   require("jupynvim").setup({ core_path = "/path/to/jupynvim-core" })
 --
--- Or just call setup({}) — it'll auto-detect the binary in this repo.
+-- Or just call setup({}); it'll auto-detect the binary in this repo.
 
 local M = {}
 
@@ -14,7 +14,10 @@ local Keymaps  = require("jupynvim.notebook.keymaps")
 local Image    = require("jupynvim.notebook.image")
 local Log      = require("jupynvim.log")
 
-M.client = nil    -- single backend process shared by all notebooks
+-- The local backend, shared by every local notebook. A remote notebook's
+-- backend is M.clients[alias]; per-notebook requests go through
+-- M._nb_client(nb) or M._live_client(nb), never through this.
+M.client = nil
 M.config = {
   core_path = nil,
   -- When jupynvim-core is missing, or older than the plugin because an update
@@ -79,6 +82,27 @@ M.config = {
   -- max_output_lines lines and its last 5, so a training log still shows how
   -- it ended. <leader>nl sets another number for one cell. 0 disables the cap.
   max_output_lines = 500,
+  -- The in-process library, libjupynvim, runs heavy work on worker threads
+  -- inside Neovim, never on the UI thread. It is optional and everything
+  -- works without it. enabled = false never loads it; native = false is the
+  -- same. path = "<file>" loads a library you built instead of the one in
+  -- core/target/release, next to jupynvim-core; ~ and $VARS in it are
+  -- expanded, and a relative path is taken from the current directory when
+  -- the library first loads. workers = 0 picks one less than the CPU count,
+  -- at least 1 and at most 4; workers = N runs N threads, 1 to 64 (a larger
+  -- N runs 64). In the environment, JUPYNVIM_NATIVE=off turns it off and
+  -- JUPYNVIM_NATIVE=<file> loads that file, even with enabled = false.
+  native = {
+    enabled = true,
+    path = nil,
+    workers = 0,
+  },
+  -- The colors jupynvim draws with are derived from your colorscheme. A token
+  -- set here wins over what the colorscheme gives, for example
+  -- palette = { fill = "#1c1f31" }; canvas is the background they are drawn
+  -- on, which is otherwise Normal's background or, when Normal has none, the
+  -- terminal's own. :JupynvimPalette lists every token and where it came from.
+  palette = {},
 
   -- When an SSH session is active, these keys open the REMOTE tree explorer
   -- instead of the local one; with no active session they fall through to the
@@ -141,7 +165,7 @@ require("jupynvim.backend.connect").install(M)
 -- terminal (local snacks float OR remote split) changes the layout, but
 -- those toggles settle ASYNC and don't reliably fire a resize event the
 -- notebook sees, so the width-sized frames go stale until something else
--- re-renders (the user found `i`/`a` or a second toggle "fixes" it — both
+-- re-renders (the user found `i`/`a` or a second toggle "fixes" it; both
 -- just trigger a refresh). So every toggle dispatcher calls this. We fire
 -- once on the next tick (synchronous-settle case, before the redraw) and
 -- once after a short delay (async-settle backstop). Render.refresh clears
@@ -186,6 +210,116 @@ function M._parse_uri(uri)
   return nil
 end
 
+-- A path on a remote, never expanded against this machine. "~/x", "~" and a
+-- relative "x" are home-relative and go as "/~/x", which the backend resolves
+-- against its own $HOME (arg_path in core/src/rpc/mod.rs), the way the
+-- jupynvim:// URIs already name them. An absolute path is kept.
+-- "~name/x" is another user's home in the shell and scp. The backend resolves
+-- only its own user's "~", so it would read $HOME/~name/x (a file that is not
+-- there; :w would create a directory called ~name). That text is refused: it
+-- returns nil and a message, and the caller opens nothing. "./~name" is the
+-- file of that name in the remote's home.
+function M._remote_path(path)
+  path = vim.trim(path or "")
+  if path:sub(1, 1) == "/" then return path end
+  if path == "~" then return "/~" end
+  if path:sub(1, 2) == "~/" then return "/" .. path end
+  if path:sub(1, 1) == "~" then
+    return nil, ("%s is in another user's home, which the remote does not expand; give its absolute path"
+      .. " (./%s for a file of that name in the remote's home)"):format(path, path)
+  end
+  return "/~/" .. path
+end
+
+-- One name per file on a remote: its alias plus its absolute path. The
+-- explorer and the pickers name a file by the path fs_list gave them
+-- (/home/u/x), and _remote_path names "~/x" and a relative "x" by the home
+-- ("/~/x"), so one file reached both ways would be two buffers, two sessions
+-- and two kernels, and a :w in either would overwrite what the other saved.
+-- Whatever names a remote file goes through M._remote_name first, which
+-- spells the home out as the backend itself does ($HOME).
+-- The home is learned per alias: from the backend's fs_stat of "/~", from
+-- the reply to an open of a "/~/x" path, and from the tree's first listing.
+-- false is a backend that cannot say (it predates the "path" in fs_stat).
+M._remote_homes = {}
+
+function M._note_remote_home(alias, home)
+  if not alias or type(home) ~= "string" or home:sub(1, 1) ~= "/" then return end
+  if home == "/~" or home:sub(1, 3) == "/~/" then return end
+  home = home:gsub("/+$", "")
+  M._remote_homes[alias] = home == "" and "/" or home
+end
+
+function M._is_home_relative(p)
+  return p == "/~" or p:sub(1, 3) == "/~/"
+end
+
+-- "/~" and "/~/x" with the home spelled out, once it is known. `p` is a name
+-- clean_remote made, so no "/" is repeated in it.
+function M._remote_expand(alias, p)
+  local home = M._remote_homes[alias]
+  if not home then return p end
+  if p == "/~" then return home end
+  local rest = p:match("^/~/(.+)$")
+  if rest then return (home == "/" and "" or home) .. "/" .. rest end
+  return p
+end
+
+-- The same file spelled with a repeated "/" or a "." step ("~/./x", "a//b")
+-- is one name. ".." is left alone: it depends on the remote's symlinks.
+local function clean_remote(p)
+  local q = p:gsub("/+", "/")
+  local prev
+  repeat
+    prev = q
+    q = q:gsub("/%./", "/")
+  until q == prev
+  q = q:gsub("/%.$", "")
+  return q == "" and "/" or q
+end
+
+-- What a backend opened "/~/rest" as says where its home is. `asked` is a
+-- name M._remote_name made.
+local function learn_home_from(alias, asked, named)
+  local rest = asked:match("^/~/(.+)$")
+  if not rest or type(named) ~= "string" then return end
+  if named:sub(-#rest - 1) ~= "/" .. rest then return end
+  local home = named:sub(1, #named - #rest - 1)
+  M._note_remote_home(alias, home == "" and "/" or home)
+end
+
+-- The remote path `p` (as _remote_path made it) under the name its file has
+-- on that remote. A home-relative path is spelled out; if the home is not
+-- known yet the backend is asked, with `cl` or the alias's own client.
+-- A backend that answers without saying is remembered as one that cannot
+-- (false). One that does not answer, or answers with an error, is asked
+-- again by the next name: it may be starting, or not connected yet. Either
+-- way the path is left as it was (the caller can still learn the home from
+-- an open's reply), and the error is the second result: "timeout" means the
+-- backend had the whole wait a remote request gets, and did not answer.
+function M._remote_name(alias, p, cl)
+  if not alias then return p end
+  p = clean_remote(p)
+  if not M._is_home_relative(p) then return p end
+  local err
+  if M._remote_homes[alias] == nil then
+    if not cl then
+      local ok, c = pcall(M.client_for, alias)
+      cl = ok and c or nil
+      if not ok then err = tostring(c) end
+    end
+    if cl then
+      local res
+      err, res = cl:call_sync("fs_stat", { path = "/~" }, 30000)
+      if not err then
+        M._note_remote_home(alias, type(res) == "table" and res.path or nil)
+        if M._remote_homes[alias] == nil then M._remote_homes[alias] = false end
+      end
+    end
+  end
+  return M._remote_expand(alias, p), err
+end
+
 -- Parse a remote-open spec.
 --   "alias:relative/or/abs/path"   uses M.config.remote[alias]
 --   "user@host:/abs/path"          one-off; alias name defaults to user@host
@@ -210,20 +344,30 @@ end
 
 -- Debounced rewrite of cells' output REGIONS (real buffer lines) after
 -- kernel events. Bottom-up so line numbers stay valid across edits.
-local _out_sync = {}  -- buf -> { timer, ids }
-function M._queue_output_sync(buf, nb, cell_id)
+-- opts.keep_clean: the sync changes a view of the notebook, not its text (a
+-- widget redraw), so a buffer that was clean stays clean. A queue holds
+-- keep_clean only while every request in it asked for that.
+local _out_sync = {}  -- buf -> { timer, ids, keep_clean }
+function M._queue_output_sync(buf, nb, cell_id, opts)
   local q = _out_sync[buf]
-  if not q then q = { ids = {} }; _out_sync[buf] = q end
+  if not q then q = { ids = {}, keep_clean = true }; _out_sync[buf] = q end
   q.ids[cell_id] = true
+  if not (opts and opts.keep_clean) then q.keep_clean = false end
   if q.timer then return end
   q.timer = vim.uv.new_timer()
   q.timer:start(150, 0, vim.schedule_wrap(function()
     if q.timer then q.timer:stop(); q.timer:close(); q.timer = nil end
-    local ids = q.ids
-    q.ids = {}
+    local ids, keep = q.ids, q.keep_clean
+    q.ids, q.keep_clean = {}, true
     if not vim.api.nvim_buf_is_valid(buf) then return end
-    M._apply_output_sync(nb, ids)
+    if keep then M._sync_keep_clean(nb, ids) else M._apply_output_sync(nb, ids) end
   end))
+end
+
+-- Is an output sync of buf queued and not run yet?
+function M._output_sync_pending(buf)
+  local q = _out_sync[buf]
+  return q ~= nil and q.timer ~= nil
 end
 
 function M._apply_output_sync(nb, ids, opts)
@@ -265,9 +409,14 @@ function M._apply_output_sync(nb, ids, opts)
   vim.bo[buf].modifiable = not CellMode.is_command(buf) and was_modifiable or false
   if not CellMode.is_command(buf) then vim.bo[buf].modifiable = true end
   Render.refresh(nb, vim.fn.bufwinid(buf))
+  -- The cells are built: the tombstones of widgets closed while no cell showed them can
+  -- go, unless a queued sync still has cells to build.
+  require("jupynvim.notebook.widgets").sweep(nb.session_id, M._output_sync_pending(buf))
 end
 
-function M._handle_cell_event(p)
+-- `from` is the backend the event came from (nil when a caller hands one in
+-- directly). Only the notebook's own backend speaks for it.
+function M._handle_cell_event(p, from)
   if not p or not p.session_id then
     Log.warn("cell_event missing session_id: " .. vim.inspect(p):sub(1, 200))
     return
@@ -275,6 +424,16 @@ function M._handle_cell_event(p)
   Log.debug("cell_event cell=" .. tostring(p.cell_id) .. " kind=" .. tostring(p.event and p.event.kind))
   for buf, nb in pairs(Notebook.all()) do
     if nb.session_id == p.session_id then
+      -- Compared with the client registered for its backend, live or not:
+      -- the exit callback clears a client's job at once, while its last
+      -- events and its on_exit (which unregisters it) are still queued, and
+      -- those last events are its own.
+      local own
+      if nb.alias then own = M.clients[nb.alias] else own = M.client end
+      if from and own ~= from then
+        Log.warn("cell_event for session " .. tostring(p.session_id) .. " from a backend it does not belong to; dropped")
+        return
+      end
       local changed = nb:apply_cell_event(p.cell_id, p.event or {})
       -- Output events change cell.outputs but not buffer TEXT, so vim's
       -- "modified" flag stays false. That's why :wqa was a no-op after
@@ -312,6 +471,11 @@ end
 -- ---------- buffer lifecycle ----------
 
 M._opening = M._opening or {}
+-- the backend of each open M._opening holds: its alias, false for local
+M._opening_from = M._opening_from or {}
+-- abs -> true while that open waits on its reply: it reads no buffer then,
+-- so a read of the name in that time is another open (an :edit, a plugin)
+M._asking = M._asking or {}
 
 -- Walk up from `start_dir` looking for a project venv python under `.venv`,
 -- `venv`, or `env` (`Scripts\python.exe` on Windows). Return the python path
@@ -369,23 +533,75 @@ local function language_filetype(snap)
 end
 M._language_filetype = language_filetype
 
+local function where(alias) return alias and ("from " .. alias) or "locally" end
+
+-- One buffer per name: a notebook another backend has, or is opening, under
+-- this name is refused, never taken over or dropped without a word.
+local function refuse_other_backend(abs, held_by, alias)
+  vim.notify(("jupynvim: %s is already open %s. Close it with :bwipeout before opening it %s.")
+    :format(abs, where(held_by), where(alias)), vim.log.levels.ERROR)
+end
+
+-- An open of `abs` waits on its reply, and call_sync's wait runs other code
+-- (a timer, an autocommand, a second click). A second open of the name from
+-- the same backend is that same open; one from another backend is refused.
+local function opening_elsewhere(abs, alias)
+  local held = M._opening_from[abs]
+  if held == nil or (held or nil) == alias then return end
+  refuse_other_backend(abs, held or nil, alias)
+end
+
+local function start_opening(abs, alias)
+  M._opening[abs] = true
+  M._opening_from[abs] = alias or false
+end
+
+local function done_opening(abs)
+  M._opening[abs] = nil
+  M._opening_from[abs] = nil
+  M._asking[abs] = nil
+end
+
 function M.open(path, opts)
   opts = opts or {}
-  -- Route through the right client. opts.alias picks a specific remote
-  -- backend (set by the URI handler / file browser for remote notebooks);
-  -- without it, fall back to the local backend.
-  if opts.alias then
-    M.client = M.client_for(opts.alias)
-  else
-    -- A missing backend is a setup problem with a fix to point at, not a
-    -- stack trace out of a scheduled callback.
-    local ok, err = pcall(M._ensure_client)
-    if not ok then
-      vim.notify(tostring(err), vim.log.levels.ERROR)
-      return
+  -- The notebook's backend is fixed by opts.alias alone: a remote alias for a
+  -- notebook on that remote (the explorer, the pickers, the URI handler and
+  -- :JupynvimOpenRemote pass it), none for a local one. A local open never
+  -- follows whichever remote was used last.
+  local alias = opts.alias
+  if alias == "" or alias == "local" then alias = nil end
+  -- A remote path is the remote's own, never expanded here.
+  local abs, path_err
+  -- the backend, when the name needs it (a home not learned yet)
+  local cl
+  if alias then
+    abs, path_err = M._remote_path(path)
+    if not abs then
+      vim.notify("jupynvim: " .. path_err, vim.log.levels.ERROR)
+      return nil
     end
+    -- One name per file: a home-relative path is spelled out as the backend
+    -- spells it, so the lookup below meets the explorer's absolute name
+    if M._is_home_relative(abs) and M._remote_homes[alias] == nil then
+      local okc, c = pcall(M.client_for, alias)
+      if not okc then
+        vim.notify(tostring(c), vim.log.levels.ERROR)
+        return nil
+      end
+      cl = c
+    end
+    local name_err
+    abs, name_err = M._remote_name(alias, abs, cl)
+    -- The backend did not answer the home lookup in the whole wait a remote
+    -- open gets (a remote still starting, a link that hangs). The open would
+    -- wait as long again: one open waits once.
+    if name_err == "timeout" then
+      vim.notify("jupynvim open failed: timeout", vim.log.levels.ERROR)
+      return nil
+    end
+  else
+    abs = vim.fn.fnamemodify(path, ":p")
   end
-  local abs = vim.fn.fnamemodify(path, ":p")
   -- Clear stray direct placements left by file explorers (snacks.image
   -- previews .ipynb files and the placement survives past the explorer
   -- closing, overlaying our cell renders at the wrong size). We only
@@ -396,10 +612,40 @@ function M.open(path, opts)
 
   -- Idempotency #1: if a notebook for this path is already alive AND we're not
   -- being asked to force-reload, just refocus and re-render.
-  local existing_buf = vim.fn.bufnr(abs)
+  -- Only a buffer of exactly this file. bufnr(abs) reads abs as a file
+  -- pattern: it also takes a name this path is merely part of (a local
+  -- x/home/u/R.ipynb for a remote /home/u/R.ipynb) and, with [ * ? { } in
+  -- the path, another file's name (run[1]/R.ipynb for run1/R.ipynb).
+  -- bufexists() matches a whole name, never part of one or a pattern, and
+  -- bufadd() then hands back that very buffer: it never creates one for a
+  -- name that exists. Both also take the buffer of the same file on this
+  -- machine under another name (through a symlink, and on macOS a name that
+  -- differs only by case), as Neovim does for every local file.
+  local existing_buf = vim.fn.bufexists(abs) == 1 and vim.fn.bufadd(abs) or -1
+  local force = opts.force
   if existing_buf > 0 then
     local existing_nb = Notebook.get(existing_buf)
-    if existing_nb and not opts.force then
+    -- One buffer per name: a notebook another backend has open under this
+    -- name is refused rather than taken over. One :bdelete closed is
+    -- replaced, its session closed on its own backend below. That is only
+    -- this call: the buffer keeps its notebook and the backend it came from,
+    -- so a later :edit of the name brings that notebook back. :bwipeout drops
+    -- both, and frees the name for every way of opening it.
+    if existing_nb and existing_nb.alias ~= alias then
+      if vim.fn.buflisted(existing_buf) == 1 then
+        refuse_other_backend(abs, existing_nb.alias, alias)
+        return nil
+      end
+      force = true
+    end
+    -- Closed with :bdelete on this same backend: the buffer is unloaded, and
+    -- showing it would read it through the *.ipynb BufReadCmd, which takes
+    -- the read for an :edit of the path. It is read again here, as that
+    -- read would: the old session closed, a new one opened on this backend.
+    if existing_nb and not force and not vim.api.nvim_buf_is_loaded(existing_buf) then
+      force = true
+    end
+    if existing_nb and not force then
       -- Already open: if a window already shows it, FOCUS that window (like
       -- <C-w>w to it) rather than re-displaying the buffer in the current
       -- window. Re-displaying (e.g. when the explorer opens the same file)
@@ -419,21 +665,37 @@ function M.open(path, opts)
   -- Idempotency #2: re-entrancy guard. The first M.open is mid-flight
   -- (likely blocked in call_sync's vim.wait). A second BufReadCmd that fires
   -- during the wait must NOT touch the notebook the first call is building
-  -- (including the force-tear-down path below — that would wipe the new nb
+  -- (including the force-tear-down path below, which would wipe the new nb
   -- before the outer call finishes).
+  -- One from another backend is refused, and says so.
   if M._opening[abs] then
+    opening_elsewhere(abs, alias)
     return existing_buf > 0 and existing_buf or nil
   end
-  M._opening[abs] = true
+  start_opening(abs, alias)
+
+  -- Resolved only now, so a refocus or a refused open spawns nothing. A
+  -- missing backend is a setup problem with a fix to point at, not a stack
+  -- trace out of a scheduled callback.
+  if not cl then
+    local ok, c
+    if alias then ok, c = pcall(M.client_for, alias) else ok, c = pcall(M._ensure_client) end
+    if not ok then
+      done_opening(abs)
+      vim.notify(tostring(c), vim.log.levels.ERROR)
+      return
+    end
+    cl = c
+  end
 
   -- Force reload: tear down old session BEFORE creating new one. Safe to do
-  -- now that the re-entrancy guard is set.
+  -- now that the re-entrancy guard is set. The old session is closed on the
+  -- backend that holds it.
   if existing_buf > 0 then
     local existing_nb = Notebook.get(existing_buf)
-    if existing_nb and opts.force then
-      pcall(function()
-        M._ensure_client():call("close", { session_id = existing_nb.session_id }, function() end)
-      end)
+    if existing_nb and force then
+      local old = M._live_client(existing_nb)
+      if old then old:call("close", { session_id = existing_nb.session_id }, function() end) end
       Notebook.remove(existing_buf)
       pcall(function() require("jupynvim.notebook.image").clear_all() end)
       -- A notebook-aware server (ty) still holds the old document, and on
@@ -447,18 +709,47 @@ function M.open(path, opts)
   -- Remote backends (SSH-spawned) take longer to first-respond because of
   -- ssh connect + scheduler attach (srun, etc) + binary startup. Bump to 30s
   -- so a slow PSC node doesn't time out before jupynvim-core is ready.
-  local open_timeout = M._remote_spec and 30000 or 5000
-  local err, result = M.client:call_sync("open", { path = abs }, open_timeout)
+  local open_timeout = alias and 30000 or 5000
+  M._asking[abs] = true
+  local err, result = cl:call_sync("open", { path = abs }, open_timeout)
+  M._asking[abs] = nil
   if err then
-    M._opening[abs] = nil
+    done_opening(abs)
     vim.notify("jupynvim open failed: " .. tostring(err), vim.log.levels.ERROR)
     return
   end
   local sid = result.session_id
   local snap = result.snapshot
 
-  -- Create or reuse the buffer
-  local buf = vim.fn.bufnr(abs, true)
+  -- A backend that could not tell its home (one that predates the path in
+  -- fs_stat) still names the file it opened: the file is known by that name.
+  -- Another buffer may hold it already, opened by its absolute name, or an
+  -- open by that name may be waiting on its own reply (this one ran inside
+  -- that wait). Either way this session is one too many: it is closed here,
+  -- before anything starts a kernel for it. A waiting open from another
+  -- backend is said, as an open notebook of another backend is.
+  if alias and M._is_home_relative(abs) and type(snap) == "table" and type(snap.path) == "string"
+      and snap.path:sub(1, 1) == "/" and snap.path ~= abs then
+    learn_home_from(alias, abs, snap.path)
+    done_opening(abs)
+    abs = snap.path
+    local eb = vim.fn.bufexists(abs) == 1 and vim.fn.bufadd(abs) or -1
+    if M._opening[abs] then
+      cl:call("close", { session_id = sid }, function() end)
+      opening_elsewhere(abs, alias)
+      return eb > 0 and eb or nil
+    end
+    if eb > 0 and Notebook.get(eb) then
+      cl:call("close", { session_id = sid }, function() end)
+      return M.open(abs, opts)
+    end
+    start_opening(abs, alias)
+  end
+
+  -- Create or reuse the buffer of exactly this file (bufadd never takes a
+  -- name this path is only part of or matches as a pattern, which
+  -- bufnr(abs, true) did)
+  local buf = vim.fn.bufadd(abs)
   vim.api.nvim_buf_set_name(buf, abs)
   -- acwrite forces :w through our BufWriteCmd. With "" Neovim sometimes
   -- falls through to native write that dumps the visible cell-rendered
@@ -469,12 +760,15 @@ function M.open(path, opts)
   vim.bo[buf].swapfile = false
   vim.bo[buf].modifiable = true
   -- List it so it shows in the bufferline as a tab, like the .py/.rs files the
-  -- explorer opens via :edit (bufnr(abs, true) creates it UNLISTED otherwise).
+  -- explorer opens via :edit (bufadd creates it UNLISTED otherwise).
   vim.bo[buf].buflisted = true
   local ft = language_filetype(snap)
   vim.b[buf].jupynvim_filetype = ft
 
   local nb = Notebook.create(buf, abs, sid, snap)
+  -- before anything can send a request for it
+  nb.alias = alias
+  vim.b[buf].jupynvim_alias = alias
   nb.notebook_meta = { language = ft }
   -- the undo file read back below holds outputs as the last save showed them
   local uf = vim.api.nvim_buf_call(buf, function() return vim.fn.undofile(abs) end)
@@ -557,7 +851,7 @@ function M.open(path, opts)
   vim.api.nvim_win_call(cur_win, function()
     -- nolist: a global `set list` (LazyVim sets it) renders the trailing
     -- spaces on blank output lines (the "  " from OUT_INDENT) as listchars
-    -- `trail` dashes, which showed as stray gray "—" between output blocks.
+    -- `trail` dashes, which showed as stray gray marks between output blocks.
     -- A rendered notebook view shouldn't show whitespace markers anyway.
     -- nocursorline: notebooks open in command mode where the cursor is hidden;
     -- cursorline would paint the parked cursor's line and fight the per-cell
@@ -585,7 +879,7 @@ function M.open(path, opts)
   -- plugins (treesitter, snippets, copilot) see a fully-prepared buffer.
   -- Setting `filetype` fires FileType, which in turn loads ftplugin/indent
   -- via Neovim's runtime autocmds. For buffers created via nvim_buf_set_lines
-  -- (instead of `:edit`) the indent file occasionally doesn't get sourced —
+  -- (instead of `:edit`) the indent file occasionally doesn't get sourced;
   -- explicitly source it so `for i in range(...):<CR>` auto-indents.
   vim.bo[buf].filetype = ft
   vim.api.nvim_win_call(cur_win, function()
@@ -605,7 +899,7 @@ function M.open(path, opts)
   -- Re-scope treesitter NOW. _populate_buffer already called this, but that
   -- ran before the filetype above attached the parser, so it was a no-op and
   -- treesitter would parse the whole buffer (markdown + separators + code)
-  -- unscoped — which throws the Python parser into error recovery and the
+  -- unscoped, which throws the Python parser into error recovery and the
   -- cells render plain. Re-run it here, after the parser exists, so code
   -- cells are highlighted even if no edit (which also re-syncs) ever happens.
   pcall(M._sync_treesitter_ranges, nb)
@@ -619,7 +913,7 @@ function M.open(path, opts)
   -- once to harvest its real site-packages directories.
   local py_path
   local extra_paths = {}
-  local is_remote = opts.alias ~= nil
+  local is_remote = alias ~= nil
   -- Local-only: .venv discovery walks the local filesystem and the python
   -- introspection runs locally. For remote notebooks the kernel lives on the
   -- remote backend; the LSP work that wants sys.path won't make sense anyway
@@ -634,7 +928,7 @@ function M.open(path, opts)
     end
     if not py_path then
       local kspec_name = (snap.metadata and snap.metadata.kernelspec and snap.metadata.kernelspec.name) or "python3"
-      local kerr, kres = M.client:call_sync("list_kernels", {}, 2000)
+      local kerr, kres = cl:call_sync("list_kernels", {}, 2000)
       if not kerr and type(kres) == "table" then
         for _, k in ipairs(kres) do
           if k.name == kspec_name and k.argv and k.argv[1] then
@@ -663,20 +957,19 @@ function M.open(path, opts)
   end
   nb.kernel_python_path = py_path
   nb.kernel_extra_paths = extra_paths
-  nb.alias = opts.alias
-  vim.b[buf].jupynvim_alias = opts.alias
   M._attach_lsp(buf, ft, py_path, extra_paths)
   -- Kernel-backed completion + hover via virtual LSP. Language-agnostic:
   -- the kernel's complete_request/inspect_request handle the actual work,
   -- so the same code path serves Python, Julia, R, anything with a kernel.
+  -- Asked of the notebook's own backend, and only while it runs.
   pcall(function()
     require("jupynvim.lsp.kernel").attach(buf,
       function() return Notebook.get(buf) end,
-      function() return M.client end)
+      function() return M._live_client(Notebook.get(buf)) end)
   end)
 
   Render.refresh(nb, cur_win)
-  M._opening[abs] = nil
+  done_opening(abs)
 
   -- Fast follow-up render + redraw. The first paint can be incomplete if the
   -- user fires a command the instant the notebook opens (e.g. run-all), so
@@ -746,7 +1039,7 @@ function M._attach_lsp(buf, ft, py_path, extra_paths)
     return
   end
   if not next(lsp._enabled_configs) then
-    -- No configs registered yet — try once more after a short defer in case
+    -- No configs registered yet; try once more after a short defer in case
     -- mason-lspconfig is still finishing its async registry refresh.
     vim.defer_fn(function()
       if vim.api.nvim_buf_is_valid(buf) then M._attach_lsp(buf, ft, py_path, extra_paths) end
@@ -1585,16 +1878,16 @@ function M._sync_treesitter_ranges(nb)
   -- Re-scope only when the parser isn't already scoped the way we want, but
   -- decide that by comparing our desired regions against the parser's CURRENT
   -- included_regions rather than a cached copy of our own last value.
-  -- Something external resets the regions to the whole buffer after open — an
+  -- Something external resets the regions to the whole buffer after open: an
   -- LSP attaching, the kernel starting, or nvim-treesitter re-initialising the
-  -- parser when FileType fires — and a self-keyed cache never notices, so the
+  -- parser when FileType fires. A self-keyed cache never notices, so the
   -- re-sync no-ops and the cells parse as plain markdown+separator+code soup
   -- (the "leader-nB too fast renders plain" report). Comparing actual-vs-
   -- desired self-heals after any such reset while still skipping the genuine
   -- no-op case, so we don't force a full tree invalidation on every keystroke
   -- (which races indentexpr: treesitter indent returns -1 against a freshly
   -- invalidated tree, dropping autoindent after `:`). Byte offsets shift on
-  -- every keystroke, so compare row boundaries only — treesitter's own
+  -- every keystroke, so compare row boundaries only; treesitter's own
   -- incremental parser handles intra-line edits inside an existing region.
   local function row_signature(regs)
     local parts = {}
@@ -1652,7 +1945,7 @@ function M._attach_autocmds(buf)
         end
         -- Re-setting filetype above (when something knocked it off "python")
         -- re-fires FileType, which makes nvim-treesitter rebuild the parser
-        -- with the whole buffer as one region — the cells then render as plain
+        -- with the whole buffer as one region; the cells then render as plain
         -- markdown+code soup. Re-scope to code cells. _sync is self-healing, so
         -- this is a cheap no-op (a row-signature compare, no re-parse) whenever
         -- the regions are already correct.
@@ -1722,7 +2015,7 @@ function M._attach_autocmds(buf)
       end
       -- An attaching LSP (and the nvim-treesitter FileType handling it can
       -- trigger) often resets the parser's included_regions back to the whole
-      -- buffer, so code cells render plain until the next edit — this is the
+      -- buffer, so code cells render plain until the next edit. This is the
       -- "leader-nB too fast renders plain" path, since running cells starts the
       -- kernel which is what makes the LSP attach. Re-scope once the attach
       -- settles. _sync is self-healing, so it's a no-op when nothing reset it.
@@ -1815,15 +2108,16 @@ function M._attach_autocmds(buf)
     group = group, buffer = buf,
     callback = function()
       local nb = Notebook.get(buf)
-      if nb and nb.session_id then
-        M._ensure_client():call("close", { session_id = nb.session_id }, function() end)
-      end
+      -- On its own backend, and only while that runs: a wipe never spawns a
+      -- backend to close a session it never had.
+      local cl = nb and nb.session_id and M._live_client(nb)
+      if cl then cl:call("close", { session_id = nb.session_id }, function() end) end
       pcall(function() require("jupynvim.lsp.notebook").on_close(buf) end)
       Notebook.remove(buf)
       pcall(Image.delete_all)
     end,
   })
-  -- Refresh borders whenever window dimensions or buffer focus changes —
+  -- Refresh borders whenever window dimensions or buffer focus changes;
   -- width is computed from the active window, so cells need re-rendering
   -- when switching between buffers/windows or resizing.
   vim.api.nvim_create_autocmd({ "WinResized", "VimResized", "BufWinEnter", "BufEnter", "WinEnter" }, {
@@ -1906,7 +2200,9 @@ end
 
 function M._save(nb)
   M._sync_model(nb)
-  local cl = M._ensure_client()
+  local cl = M._nb_client(nb)
+  -- a remote round trip can take far longer than a local one
+  local timeout = nb.alias and 30000 or 5000
   local Embedded = require("jupynvim.notebook.embedded")
   local incoming = {}
   for _, c in ipairs(nb.cells) do
@@ -1925,7 +2221,7 @@ function M._save(nb)
   -- completes and the file is left in whatever state was before this
   -- write, which is what was making :wqa appear to drop changes.
   local rerr, rres = cl:call_sync("replace_cells",
-    { session_id = nb.session_id, cells = incoming }, 5000)
+    { session_id = nb.session_id, cells = incoming }, timeout)
   if rerr then
     vim.notify("replace_cells failed: " .. tostring(rerr), vim.log.levels.ERROR)
     return
@@ -1935,7 +2231,7 @@ function M._save(nb)
       if nb.cells[i] then nb.cells[i].id = new_id end
     end
   end
-  local serr = cl:call_sync("save", { session_id = nb.session_id }, 5000)
+  local serr = cl:call_sync("save", { session_id = nb.session_id }, timeout)
   if serr then
     vim.notify("save failed: " .. tostring(serr), vim.log.levels.ERROR)
     return
@@ -1964,6 +2260,25 @@ end
 
 -- ---------- public API (called by keymaps) ----------
 
+-- An execute the backend refused, shown. "kernel not started" alone is
+-- unactionable: while a start is in flight (first use may be pip-installing
+-- ipykernel into the env) it is said calmly, asking for the run that was
+-- refused again (`retry`, "Run the cell again" when not given); otherwise
+-- the actual start failure goes with it.
+local function show_execute_error(nb, err, retry)
+  if tostring(err):find("kernel not started") then
+    if nb.kernel_starting then
+      vim.notify("jupynvim: kernel is still starting (first use of an env may install ipykernel; can take a minute). "
+        .. (retry or "Run the cell again") .. " once \"kernel started\" appears.",
+        vim.log.levels.WARN)
+      return
+    elseif nb.kernel_error then
+      err = tostring(err) .. "\n  last start_kernel error: " .. nb.kernel_error
+    end
+  end
+  vim.notify("execute: " .. tostring(err), vim.log.levels.ERROR)
+end
+
 function M.run_cell(buf, opts)
   opts = opts or {}
   local nb = Notebook.get(buf)
@@ -1987,21 +2302,7 @@ function M.run_cell(buf, opts)
       return
     end
     cl:call("execute", { session_id = nb.session_id, cell_id = cell.id }, function(err2)
-      -- "kernel not started" alone is unactionable. While a start is in
-      -- flight (first use may be pip-installing ipykernel into the env),
-      -- say so calmly; otherwise append the actual start failure.
-      if err2 and tostring(err2):find("kernel not started") then
-        if nb.kernel_starting then
-          vim.notify("jupynvim: kernel is still starting (first use of an env may install ipykernel; can take a minute). Run the cell again once \"kernel started\" appears.",
-            vim.log.levels.WARN)
-          return
-        elseif nb.kernel_error then
-          err2 = tostring(err2) .. "\n  last start_kernel error: " .. nb.kernel_error
-        end
-      end
-      if err2 then
-        vim.notify("execute: " .. tostring(err2), vim.log.levels.ERROR)
-      end
+      if err2 then show_execute_error(nb, err2) end
     end)
     if opts.advance then
       vim.schedule(function() M._advance_after_run(buf) end)
@@ -2033,22 +2334,28 @@ function M._advance_after_run(buf)
   end)
 end
 
-function M.run_all(buf)
-  local nb = Notebook.get(buf)
-  if not nb then return end
-  M._sync_model(nb)
-  -- Sequence cells: each one's execute fires only after the previous update + execute have completed
+-- Run `cells` one after another, each sent once the one before it was taken.
+-- The first refusal is shown, as run_cell shows it, and ends the run: every
+-- cell after it would get the same answer (a kernel not started yet, a
+-- session the backend does not have), and none of them was asked for alone.
+-- `retry` names the run to ask for again while the kernel is still starting.
+local function run_chain(nb, cells, retry)
   local cl = M._nb_client(nb)
-  local code_cells = {}
-  for _, c in ipairs(nb.cells) do
-    if c.cell_type == "code" then table.insert(code_cells, c) end
-  end
-  local i = 1
+  local i = 0
   local function step()
-    if i > #code_cells then return end
-    local c = code_cells[i]; i = i + 1
-    cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
+    i = i + 1
+    local c = cells[i]
+    if not c then return end
+    cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function(err)
+      if err then
+        vim.notify("update_cell_source: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+      cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function(err2)
+        if err2 then
+          show_execute_error(nb, err2, retry)
+          return
+        end
         step()
       end)
     end)
@@ -2056,53 +2363,44 @@ function M.run_all(buf)
   step()
 end
 
+function M.run_all(buf)
+  local nb = Notebook.get(buf)
+  if not nb then return end
+  M._sync_model(nb)
+  local cells = {}
+  for _, c in ipairs(nb.cells) do
+    if c.cell_type == "code" then cells[#cells + 1] = c end
+  end
+  run_chain(nb, cells, "Run all again")
+end
+
+-- the code cells above the cursor's cell
 function M.run_above(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   M._sync_model(nb)
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local cur_id = nb:cell_at_line(lnum)
-  local cl = M._nb_client(nb)
-  local co
-  co = coroutine.wrap(function()
-    for _, c in ipairs(nb.cells) do
-      if c.id == cur_id then break end
-      if c.cell_type == "code" then
-        cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-          cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
-            co()
-          end)
-        end)
-        coroutine.yield()
-      end
-    end
-  end)
-  co()
+  local cur_id = nb:cell_at_line(vim.api.nvim_win_get_cursor(0)[1])
+  local cells = {}
+  for _, c in ipairs(nb.cells) do
+    if c.id == cur_id then break end
+    if c.cell_type == "code" then cells[#cells + 1] = c end
+  end
+  run_chain(nb, cells, "Run the cells above again")
 end
 
+-- the cursor's cell and the code cells below it
 function M.run_below(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   M._sync_model(nb)
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local cur_id = nb:cell_at_line(lnum)
+  local cur_id = nb:cell_at_line(vim.api.nvim_win_get_cursor(0)[1])
   local seen = false
-  local cl = M._nb_client(nb)
-  local co
-  co = coroutine.wrap(function()
-    for _, c in ipairs(nb.cells) do
-      if c.id == cur_id then seen = true end
-      if seen and c.cell_type == "code" then
-        cl:call("update_cell_source", { session_id = nb.session_id, cell_id = c.id, source = c.source }, function()
-          cl:call("execute", { session_id = nb.session_id, cell_id = c.id }, function()
-            co()
-          end)
-        end)
-        coroutine.yield()
-      end
-    end
-  end)
-  co()
+  local cells = {}
+  for _, c in ipairs(nb.cells) do
+    if c.id == cur_id then seen = true end
+    if seen and c.cell_type == "code" then cells[#cells + 1] = c end
+  end
+  run_chain(nb, cells, "Run this cell and the ones below again")
 end
 
 -- Cell adds, deletes and moves change the cells only when the backend
@@ -2149,7 +2447,7 @@ function M.add_cell(buf, where, cb, no_record)
     insert_at = (cur_idx or 1) - 1
   end
 
-  local cl = M._ensure_client()
+  local cl = M._nb_client(nb)
   cellop_begin(buf)
   cl:call("insert_cell", { session_id = nb.session_id, after_index = insert_at, cell_type = "code" }, function(err, res)
     cellop_end(buf)
@@ -2178,12 +2476,22 @@ function M.set_cell_content(buf, idx, lines, cell_type)
   M._populate_buffer(nb, { edit = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.bo[buf].modified = true   -- after the repopulate, which resets it
+  -- A refusal is shown, as set_cell_type shows it: the content is in the
+  -- model, and the next :w sends every cell again (replace_cells).
   local cl = M._nb_client(nb)
   cl:call("update_cell_source",
-    { session_id = nb.session_id, cell_id = cell.id, source = cell.source }, function() end)
+    { session_id = nb.session_id, cell_id = cell.id, source = cell.source }, function(err)
+      if err then
+        vim.notify("update_cell_source backend sync failed: " .. tostring(err), vim.log.levels.WARN)
+      end
+    end)
   if cell_type and cell_type ~= "code" then
     cl:call("set_cell_type",
-      { session_id = nb.session_id, cell_id = cell.id, cell_type = cell_type }, function() end)
+      { session_id = nb.session_id, cell_id = cell.id, cell_type = cell_type }, function(err)
+        if err then
+          vim.notify("set_cell_type backend sync failed: " .. tostring(err), vim.log.levels.WARN)
+        end
+      end)
   end
 end
 
@@ -2204,7 +2512,7 @@ function M.delete_cell(buf, no_record)
     lines = vim.split(doomed.source or "", "\n", { plain = true }),
     cell_type = doomed.cell_type,
   } or nil
-  local cl = M._ensure_client()
+  local cl = M._nb_client(nb)
   cellop_begin(buf)
   cl:call("delete_cell", { session_id = nb.session_id, cell_id = cur_id }, function(err)
     cellop_end(buf)
@@ -2216,8 +2524,9 @@ function M.delete_cell(buf, no_record)
     if snapshot then record_undo(buf, snapshot, no_record) end
     if #nb.cells == 0 then
       cellop_begin(buf)
-      cl:call("insert_cell", { session_id = nb.session_id, after_index = -1, cell_type = "code" }, function(_, res)
+      cl:call("insert_cell", { session_id = nb.session_id, after_index = -1, cell_type = "code" }, function(err, res)
         cellop_end(buf)
+        if err then vim.notify("insert: " .. tostring(err), vim.log.levels.ERROR) end
         if res then table.insert(nb.cells, { id = res.cell_id, cell_type = "code", source = "", outputs = {} }) end
         M._populate_buffer(nb)
         Render.refresh(nb, vim.fn.bufwinid(buf))
@@ -2237,7 +2546,7 @@ function M.move_cell(buf, delta, no_record)
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local cur_id = nb:cell_at_line(lnum)
   if not cur_id then return end
-  local cl = M._ensure_client()
+  local cl = M._nb_client(nb)
   cellop_begin(buf)
   cl:call("move_cell", { session_id = nb.session_id, cell_id = cur_id, delta = delta }, function(err, res)
     cellop_end(buf)
@@ -2292,7 +2601,7 @@ function M.set_cell_type(buf, t)
   -- Backend sync as a side effect. _save's replace_cells already propagates
   -- the type on next save, so this is mostly to keep the in-memory backend
   -- model consistent for read-side RPCs (kernel completion, debug dumps).
-  local cl = M._ensure_client()
+  local cl = M._nb_client(nb)
   cl:call("set_cell_type", { session_id = nb.session_id, cell_id = cur_id, cell_type = t }, function(err)
     if err then
       vim.notify("set_cell_type backend sync failed: " .. tostring(err), vim.log.levels.WARN)
@@ -2334,10 +2643,8 @@ function M.start_kernel(buf, kernel_name)
   -- The auto-start in M.open could otherwise run multiple times (e.g.
   -- BufReadCmd re-firing) and orphan ipykernel processes.
   if nb.kernel_started and not kernel_name then return end
-  -- Route to the alias's backend if this is a remote notebook. Without
-  -- this, M._ensure_client() would return whatever M.client happens to point
-  -- at, which can race if multiple notebooks across aliases are open.
-  local cl = nb.alias and M.client_for(nb.alias) or M._ensure_client()
+  -- The notebook's own backend: its remote for a remote notebook.
+  local cl = M._nb_client(nb)
   -- Auto-venv, local flavor: probe the local filesystem and pass the python
   -- directly. For REMOTE notebooks the backend does the equivalent walk-up on
   -- its own filesystem when we pass auto_venv (same .venv/venv/env semantics).
@@ -2384,7 +2691,7 @@ function M.start_kernel(buf, kernel_name)
       }, function() end)
     end
     -- Tell the LSP about the kernel's interpreter so import resolution
-    -- matches what `pip list` in that env reports. Local-only — the LSP
+    -- matches what `pip list` in that env reports. Local-only, since the LSP
     -- runs on the user's machine and can't introspect a remote python.
     -- Phase 6 (remote LSP relay) will be the right path for remote.
     local function sync_python(py)
@@ -2423,17 +2730,23 @@ function M.start_kernel(buf, kernel_name)
   end)
 end
 
+-- Stop and interrupt show the backend's error, as restart does: an
+-- interrupt that never reached the kernel must not look like one that did.
 function M.stop_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
   nb.kernel_started = false
-  M._ensure_client():call("stop_kernel", { session_id = nb.session_id }, function() end)
+  M._nb_client(nb):call("stop_kernel", { session_id = nb.session_id }, function(err)
+    if err then vim.notify("stop: " .. tostring(err), vim.log.levels.ERROR) end
+  end)
 end
 
 function M.interrupt_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  M._ensure_client():call("interrupt_kernel", { session_id = nb.session_id }, function() end)
+  M._nb_client(nb):call("interrupt_kernel", { session_id = nb.session_id }, function(err)
+    if err then vim.notify("interrupt: " .. tostring(err), vim.log.levels.ERROR) end
+  end)
 end
 
 -- Clear outputs and execution_count from every CODE cell in the notebook.
@@ -2471,11 +2784,11 @@ function M.clear_outputs(buf)
   -- AFTER the repopulate: _populate_buffer resets modified, and without this
   -- :w / :wqa would skip the buffer and the clear would not reach disk.
   vim.bo[buf].modified = true
-  M._ensure_client():call("clear_outputs", { session_id = nb.session_id }, function(err)
+  M._nb_client(nb):call("clear_outputs", { session_id = nb.session_id }, function(err)
     if err then
       vim.schedule(function()
         vim.notify(
-          "jupynvim: backend doesn't support clear_outputs yet — rebuild with `cargo build --release`",
+          "jupynvim: backend doesn't support clear_outputs yet; rebuild with `cargo build --release`",
           vim.log.levels.WARN)
       end)
     end
@@ -2508,12 +2821,12 @@ function M.clear_cell_output(buf)
   M._populate_buffer(nb, { edit = true, clear = true })
   Render.refresh(nb, vim.fn.bufwinid(buf))
   vim.bo[buf].modified = true   -- after the repopulate, which resets it
-  M._ensure_client():call("clear_cell_output",
+  M._nb_client(nb):call("clear_cell_output",
     { session_id = nb.session_id, cell_id = cell.id }, function(err)
     if err then
       vim.schedule(function()
         vim.notify(
-          "jupynvim: backend doesn't support clear_cell_output yet — rebuild with `cargo build --release`",
+          "jupynvim: backend doesn't support clear_cell_output yet; rebuild with `cargo build --release`",
           vim.log.levels.WARN)
       end)
     end
@@ -2523,7 +2836,7 @@ end
 function M.restart_kernel(buf)
   local nb = Notebook.get(buf)
   if not nb then return end
-  M._ensure_client():call("restart_kernel", { session_id = nb.session_id }, function(err, res)
+  M._nb_client(nb):call("restart_kernel", { session_id = nb.session_id }, function(err, res)
     if err then vim.notify("restart: " .. tostring(err), vim.log.levels.ERROR); return end
     vim.notify("jupynvim: kernel restarted", vim.log.levels.INFO)
   end)
@@ -2590,7 +2903,7 @@ function M.kernel_picker(buf)
   -- the remote, incl. its conda envs), and pass the notebook's dir so
   -- project-local venvs (.venv/venv/env) show up as picker entries.
   local nb = Notebook.get(buf)
-  local cl = (nb and nb.alias) and M.client_for(nb.alias) or M._ensure_client()
+  local cl = M._nb_client(nb)
   local dir = nb and nb.path and vim.fn.fnamemodify(nb.path, ":h") or nil
   cl:call("list_kernels", { dir = dir }, function(err, kernels)
     if err then vim.notify("list_kernels: " .. err, vim.log.levels.ERROR); return end
@@ -2775,6 +3088,32 @@ end
 
 local function say(msg) vim.notify("jupynvim: " .. msg, vim.log.levels.INFO) end
 
+-- Rewrites the output rows of the cells in ids (a set of cell ids) and leaves
+-- 'modified' and the saved hash as they were: a buffer that matched the file
+-- still does. Widget redraws (keep_clean in _queue_output_sync) use it for
+-- many cells at once; redraw_view for one.
+function M._sync_keep_clean(nb, ids)
+  local buf = nb.buf
+  local function text_hash()
+    return vim.fn.sha256(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+  end
+  local clean = not vim.bo[buf].modified and nb.saved_hash == text_hash()
+  M._apply_output_sync(nb, ids)
+  if clean then
+    nb.saved_hash = text_hash()
+    vim.bo[buf].modified = false
+  else
+    vim.bo[buf].modified = true
+  end
+  -- a region this made shows its marker line until the render conceals it
+  local ranges = require("jupynvim.notebook.cellmode").ranges(buf)
+  for id in pairs(ids) do
+    local _, i = nb:get_cell(id)
+    local r = i and ranges[i]
+    if r and r.out_sep then conceal_seps(nb, r.out_sep, { Notebook.OUT_SEP }) end
+  end
+end
+
 -- Rewrite one cell's output rows when it is expanded, cut again, hidden or
 -- shown, the way an output sync does, so the rest of the buffer and the
 -- language servers see no change. The notebook is the same, so 'modified' is
@@ -2784,22 +3123,7 @@ local function say(msg) vim.notify("jupynvim: " .. msg, vim.log.levels.INFO) end
 -- TextChanged sets it back only after the keys that follow, so the text has
 -- to match as well.
 local function redraw_view(nb, cell)
-  local buf = nb.buf
-  local function text_hash()
-    return vim.fn.sha256(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
-  end
-  local clean = not vim.bo[buf].modified and nb.saved_hash == text_hash()
-  M._apply_output_sync(nb, { [cell.id] = true })
-  if clean then
-    nb.saved_hash = text_hash()
-    vim.bo[buf].modified = false
-  else
-    vim.bo[buf].modified = true
-  end
-  -- a region this made shows its marker line until the render conceals it
-  local _, i = nb:get_cell(cell.id)
-  local r = i and require("jupynvim.notebook.cellmode").ranges(buf)[i]
-  if r and r.out_sep then conceal_seps(nb, r.out_sep, { Notebook.OUT_SEP }) end
+  M._sync_keep_clean(nb, { [cell.id] = true })
 end
 
 -- Show all of the output under the cursor that the cap cut, or cut it again.
@@ -2955,11 +3279,23 @@ local function deep_merge(dst, src)
   return dst
 end
 
+-- The windows that show `buf`, the current one first: where a jupynvim://
+-- URI's read puts the buffer of the file it names.
+local function uri_windows(buf)
+  local wins = vim.api.nvim_buf_is_valid(buf) and vim.fn.win_findbuf(buf) or {}
+  local cur = vim.api.nvim_get_current_win()
+  for i, w in ipairs(wins) do
+    if w == cur then table.insert(wins, 1, table.remove(wins, i)); break end
+  end
+  return wins
+end
+
 function M.setup(opts)
   M.config = deep_merge(M.config, opts or {})
   Notebook.max_output_lines = M.config.max_output_lines or 0
   Log.set_level(M.config.log_level)
   Render.setup_highlights()
+  require("jupynvim.palette").setup(M.config.palette)
   -- A `:colorscheme` runs `hi clear`, wiping our groups (and the
   -- JupynvimOutputText -> Normal link). Re-establish them on every
   -- colorscheme change so output text never falls back to a stale color.
@@ -3036,7 +3372,7 @@ function M.setup(opts)
     group = group,
     pattern = { "*.ipynb" },
     callback = function(args)
-      -- Skip jupynvim:// URIs — they're handled by our dedicated URI BufReadCmd
+      -- Skip jupynvim:// URIs; they're handled by our dedicated URI BufReadCmd
       -- (registered below) which routes through the alias's remote backend
       -- and passes opts.alias to M.open. This pattern would otherwise call
       -- M.open with no alias and the local client, trying to run remote
@@ -3045,11 +3381,36 @@ function M.setup(opts)
       -- BufReadCmd means user wants to read this file. If we already have a
       -- live notebook for it, treat as :e! (force reload from disk).
       local abs = vim.fn.fnamemodify(args.file, ":p")
-      -- Skip if M.open is mid-flight for this path — it created the buffer
-      -- itself via vim.fn.bufnr(true) and is about to populate it.
-      if M._opening and M._opening[abs] then return end
-      local b = vim.fn.bufnr(abs)
-      local force = b > 0 and Notebook.get(b) ~= nil
+      -- Skip if M.open is mid-flight for this path; it created the buffer
+      -- itself via vim.fn.bufadd and is about to populate it. A read while
+      -- it still waits on its reply is not its own: this machine's file
+      -- cannot open under a name another backend is opening.
+      if M._opening and M._opening[abs] then
+        if M._asking[abs] then opening_elsewhere(abs, nil) end
+        return
+      end
+      -- the buffer being read: a lookup of abs by bufnr() could take another
+      -- notebook's, whose name abs matches as a file pattern
+      local b = args.buf
+      local prev = b > 0 and Notebook.get(b) or nil
+      local force = prev ~= nil
+      -- a notebook read again in place (:e!) stays on the backend it came from
+      local alias = prev and prev.alias or nil
+      -- :bdelete resets the buffer's b: vars and keeps its notebook, and with
+      -- it the backend it came from. A read now (:edit of the path, :buffer)
+      -- brings that remote notebook back, never this machine's file of the
+      -- same name: say so, and, when this machine has a file there, how to
+      -- open it. A read of a notebook still open (:e!) has its b: vars and
+      -- says nothing; an open from the remote's side (its explorer, pickers,
+      -- :JupynvimOpenRemote, a jupynvim:// URI) reads it in M.open, where the
+      -- _opening guard above returns first.
+      if alias and vim.b[b].jupynvim_alias == nil then
+        local msg = ("jupynvim: %s is open from %s, and is reopened there."):format(prev.path, alias)
+        if vim.uv.fs_stat(prev.path) then
+          msg = msg .. " To open this path from this machine, close that buffer with :bwipeout first."
+        end
+        vim.notify(msg, vim.log.levels.INFO)
+      end
       -- A reopen after :bdelete finds the old notebook's buffer-local
       -- autocmds still attached to a buffer whose options and b: vars were
       -- reset. Drop them now, before BufEnter queues one; M.open attaches a
@@ -3079,7 +3440,20 @@ function M.setup(opts)
       -- makes that :w an error instead, and keeps vim.lsp.enable from
       -- starting servers on the half-open buffer.
       vim.bo[args.buf].buftype = "acwrite"
-      vim.schedule(function() M.open(args.file, { force = force }) end)
+      -- A notebook read again reopens by the path its backend opened, never
+      -- by <afile>: after :bdelete and a :cd that name can be relative, and a
+      -- remote would take it as a path under its home. Only while the buffer
+      -- still names that path: after :file or :saveas the old name belongs to
+      -- an unlisted alternate buffer that holds no notebook, so the buffer is
+      -- read as its new name and its old session closed, as any buffer would be.
+      -- That name goes as abs, made absolute here, never as <afile>: <afile> is
+      -- relative when the name was typed so or lies under the current
+      -- directory, the open below runs only after BufEnter, whose hooks may
+      -- change the directory (as project-root plugins do), and a remote takes
+      -- a relative path as one under its home. M.open finds this very buffer
+      -- by abs.
+      local own = prev ~= nil and vim.fn.bufexists(prev.path) == 1 and vim.fn.bufadd(prev.path) == b
+      vim.schedule(function() M.open(own and prev.path or abs, { force = force, alias = alias }) end)
     end,
   })
   vim.api.nvim_create_autocmd("BufNewFile", {
@@ -3088,13 +3462,17 @@ function M.setup(opts)
     callback = function(args)
       -- Skip URIs (handled by the dedicated jupynvim:// autocmd).
       if args.file:match("^jupynvim://") then return end
-      -- Skip if our M.open is mid-flight for this path — it creates the
-      -- buffer via vim.fn.bufnr(abs, true), which triggers BufNewFile.
+      -- Skip if our M.open is mid-flight for this path; it creates the
+      -- buffer via vim.fn.bufadd(abs), and loading it can fire BufNewFile.
       -- Re-entering M.open here would race with the in-progress one,
       -- wipe its alias tagging, and (worst) drop the remote-backend route.
       local abs = vim.fn.fnamemodify(args.file, ":p")
-      if M._opening and M._opening[abs] then return end
-      vim.schedule(function() M.open(args.file) end)
+      if M._opening and M._opening[abs] then
+        if M._asking[abs] then opening_elsewhere(abs, nil) end
+        return
+      end
+      -- by abs, as the BufReadCmd above: the directory can change first
+      vim.schedule(function() M.open(abs) end)
     end,
   })
 
@@ -3135,17 +3513,92 @@ function M.setup(opts)
         return
       end
       -- Notebook: hand off to the notebook open flow. The notebook flow
-      -- creates its own buffer (named with the remote path), so wipe the
-      -- empty URI buffer we just created — otherwise we get an orphan
-      -- "jupynvim://..." buffer alongside the real notebook buffer.
+      -- creates its own buffer (named with the remote path), so the empty
+      -- URI buffer we just created is wiped once it has opened; otherwise
+      -- we get an orphan "jupynvim://..." buffer alongside the notebook.
       if path:sub(-6) == ".ipynb" then
         local uri_buf = args.buf
         vim.schedule(function()
+          -- Opened in the window that shows the URI, before the URI buffer
+          -- goes: deleting a shown buffer closes its window (a :vsplit of
+          -- the URI), and the notebook then took the place of what the
+          -- window it was split from showed. The notebook takes the URI
+          -- buffer's place there, which makes that buffer the window's
+          -- alternate file; the one before it is put back, so <C-^> goes
+          -- back to it.
+          local win = uri_windows(uri_buf)[1]
+          local alt = -1
+          if win then
+            pcall(vim.api.nvim_set_current_win, win)
+            alt = vim.fn.bufnr("#")
+          end
+          local oko, erro = pcall(function()
+            M.use_remote(alias)
+            M.open(path, { alias = alias })
+          end)
+          if win and vim.api.nvim_win_is_valid(win) and alt > 0 and alt ~= uri_buf
+              and vim.api.nvim_buf_is_valid(alt) and vim.api.nvim_win_get_buf(win) ~= uri_buf then
+            vim.api.nvim_win_call(win, function()
+              if vim.fn.bufnr("#") == uri_buf then vim.fn.setreg("#", alt) end
+            end)
+          end
           if vim.api.nvim_buf_is_valid(uri_buf) then
             pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
           end
-          M.use_remote(alias)
-          M.open(path, { alias = alias })
+          if not oko then error(erro, 0) end
+        end)
+        return
+      end
+      -- One buffer per remote file: a home-relative name is the file the
+      -- explorer names by its absolute path, so this buffer is read as that
+      -- name (the URI the explorer would make), found if it is open already.
+      local named, name_err = M._remote_name(alias, path, client)
+      -- the read would wait as long again on a backend that did not answer
+      if name_err == "timeout" then
+        vim.notify("jupynvim: " .. alias .. " did not answer (timeout)", vim.log.levels.ERROR)
+        return
+      end
+      if named ~= path then
+        local uri_buf = args.buf
+        vim.schedule(function()
+          -- That buffer takes this one's place in every window showing it,
+          -- before this one goes: deleting a shown buffer closes its window
+          -- (a :vsplit of the URI) or leaves another buffer in it. Each
+          -- window keeps its alternate file (keepalt): this buffer, which
+          -- would become it, is deleted below, and <C-^> goes back to the
+          -- file shown before the URI.
+          local wins = uri_windows(uri_buf)
+          local target = "jupynvim://" .. alias .. named
+          -- an open buffer of that name is shown as it is: :edit of it
+          -- would read the file again
+          local tb = vim.fn.bufexists(target) == 1 and vim.fn.bufadd(target) or -1
+          local oke, erre = true, nil
+          if tb <= 0 then
+            -- read once, in the first window (the current one when it shows
+            -- this buffer), the way :edit reads any file
+            if wins[1] then
+              oke, erre = pcall(vim.api.nvim_win_call, wins[1], function()
+                vim.cmd("keepalt edit " .. vim.fn.fnameescape(target))
+              end)
+            else
+              oke, erre = pcall(vim.fn.bufload, vim.fn.bufadd(target))
+            end
+            tb = vim.fn.bufexists(target) == 1 and vim.fn.bufadd(target) or -1
+          end
+          if tb > 0 then
+            for _, w in ipairs(wins) do
+              if vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_buf(w) ~= tb then
+                local okw, errw = pcall(vim.api.nvim_win_call, w, function()
+                  vim.cmd("keepalt buffer " .. tb)
+                end)
+                if not okw and oke then oke, erre = false, errw end
+              end
+            end
+          end
+          if vim.api.nvim_buf_is_valid(uri_buf) and uri_buf ~= tb then
+            pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
+          end
+          if not oke then vim.notify("jupynvim: " .. tostring(erre), vim.log.levels.ERROR) end
         end)
         return
       end
@@ -3153,11 +3606,26 @@ function M.setup(opts)
       local err, res = client:call_sync("fs_read", { path = path }, 30000)
       local lines
       if err then
+        -- The cause is the end of the backend's message ("read <path>: No
+        -- such file or directory (os error 2)"); the path in front of it is
+        -- text that can say anything, "is a directory" included.
+        local why = tostring(err):lower()
         -- "No such file" is expected when editing a new remote file
         -- (BufReadCmd fires before the user starts typing). Treat as empty
         -- buffer rather than error so :w later creates the file.
-        if tostring(err):lower():find("no such file") then
+        if why:find("no such file or directory %(os error 2%)%s*$") then
           lines = { "" }
+        elseif why:find("is a directory %(os error 21%)%s*$") then
+          -- a directory named without its trailing slash: browse it, as the
+          -- branch above does for one named with it
+          local uri_buf = args.buf
+          vim.schedule(function()
+            if vim.api.nvim_buf_is_valid(uri_buf) then
+              pcall(vim.api.nvim_buf_delete, uri_buf, { force = true })
+            end
+            M.remote_browse(alias, path)
+          end)
+          return
         else
           vim.notify("jupynvim: fs_read failed: " .. tostring(err), vim.log.levels.ERROR)
           return
@@ -3191,7 +3659,7 @@ function M.setup(opts)
         end)
       end
       -- The file often opens into a window that the dashboard/explorer left
-      -- with number/signcolumn OFF — restore the user's normal display opts
+      -- with number/signcolumn OFF; restore the user's normal display opts
       -- so a remote .py/.cpp looks like a normal buffer (line numbers etc).
       local w = vim.api.nvim_get_current_win()
       if vim.api.nvim_win_get_buf(w) == args.buf then
