@@ -9,6 +9,8 @@
 -- "marker" lines (CELL_SEP). Cell ids are NOT stored in the buffer text — we
 -- recover them by walking marker positions in order against our `cells` list.
 
+local HtmlTable = require("jupynvim.notebook.html_table")
+
 local M = {}
 
 -- The widget mirror (notebook/widgets.lua). That module requires this one only
@@ -117,8 +119,9 @@ local function _out_key(cell)
     p[#p + 1] = (o.output_type or "?") .. (o._rev or "")
     p[#p + 1] = (type(t) == "string" and #t) or (type(t) == "table" and #t) or 0
     if d then
-      local tp = d["text/plain"]
+      local tp, th = d["text/plain"], d["text/html"]
       p[#p + 1] = (type(tp) == "string" and #tp) or (type(tp) == "table" and #tp) or 0
+      p[#p + 1] = (type(th) == "string" and #th) or (type(th) == "table" and #th) or 0
       p[#p + 1] = (d["image/png"] or d["image/gif"] or d["image/jpeg"]) and 1 or 0
     end
     if o.traceback then p[#p + 1] = "t" .. #o.traceback end
@@ -145,6 +148,13 @@ local function result_text(o)
            or text:match("^<[%w._]+ object>$")
            or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
     return ""
+  end
+  -- A bare repr like "<pandas.io.formats.style.Styler at 0x...>" says nothing
+  -- when the same output carries an HTML table: show the table instead.
+  if data["text/html"] and (text == "" or text:match("^<[%w._]+ at 0x[%x]+>$")
+                             or text:match("^<[%w._]+ object at 0x[%x]+>$")) then
+    local tbl = HtmlTable.to_text(_as_str(data["text/html"]))
+    if tbl then return tbl end
   end
   return text
 end

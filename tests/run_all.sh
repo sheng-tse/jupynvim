@@ -47,6 +47,7 @@
 #      clear_output(wait) / update_display_data)
 #      + install_spec.lua (installing the binary without lazy.nvim, #33)
 #      + output_cache_spec.lua (equal-length output after fast reruns)
+#      + html_table_spec.lua (a Styler-like output shows its HTML table as text)
 #      + stale_output_e2e.lua (redefine a function and rerun its unchanged caller)
 #      + output_view_spec.lua (outputs cut, expanded, hidden or given a number
 #      of lines, #37)
@@ -358,6 +359,7 @@ for spec in remote_pick_open_spec remote_open_layout_spec dispatch_keys_spec dep
             backend_startup_spec \
             keymap_override_spec image_b64_spec reopen_lsp_spec edit_nav_spec \
             multi_image_spec install_spec output_cache_spec stale_output_e2e output_view_spec \
+            html_table_spec \
             config_comment_spec pixi_env_spec \
             native_spec widget_spec widget_e2e palette_spec routing_spec \
             stream_writer_spec stream_palette_spec; do
