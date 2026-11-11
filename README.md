@@ -427,15 +427,15 @@ an `.ipynb`.
 
 A notebook opens in command mode, like VSCode and JupyterLab. `j` and `k`
 select whole cells, `dd`, `yy`, `p`, `a` and `b` act on cells, and `u`
-undoes the last cell you added, pasted, deleted or moved. Enter or `i`
-edits the selected cell with plain vim, and Esc goes back. While editing,
-`j`, `k`, `gg`, `G` and the paragraph and sentence motions stay inside the
-cell, and an edit that would join two cells or delete the boundary between
-them is taken back. `u` while editing undoes your last edit, not an output
-a run wrote, and stops at the last cell added, deleted or moved. `]c` and
-`[c` move to the next or previous cell and keep you editing, and a search,
-a diagnostic jump or a click that lands in another cell moves the editing
-there.
+undoes the last cell you added, pasted, deleted or moved, and `<C-r>`
+redoes it. Enter or `i` edits the selected cell with plain vim, and Esc
+goes back. While editing, `j`, `k`, `gg`, `G` and the paragraph and
+sentence motions stay inside the cell, and an edit that would join two
+cells or delete the boundary between them is taken back. `u` while editing
+undoes your last edit, not an output a run wrote, and stops at the last
+cell added, deleted or moved. `]c` and `[c` move to the next or previous
+cell and keep you editing, and a search, a diagnostic jump or a click that
+lands in another cell moves the editing there.
 
 ### Cell execution
 
