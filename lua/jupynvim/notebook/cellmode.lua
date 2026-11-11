@@ -363,12 +363,53 @@ end
 --   { op = "delete", id, index, lines, cell_type } -> undo re-inserts it
 --   { op = "insert", id }                       -> undo removes that cell
 --   { op = "move", id, delta }                  -> undo moves it back
-local _undo = {}
 
-function M.push_undo(buf, entry)
+local _undo = {}
+local _redo = {}
+
+local function find_cell(buf, id)
+  local nb = Notebook.get(buf)
+  for i, c in ipairs(nb and nb.cells or {}) do
+    if c.id == id then return i end
+  end
+end
+
+local function snapshot(buf, idx)
+  local nb = Notebook.get(buf)
+  local r = M.ranges(buf)[idx]
+  local cell = nb and nb.cells[idx]
+  if not (r and cell) then return { lines = {}, cell_type = "code" } end
+  return {
+    lines = vim.api.nvim_buf_get_lines(buf, r.start, r.stop, false),
+    cell_type = cell.cell_type or "code",
+  }
+end
+
+-- A re-inserted cell gets a new id; older entries on BOTH stacks follow it.
+local function remap_id(buf, old, new)
+  if not old then return end
+  for _, stack in ipairs({ _undo[buf] or {}, _redo[buf] or {} }) do
+    for _, x in ipairs(stack) do
+      if x.id == old then x.id = new end
+    end
+  end
+end
+
+local function raw_push(buf, entry)
   _undo[buf] = _undo[buf] or {}
   table.insert(_undo[buf], entry)
   if #_undo[buf] > 50 then table.remove(_undo[buf], 1) end
+end
+
+local function push_redo(buf, entry)
+  _redo[buf] = _redo[buf] or {}
+  table.insert(_redo[buf], entry)
+end
+
+-- Called for every fresh cell mutation: a new action invalidates redo history.
+function M.push_undo(buf, entry)
+  _redo[buf] = nil
+  raw_push(buf, entry)
 end
 
 function M.undo_cell(buf, api)
@@ -382,17 +423,17 @@ function M.undo_cell(buf, api)
     -- Find the cell by id. An insert used to be remembered by its index, so
     -- moving the new cell and pressing u deleted whichever cell had taken
     -- that index, unrecorded, so a second u could not bring it back.
-    local nb = Notebook.get(buf)
-    local at
-    for i, c in ipairs(nb and nb.cells or {}) do
-      if c.id == e.id then at = i; break end
-    end
+    local at = find_cell(buf, e.id)
     if not at then return M.undo_cell(buf, api) end  -- already gone: undo the one before
     select_cell(buf, at)
     if e.op == "insert" then
+      local snap = snapshot(buf, at)  -- must happen before the cell is gone
       with_modifiable(buf, function() api.delete_cell(buf, true) end)
+      push_redo(buf, { op = "insert", id = e.id, index = at,
+                       lines = snap.lines, cell_type = snap.cell_type })
     else
       api.move_cell(buf, -e.delta, true)
+      push_redo(buf, { op = "move", id = e.id, delta = e.delta })
     end
   else
     -- record = false: replaying must not push its own inverse back on. The
@@ -400,12 +441,41 @@ function M.undo_cell(buf, api)
     M.insert_cell_with(buf, api, e.index, e.lines, e.cell_type, {
       record = false,
       on_cell = function(new_id)
-        if not e.id then return end
-        for _, x in ipairs(_undo[buf] or {}) do
-          if x.id == e.id then x.id = new_id end
-        end
+        remap_id(buf, e.id, new_id)
+        push_redo(buf, { op = "delete", id = new_id })
       end,
     })
+  end
+end
+
+function M.redo_cell(buf, api)
+  local stack = _redo[buf]
+  if not (stack and #stack > 0) then
+    vim.notify("jupynvim: nothing to redo", vim.log.levels.INFO)
+    return
+  end
+  local e = table.remove(stack)
+  if e.op == "insert" then
+    M.insert_cell_with(buf, api, e.index, e.lines, e.cell_type, {
+      record = false,
+      on_cell = function(new_id)
+        remap_id(buf, e.id, new_id)
+        raw_push(buf, { op = "insert", id = new_id })
+      end,
+    })
+    return
+  end
+  local at = find_cell(buf, e.id)
+  if not at then return M.redo_cell(buf, api) end
+  select_cell(buf, at)
+  if e.op == "move" then
+    api.move_cell(buf, e.delta, true)
+    raw_push(buf, { op = "move", id = e.id, delta = e.delta })
+  else -- "delete"
+    local snap = snapshot(buf, at)
+    with_modifiable(buf, function() api.delete_cell(buf, true) end)
+    raw_push(buf, { op = "delete", id = e.id, index = at,
+                    lines = snap.lines, cell_type = snap.cell_type })
   end
 end
 
@@ -797,6 +867,7 @@ function M.attach(buf, api)
     with_modifiable(buf, function() api.delete_cell(buf) end)
   end, "jupynvim: delete cell")
   cmdmap("u", function() M.undo_cell(buf, api) end, "jupynvim: undo cell delete")
+  cmdmap("<C-r>", function() M.redo_cell(buf, api) end, "jupynvim: redo cell action")
   -- U takes back the changes on the line changed last, which vim knows by
   -- number only. An output written since, above that line, shifted the
   -- lines, and U rewrote whatever line took the number, in another cell.
