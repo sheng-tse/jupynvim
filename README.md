@@ -509,6 +509,10 @@ require("jupynvim").setup({
   -- bump for sharper output on large terminals or shrink for compact display.
   image_rows = 16,
   image_cols = 48,
+  -- "box": every image in the image_rows x image_cols box. "auto": as large
+  -- as fits in that box, keeping its aspect ratio, in only the cells it
+  -- covers (no empty rows or cols around a plot).
+  image_fit = "box",
 
   -- How many lines of an output show. A longer one shows its first
   -- max_output_lines lines and its last 5, with a marker between them, and

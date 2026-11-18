@@ -38,6 +38,10 @@ M.config = {
   -- Kitty Unicode placeholder rendering. Reported as #7 by medwatt.
   image_rows = 16,
   image_cols = 48,
+  -- "box": every image gets the image_rows x image_cols box. "auto": every
+  -- image is drawn as large as fits in that box, keeping its aspect ratio, and
+  -- takes only the cells it covers, so a plot leaves no empty rows or cols.
+  image_fit = "box",
   -- Per-action keymap overrides. Each value is a string (replace the lhs), a
   -- table { lhs = ..., mode = ... }, or `false` (disable). See
   -- lua/jupynvim/notebook/keymaps.lua for the full default list. nil/missing
@@ -3423,7 +3427,7 @@ function M.setup(opts)
   end
   require("jupynvim.notebook.diag").setup()
   require("jupynvim.lsp").setup()
-  Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols })
+  Image.set_size({ rows = M.config.image_rows, cols = M.config.image_cols, fit = M.config.image_fit })
 
   -- Inside tmux, image_renderer = "kitty" (direct placement) places at the
   -- TTY's cursor coordinates and is never auto-cleaned, which surfaces as
