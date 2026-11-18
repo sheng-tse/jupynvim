@@ -730,12 +730,55 @@ end
 -- Mutable so init.lua's setup can override from user config without a
 -- circular require. See `require("jupynvim").setup({ image_rows, image_cols })`.
 local PLACEHOLDER_ROWS, PLACEHOLDER_COLS = 16, 48
+-- image_fit: "box" draws every image in the PLACEHOLDER_ROWS x PLACEHOLDER_COLS
+-- box. "auto" draws it as large as fits in that box, keeping its aspect ratio,
+-- in only the cells it covers: no empty rows or cols are left around it.
+local FIT = "box"
 
 function M.set_size(opts)
   opts = opts or {}
   if type(opts.rows) == "number" and opts.rows > 0 then PLACEHOLDER_ROWS = opts.rows end
   if type(opts.cols) == "number" and opts.cols > 0 then PLACEHOLDER_COLS = opts.cols end
+  if opts.fit == "box" or opts.fit == "auto" then FIT = opts.fit end
 end
+
+-- A terminal cell's width / height in pixels (TIOCGWINSZ), 0.5 when unknown.
+local has_ffi, ffi = pcall(require, "ffi")
+if has_ffi then
+  pcall(ffi.cdef, "typedef struct { unsigned short row, col, x, y; } jupynvim_winsize;")
+  pcall(ffi.cdef, "int ioctl(int, unsigned long, ...);")
+end
+function M._cell_ratio()
+  if not has_ffi then return 0.5 end
+  local sz = ffi.new("jupynvim_winsize")
+  local ok, rc = pcall(ffi.C.ioctl, 1, jit.os == "Linux" and 0x5413 or 0x40087468, sz)
+  if not ok or rc ~= 0 or sz.x == 0 or sz.y == 0 then return 0.5 end
+  return (sz.x / sz.col) / (sz.y / sz.row)
+end
+
+-- Pixel width and height from a base64 PNG's IHDR chunk, or nil.
+local function png_size(b64)
+  local ok, s = pcall(vim.base64.decode, b64:sub(1, 32))
+  if not ok or s:sub(2, 4) ~= "PNG" then return nil end
+  local function u32(i) local a, b, c, d = s:byte(i, i + 3); return ((a * 256 + b) * 256 + c) * 256 + d end
+  local w, h = u32(17), u32(21)
+  if w > 0 and h > 0 then return w, h end
+end
+
+-- Cols and rows of the placeholder grid for this image (see FIT).
+local function size_for(b64)
+  if FIT == "box" then return PLACEHOLDER_COLS, PLACEHOLDER_ROWS end
+  local w, h = png_size(b64)
+  if not w then return PLACEHOLDER_COLS, PLACEHOLDER_ROWS end
+  -- the image's height in rows when it is PLACEHOLDER_COLS wide
+  local rows = PLACEHOLDER_COLS * M._cell_ratio() * h / w
+  if rows <= PLACEHOLDER_ROWS then
+    return PLACEHOLDER_COLS, math.max(1, math.floor(rows + 0.5))
+  end
+  local cols = PLACEHOLDER_COLS * PLACEHOLDER_ROWS / rows
+  return math.max(1, math.floor(cols + 0.5)), PLACEHOLDER_ROWS
+end
+M._size_for = size_for
 
 -- Extract every frame of an animated GIF as PNG along with per-frame delays.
 -- Returns { frames = { b64, b64, ... }, delays = { ms, ms, ... } } or nil.
@@ -1740,11 +1783,12 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
   if renderer == "placeholder" then
     -- Real PNG via Kitty Unicode placeholder protocol: the image stays
     -- anchored to buffer text because placeholders ARE text.
+    local cols, rows = size_for(b64)
     log.debug(string.format("placeholder: cell=%s id=%d transmitting %d b64 chars (%dx%d cells)",
-      cell_id, id, #b64, PLACEHOLDER_COLS, PLACEHOLDER_ROWS))
+      cell_id, id, #b64, cols, rows))
     local _, terr = kitty_call_sync("kitty_transmit_virtual", {
       image_id = id, png_b64 = b64,
-      cols = PLACEHOLDER_COLS, rows = PLACEHOLDER_ROWS,
+      cols = cols, rows = rows,
     })
     if terr then
       log.warn(string.format("placeholder: cell=%s id=%d transmit FAILED: %s", cell_id, id, tostring(terr)))
@@ -1755,14 +1799,14 @@ function M.ensure_transmitted(cell_id, b64, callback, opts)
     local p = {
       image_id = id, png_hash = h, b64 = b64, src_hash = src_hash, want = want,
       placement_id = 1, renderer = "placeholder",
-      rows = PLACEHOLDER_ROWS, cols = PLACEHOLDER_COLS,
+      rows = rows, cols = cols,
     }
     placements[cell_id] = p
     -- one-time cleanup: drop any anonymous placements this image id may
     -- have accumulated in the terminal (older sessions used a=T per
     -- frame), leaving exactly the explicit p=1 placement
     kitty_call_async("kitty_place_virtual", {
-      image_id = id, cols = PLACEHOLDER_COLS, rows = PLACEHOLDER_ROWS,
+      image_id = id, cols = cols, rows = rows,
     })
     p.placed_gen = M._place_gen
     log.debug(string.format("placeholder: cell=%s id=%d transmitted ok, fg=#%06x",
